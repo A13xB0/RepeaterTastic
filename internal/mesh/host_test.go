@@ -16,7 +16,7 @@ import (
 
 type sink struct{ ch chan *pb.FromRadio }
 
-func newSink() *sink                              { return &sink{ch: make(chan *pb.FromRadio, 256)} }
+func newSink() *sink                           { return &sink{ch: make(chan *pb.FromRadio, 256)} }
 func (s *sink) SendFromRadio(fr *pb.FromRadio) { s.ch <- fr }
 
 // waitPacket returns the first delivered packet matching fn.

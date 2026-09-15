@@ -153,9 +153,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("relay.role must be client, router or mute, not %q", c.Relay.Role)
 	}
 	switch c.Radio.Driver {
-	case "kiss", "sim":
+	case "kiss", "sim", "none":
 	default:
-		return fmt.Errorf("radio.driver must be kiss or sim, not %q", c.Radio.Driver)
+		return fmt.Errorf("radio.driver must be kiss or none, not %q", c.Radio.Driver)
 	}
 	return nil
 }

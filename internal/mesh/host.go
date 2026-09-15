@@ -537,3 +537,52 @@ func LoadIdentityRecords(stateDir string) ([]IdentityRecord, error) {
 }
 
 func clonePacket(p *pb.MeshPacket) *pb.MeshPacket { return proto.Clone(p).(*pb.MeshPacket) }
+
+// UpdateConfig applies a new host configuration at runtime. When the PHY changes (region, preset,
+// primary channel, frequency, power) the radio is retuned and every identity's primary channel
+// name follows.
+func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
+	if cfg.HopLimit == 0 || cfg.HopLimit > wire.HopMax {
+		cfg.HopLimit = defaultHopLimit
+	}
+	if cfg.NodeInfoInterval == 0 {
+		cfg.NodeInfoInterval = 3 * time.Hour
+	}
+	rp, err := phy.Resolve(phy.Options{Region: cfg.Region, Preset: cfg.Preset, PrimaryChannelName: cfg.PrimaryChannel,
+		ChannelNum: cfg.ChannelNum, OverrideFreqMHz: cfg.OverrideFreqMHz, FreqOffsetMHz: cfg.FreqOffsetMHz,
+		TxPowerDBm: cfg.TxPowerDBm})
+	if err != nil {
+		return err
+	}
+	h.cfgMu.Lock()
+	old := h.rp
+	cfg.StateDir = h.cfg.StateDir
+	h.cfg = cfg
+	h.rp = rp
+	h.cfgMu.Unlock()
+	_ = h.SetRelayRole(cfg.RelayRole)
+	for _, id := range h.Identities() {
+		id.mu.Lock()
+		if id.Channels[0] != nil && id.Channels[0].Settings != nil {
+			id.Channels[0].Settings.Name = cfg.PrimaryChannel
+		}
+		id.mu.Unlock()
+	}
+	h.ChannelsChanged()
+	if old.FrequencyHz() != rp.FrequencyHz() || old.SF != rp.SF || old.BwKHz != rp.BwKHz || old.CR != rp.CR ||
+		old.TxPowerDBm != rp.TxPowerDBm || old.Preamble != rp.Preamble {
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := h.radio.Configure(cctx, h.radioConfig()); err != nil {
+			return fmt.Errorf("settings saved but the radio rejected them: %w", err)
+		}
+		h.log.Info("radio retuned", "freq_mhz", rp.FrequencyMHz, "preset", rp.PresetName())
+	}
+	return nil
+}
+
+// RadioConfigured reports whether the modem accepted our PHY settings.
+func (h *Host) RadioConfigured() bool { return h.radioOK.Load() }
+
+// QueueLen is the number of packets waiting to transmit.
+func (h *Host) QueueLen() int { return h.txq.Len() }
