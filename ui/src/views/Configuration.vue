@@ -16,23 +16,22 @@ import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { relTime } from '@/lib/format'
 
-type Tab = 'radios' | 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
+type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
-  { id: 'radio', label: 'LoRa & modem' },
+  { id: 'radio', label: 'Radios' },
   { id: 'relay', label: 'Relay' },
   { id: 'airtime', label: 'Airtime & duty' },
   { id: 'position', label: 'Position & hardware' },
   { id: 'mqtt', label: 'MQTT' },
-  { id: 'radios', label: 'Site radios' },
   { id: 'web', label: 'Web & API tokens' },
   { id: 'experimental', label: 'Experimental' },
   { id: 'backup', label: 'Backup & restore' },
 ]
 // The radio list, web settings, tokens and backups belong to the host, so they only show on the main radio.
-const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'radios', 'experimental'].includes(t.id)))
+const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'experimental'].includes(t.id)))
 const route = useRoute()
 const router = useRouter()
-const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio'))
+const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio')) // 'radios' (old link) → Radios
 const setTab = (t: Tab) => router.replace({ name: 'config', params: { tab: t } })
 
 const saved = ref<Config | null>(null)
@@ -45,7 +44,7 @@ async function load() {
   form.value = structuredClone(c)
 }
 
-const section = computed(() => (['backup', 'radios', 'experimental'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
+const section = computed(() => (['backup', 'experimental'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
 // The Position tab edits two config sections.
 const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
 const dirty = computed(() => {
@@ -249,8 +248,12 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
       <div v-if="!form" class="p-6"><div class="h-48 animate-pulse rounded-xl bg-sunken" /></div>
 
       <div v-else class="p-4 sm:p-6">
-        <!-- RADIO -->
-        <div v-if="tab === 'radio'" class="grid gap-6 lg:grid-cols-[1fr_20rem]">
+        <!-- RADIOS: the site's radios, then the selected radio's LoRa & modem settings -->
+        <div v-if="tab === 'radio'" class="space-y-8">
+          <RadiosPanel :ports="ports" :regions="regions" @restart="refreshStatus()" />
+          <section aria-labelledby="lora-h" class="border-t border-line-soft pt-6">
+            <h3 id="lora-h" class="card-title mb-4">{{ live.radios.find((r) => r.id === saved?.radio_id)?.name ?? 'This radio' }} · LoRa &amp; modem</h3>
+            <div class="grid gap-6 lg:grid-cols-[1fr_20rem]">
           <div class="grid content-start gap-4 sm:grid-cols-2">
             <div class="sm:col-span-2">
               <label class="label" for="c-port">Modem serial port</label>
@@ -331,6 +334,8 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             </template>
             <div v-else class="mt-2 h-24 animate-pulse rounded-lg bg-sunken" />
           </aside>
+        </div>
+          </section>
         </div>
 
         <!-- RELAY -->
@@ -444,9 +449,6 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             </p>
           </div>
         </div>
-
-        <!-- RADIOS -->
-        <RadiosPanel v-else-if="tab === 'radios'" :ports="ports" :regions="regions" @restart="refreshStatus()" />
 
         <!-- MQTT -->
         <MqttConnections v-else-if="tab === 'mqtt'" v-model="form.mqtt" />

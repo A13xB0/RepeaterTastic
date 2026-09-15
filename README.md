@@ -46,7 +46,7 @@ The top-level radio stays the **main** radio and existing configs keep working u
 - **Overlapping channels:** radios whose channels overlap in frequency take turns to transmit. In
   EU_868, LongFast, MediumFast, MediumSlow and ShortFast all sit on 869.525 MHz.
 - **Site airtime cap:** `site.duty_cycle_percent` caps the summed airtime of all radios.
-- **Web GUI:** Configuration → Site radios adds, renames and removes radios; a radio switcher
+- **Web GUI:** Configuration → Radios adds, renames and removes radios; a radio switcher
   appears once there is more than one. Configuration shows a restart banner when a change
   (a new radio, MQTT, the web port) waits for a restart.
 - **Identities:** each lives on one radio. Move one from its editor: key, node ID, app port and
