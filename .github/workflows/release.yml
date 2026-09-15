@@ -1,6 +1,9 @@
 # Release: on a v* tag (or by hand), build the web GUI and the static daemon + kisstool binaries
-# for Raspberry Pi (arm64/armv7/armv6) and amd64, publish them with SHA256SUMS, and push a
-# multi-arch container image to ghcr.io/<owner>/repeatertastic.
+# for Raspberry Pi (arm64/armv7/armv6) and amd64, publish them with SHA256SUMS, attach the KISS
+# modem firmware, and push a multi-arch container image to ghcr.io/<owner>/repeatertastic.
+#
+# Firmware: when firmware/ hasn't changed since the last release that has firmware, its assets are
+# copied onto this release; otherwise every board in firmware/boards.txt is built (long).
 #
 # The CARTO_API_KEY secret is baked into the binaries as the default map tile key (-X
 # main.mapAPIKey). It is not a real secret once shipped: anyone can pull it out of the binary,
@@ -69,6 +72,58 @@ jobs:
           else
             gh release create "$TAG" dist/* --title "$TAG" --generate-notes
           fi
+
+  firmware:
+    runs-on: ubuntu-latest
+    needs: release
+    timeout-minutes: 350
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Find the last release with firmware
+        id: prev
+        run: |
+          for t in $(gh release list --limit 50 --json tagName -q '.[].tagName'); do
+            [ "$t" = "$TAG" ] && continue
+            if gh release view "$t" --json assets -q '.assets[].name' | grep -q '^repeatertastic-kiss-firmware-all-boards.zip$'; then
+              if git rev-parse -q --verify "refs/tags/$t" >/dev/null && git merge-base --is-ancestor "$t" "$TAG"; then
+                echo "tag=$t" >> "$GITHUB_OUTPUT"
+                if git diff --quiet "$t" "$TAG" -- firmware; then echo "reuse=true" >> "$GITHUB_OUTPUT"; fi
+                break
+              fi
+            fi
+          done
+
+      - name: Reuse firmware from ${{ steps.prev.outputs.tag }}
+        if: steps.prev.outputs.reuse == 'true'
+        run: |
+          mkdir -p fw
+          gh release download "${{ steps.prev.outputs.tag }}" -D fw -p 'kiss-firmware-*.zip' -p 'repeatertastic-kiss-firmware-all-boards.zip' -p 'firmware-boards.md'
+          (cd fw && sha256sum kiss-firmware-*.zip repeatertastic-kiss-firmware-all-boards.zip firmware-boards.md > FIRMWARE-SHA256SUMS)
+
+      - uses: actions/setup-python@v5
+        if: steps.prev.outputs.reuse != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Build firmware for every board
+        if: steps.prev.outputs.reuse != 'true'
+        run: |
+          pip install -q platformio
+          PARALLEL=2 CLEAN=1 ./firmware/build.sh all || true
+          ./scripts/package-firmware.sh fw
+
+      - name: Attach firmware and update SHA256SUMS
+        run: |
+          gh release download "$TAG" -p SHA256SUMS -D sums
+          cat sums/SHA256SUMS fw/FIRMWARE-SHA256SUMS | sort -k2 | uniq > SHA256SUMS
+          gh release upload "$TAG" fw/kiss-firmware-*.zip fw/repeatertastic-kiss-firmware-all-boards.zip fw/firmware-boards.md SHA256SUMS --clobber
 
   image:
     runs-on: ubuntu-latest
