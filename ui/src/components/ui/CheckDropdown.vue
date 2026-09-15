@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // A dropdown with a tick box per option, for choosing several things (radios, ports, ...).
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
 
 const props = withDefaults(
@@ -10,6 +10,25 @@ const props = withDefaults(
 const model = defineModel<string[]>({ required: true })
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
+const menu = ref<HTMLElement | null>(null)
+// The list is teleported to <body> and placed next to the button, so cards with overflow hidden
+// or the bottom of the screen don't cut it off; it opens upwards when there's more room there.
+const place = ref({ left: 0, width: 0, top: 0 as number | undefined, bottom: undefined as number | undefined, maxHeight: 288 })
+
+function position() {
+  const el = root.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const gap = 4
+  const below = window.innerHeight - r.bottom - gap - 8
+  const above = r.top - gap - 8
+  const want = Math.min(288, (props.options.length + (model.value.length ? 1 : 0)) * 40 + 16)
+  if (below >= want || below >= above) {
+    place.value = { left: r.left, width: r.width, top: r.bottom + gap, bottom: undefined, maxHeight: Math.max(120, Math.min(288, below)) }
+  } else {
+    place.value = { left: r.left, width: r.width, top: undefined, bottom: window.innerHeight - r.top + gap, maxHeight: Math.max(120, Math.min(288, above)) }
+  }
+}
 
 const summary = computed(() => {
   const chosen = props.options.filter((o) => model.value.includes(o.value))
@@ -20,21 +39,31 @@ const summary = computed(() => {
 
 function toggle(v: string) {
   model.value = model.value.includes(v) ? model.value.filter((x) => x !== v) : [...model.value, v]
+  void nextTick(position)
 }
 
 function onPointer(e: PointerEvent) {
-  if (root.value && !root.value.contains(e.target as Node)) open.value = false
+  const t = e.target as Node
+  if (root.value?.contains(t) || menu.value?.contains(t)) return
+  open.value = false
 }
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') open.value = false
 }
-watch(open, (o) => {
+watch(open, async (o) => {
   if (o) {
+    position()
     document.addEventListener('pointerdown', onPointer)
     document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', position, true)
+    window.addEventListener('resize', position)
+    await nextTick()
+    position()
   } else {
     document.removeEventListener('pointerdown', onPointer)
     document.removeEventListener('keydown', onKey)
+    window.removeEventListener('scroll', position, true)
+    window.removeEventListener('resize', position)
   }
 })
 onBeforeUnmount(() => (open.value = false))
@@ -54,11 +83,14 @@ onBeforeUnmount(() => (open.value = false))
       <span :class="['min-w-0 flex-1 truncate', model.length ? '' : 'text-ink-3']">{{ summary }}</span>
       <ChevronDown :class="['size-4 shrink-0 text-ink-3 transition-transform', open && 'rotate-180']" />
     </button>
+    <Teleport to="body">
     <div
       v-if="open"
+      ref="menu"
       role="listbox"
       aria-multiselectable="true"
-      class="absolute inset-x-0 z-50 mt-1 max-h-72 overflow-y-auto rounded-xl border border-line bg-surface-solid p-1 shadow-xl"
+      class="fixed z-[400] overflow-y-auto rounded-xl border border-line bg-surface-solid p-1 shadow-xl"
+      :style="{ left: `${place.left}px`, width: `${place.width}px`, top: place.top !== undefined ? `${place.top}px` : undefined, bottom: place.bottom !== undefined ? `${place.bottom}px` : undefined, maxHeight: `${place.maxHeight}px` }"
     >
       <button
         v-for="o in options"
@@ -89,5 +121,6 @@ onBeforeUnmount(() => (open.value = false))
         </button>
       </div>
     </div>
+    </Teleport>
   </div>
 </template>
