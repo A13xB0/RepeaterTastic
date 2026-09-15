@@ -15,17 +15,20 @@ node is a real Meshtastic node to the mesh and to the apps. One of them repeats;
 to chat, bridge and experiment with. Built and run by [ScotMesh](https://github.com/ScotMesh) for
 Scottish mesh sites, and useful anywhere.
 
+![The RepeaterTastic dashboard: radio status and relay switch, traffic counters, airtime against the duty cycle, noise floor, packets by port and live packets](docs/images/dashboard.png)
+
 - **Virtual nodes ("identities")** with their own key, node number, channels and app port. The
   official Meshtastic apps, the Python CLI and the web client connect to each one as if it were a radio.
 - **A proper repeater:** one relay persona follows the firmware's flooding and next-hop rules, with
-  a shared duty-cycle budget, so ten identities never mean ten repeats.
-- **A web GUI** for everything: identities, chat, channels, a live node map, packets, statistics,
-  logs, backups and configuration.
+  a shared duty-cycle budget, so ten identities never mean ten repeats. Switch it between client,
+  router and mute, or put the radio in Monitor (listen only) or Off from the top bar.
+- **A web GUI** for everything: identities, chat (as any identity, the relay persona included),
+  channels, a live node map, packets, statistics, logs, backups and configuration.
 - **Several radios on one host** (LongFast, MediumFast, …) that take turns on shared frequencies.
 - **MQTT** to one or more brokers (gateway, uplink-only, map reports, monitor, bridge), a fixed
   site position, device telemetry and an optional UDP multicast link to `meshtasticd` on the LAN.
 - **Plugins** add uploaders, bots and dashboards: upload a .zip in the GUI or drop it in a folder,
-  and choose what each one may see and send.
+  choose what each one may see, and cap how much it may send.
 - **One static binary or one container.** About 10 MB, no CGO, GUI embedded.
 
 > **Status:** running on a ScotMesh site on a Heltec V3, alongside Reticulum. Still young: expect
@@ -40,7 +43,7 @@ Scottish mesh sites, and useful anywhere.
 RepeaterTastic drives a LoRa board running **Mesh KISS**: MeshCore's KISS modem firmware patched to
 speak Meshtastic's PHY. Heltec V3/V4, XIAO nRF52840 + Wio-SX1262, RAK4631, T-Beam and more are
 supported. Download a prebuilt image (`kiss-firmware-<board>.zip`) from the
-[releases](https://github.com/A13xB0/RepeaterTastic/releases) or build it, then flash:
+[latest release](https://github.com/ScotMesh/RepeaterTastic/releases/latest) or build it, then flash:
 
 ```bash
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 Heltec_v3_kiss_modem-factory.bin   # ESP32 boards
@@ -59,7 +62,7 @@ docker run -d --name repeatertastic --restart unless-stopped \
   --group-add "$(getent group dialout | cut -d: -f3)" \
   -e REPEATERTASTIC_RADIO_DEVICE=/dev/ttyUSB0 \
   -v repeatertastic-data:/data \
-  ghcr.io/a13xb0/repeatertastic:latest
+  ghcr.io/scotmesh/repeatertastic:latest
 ```
 
 - `--device` passes the modem in; `--group-add` lets the unprivileged container user open it.
@@ -67,15 +70,15 @@ docker run -d --name repeatertastic --restart unless-stopped \
   it, publish `-p 8080:8080 -p 4403-4410:4403-4410` instead.
 - The `/data` volume holds the config, identity keys and chats. Back it up.
 - Prefer Compose? Copy [`deploy/docker-compose.example.yml`](deploy/docker-compose.example.yml).
-- The image is published to `ghcr.io` with each release; before the first one, build it with
-  `docker build -t repeatertastic .` and use `repeatertastic` as the image name.
+- The image is published to `ghcr.io` with each release. To run your own build instead, build it
+  with `docker build -t repeatertastic .` and use `repeatertastic` as the image name.
 
 ### 2b. Or run it standalone (systemd)
 
 ```bash
-git clone https://github.com/A13xB0/RepeaterTastic && cd RepeaterTastic
-# binaries from the releases page: arm64 = 64-bit Raspberry Pi OS; armv7, armv6 and amd64 also available
-gh release download -R A13xB0/RepeaterTastic -p 'repeatertastic-linux-arm64' -p 'kisstool-linux-arm64'
+git clone https://github.com/ScotMesh/RepeaterTastic && cd RepeaterTastic
+# binaries from the latest release: arm64 = 64-bit Raspberry Pi OS; armv7, armv6 and amd64 also available
+gh release download -R ScotMesh/RepeaterTastic -p 'repeatertastic-linux-arm64' -p 'kisstool-linux-arm64'
 sudo ./deploy/install.sh ./repeatertastic-linux-arm64 ./kisstool-linux-arm64
 journalctl -u repeatertastic -f
 ```
@@ -115,6 +118,7 @@ Docker) bakes in a default map tile key; see [Configuration](docs/configuration.
 | [MQTT](docs/mqtt.md) | Broker connections, modes, channels, relaying and map reports |
 | [Plugins](docs/plugins.md) | Installing plugins (GUI, folder, CLI, Docker), permissions, attached plugins, and writing your own |
 | [Architecture and development](docs/architecture.md) | How it fits together, code layout, tests and interop |
+| [Plugin API](docs/plugin-api.md) | Reference for plugin authors: the gRPC session, calls, events, errors, manifest and settings |
 | [HTTP API](docs/api.md) | REST and event-stream API for scripts and integrations |
 | [Bench test](docs/bench-test.md) | Step-by-step first test on a real radio |
 | [AGENTS.md](AGENTS.md) | Rules and commands for coding agents and contributors |

@@ -443,9 +443,13 @@ func (h *hostServer) SendText(ctx context.Context, req *pluginv1.SendTextRequest
 	relay := r.Host.Relay()
 	pid, err := r.Host.SendText(relay, to, int(req.Channel), req.Text, req.WantAck)
 	if errors.Is(err, mesh.ErrNotTransmitting) {
+		p.msgBudget.refund()
 		return nil, status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
 	}
-	if err != nil && pid == 0 {
+	if err != nil {
+		if pid == 0 {
+			p.msgBudget.refund() // refused before anything was queued
+		}
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	p.logs.add("info", "host", fmt.Sprintf("sent a message from %s to %s on %s", relay.NodeID(), nodeOrChannel(req.To, req.Channel), r.ID))
@@ -496,6 +500,7 @@ func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteReq
 		return nil, budgetError("traceroutes", p.trBudget.rate(), wait)
 	}
 	if err := r.Host.Traceroute(from, target); err != nil {
+		p.trBudget.refund() // nothing was sent (e.g. the identity's 30 s traceroute limit)
 		return nil, status.Error(codes.ResourceExhausted, err.Error())
 	}
 	p.logs.add("info", "host", fmt.Sprintf("sent a traceroute from %s to %s on %s", from.NodeID(), req.Target, r.ID))

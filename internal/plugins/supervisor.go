@@ -245,6 +245,13 @@ func (b *bucket) rate() int {
 	return b.perHour
 }
 
+// refund gives back a send that didn't happen.
+func (b *bucket) refund() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.tokens = min(float64(burst(b.perHour)), b.tokens+1)
+}
+
 // take spends one send, or says how long until one is available.
 func (b *bucket) take() (bool, time.Duration) {
 	b.mu.Lock()

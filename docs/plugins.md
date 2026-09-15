@@ -1,5 +1,7 @@
 # Plugins
 
+[← README](../README.md) · [Plugin API](plugin-api.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [HTTP API](api.md) · [Architecture](architecture.md)
+
 A plugin is a separate program that extends RepeaterTastic. Examples: an uploader that sends what
 the site hears to a mapping service, a bot that answers commands, or a dashboard. A plugin talks to
 RepeaterTastic over the **Plugin API**, which is gRPC over a local socket. It only sees and does what
@@ -11,8 +13,12 @@ the operator allows, and it can't take the daemon down with it.
 - [Settings](#settings), [status, log and panel](#status-log-and-panel)
 - [Attached plugins](#attached-plugins) that run in another container or on another machine
 - [Configuration](#configuration): the `plugins:` section
-- [Writing a plugin](#writing-a-plugin): the bundle, `plugin.yaml`, the API, the Go SDK and the
-  example
+- [Writing a plugin](#writing-a-plugin): the bundle, `plugin.yaml`, how a plugin works and the Go
+  SDK
+
+For plugin authors, the [Plugin API reference](plugin-api.md) covers every message, call, error,
+manifest field and setting type. The plugin endpoints of the HTTP API are in
+[HTTP API → Plugins](api.md#plugins).
 
 ## Installing
 
@@ -51,15 +57,17 @@ for a permission it wasn't granted gets a "permission denied" error.
 | `messages.send` | Send text messages from each radio's relay persona |
 | `traceroute.send` | Send traceroutes from the identity chosen in the plugin's settings on that radio, or the radio's relay persona when none is chosen |
 
-Plugins act as the **relay persona** of each radio: the node the site already is on the mesh.
-Transmissions go through the normal transmit queue and duty cycle. Each plugin also has a budget,
-30 messages and 12 traceroutes an hour by default. A plugin may send a sixth of its hourly budget
-at once (at least one), then the budget refills evenly: with 12 traceroutes an hour, that's 2
-straight away and then one every 5 minutes. Change them under **Plugins → Send limits**, which
-applies at once and saves them to the config file as `plugins.messages_per_hour` and
-`traceroutes_per_hour`. The limits are 0-600 messages and 0-120 traceroutes an hour; `0` stops
-plugins sending at all.
-Every send is written to the plugin's log. The radio's own limits still apply too, such as one
+Plugins send text as the **relay persona** of each radio: the node the site already is on the
+mesh. Traceroutes go from the identity you choose in the plugin's settings, or the relay persona.
+Transmissions go through the normal transmit queue and duty cycle, and are refused while a radio's
+relay is in Monitor or Off mode.
+
+Each plugin also has a send budget, 30 messages and 12 traceroutes an hour by default. A plugin
+may send a sixth of its hourly budget at once (at least one), then the budget refills evenly: with
+12 traceroutes an hour, that's 2 straight away and then one every 5 minutes. Change them under
+**Plugins → Send limits**, which applies at once and saves them to the config file as
+`plugins.messages_per_hour` and `traceroutes_per_hour`. The limits are 0-600 messages and 0-120
+traceroutes an hour; `0` stops plugins sending at all. Every send is written to the plugin's log. The radio's own limits still apply too, such as one
 traceroute per identity every 30 seconds.
 
 A plugin's `network` list (shown before you enable it) names the services it talks to. It is a
@@ -68,7 +76,8 @@ install plugins you trust.
 
 ## Settings
 
-The **Settings** tab is a form built from the plugin's `plugin.yaml`. Secrets are write-only:
+The **Settings** tab is a form built from the plugin's `plugin.yaml`. Lists (a choice of options,
+radios or identities) are tick-box lists. Secrets are write-only:
 the API and GUI show that one is saved, never its value. Changes reach a running plugin at once.
 Settings and grants are kept in `<state_dir>/plugins/state.json` (mode 0600).
 
@@ -80,7 +89,7 @@ Settings and grants are kept in `<state_dir>/plugins/state.json` (mode 0600).
   crashed, sent a message). The last 1000 lines are kept.
 - **Panel**: a plugin may ship its own page. It runs in a sandboxed frame on the plugin's page. It
   has no access to the GUI, your login or the API, and exchanges messages with the GUI only through
-  `postMessage` (see [Panels](#panels)).
+  `postMessage` (see [Panels](plugin-api.md#panels)).
 
 A managed plugin that exits is restarted with backoff (1 s up to a minute). After five exits
 within 15 seconds of starting, it is left **crashed** until you press **Try again**.
@@ -130,7 +139,7 @@ Pinned entries still need the plugin installed. Changes to the `plugins:` sectio
 
 ```
 plugins/
-  host.sock            the Plugin API socket for managed plugins
+  host.sock            the Plugin API socket for managed plugins (in a private temp folder when this path is too long)
   state.json           switches, grants and settings
   inbox/               drop bundles here (.rejected/ holds refused ones)
   installed/<id>/      unpacked bundles
@@ -185,7 +194,7 @@ network: [api.example.org] # services it talks to, shown before enabling
 settings:
   - key: api_key           # lowercase, digits, underscores
     label: API key
-    type: secret           # string, secret, url, bool, int, number, select, multiselect, radios
+    type: secret           # string, secret, url, bool, int, number, select, multiselect, radios, identities
     required: true
     help: From your account page.
   - key: region
@@ -200,7 +209,7 @@ settings:
     type: multiselect      # tick boxes of options; the value is a list
     options: [TEXT_MESSAGE_APP, POSITION_APP]
   - key: report_as
-    type: identities       # tick boxes of the site's identities; the value is a list of node IDs
+    type: identities       # tick boxes of the site's identities; traceroutes are sent from these
 run:
   managed:
     exec: bin/hello-{os}-{arch}   # {os} and {arch} are Go's GOOS and GOARCH (arm for 32-bit Pis)
@@ -209,71 +218,25 @@ ui:
   panel: panel/index.html
 ```
 
-### Running
+Every field and setting type is described in the [manifest reference](plugin-api.md#manifest-pluginyaml).
 
-RepeaterTastic starts `exec` from the bundle folder in its own process group, with a small
-environment:
+### How a plugin works
 
-| Variable | |
-| --- | --- |
-| `RT_PLUGIN_ID` | the plugin id |
-| `RT_PLUGIN_SOCKET` | Unix socket to connect to |
-| `RT_PLUGIN_TOKEN` | the token for this run |
-| `RT_PLUGIN_DATA`, `HOME` | the plugin's data folder |
-| `PATH`, `TZ`, `LANG`, `SSL_CERT_*`, `*_PROXY` | passed through when set |
+A plugin is a gRPC client. The [Plugin API reference](plugin-api.md) has every message, call,
+error and manifest field; in short:
 
-Anything the program prints goes to its log. To stop it, RepeaterTastic sends `Stop`, waits 5
-seconds, sends SIGTERM, waits another 5, then sends SIGKILL.
+1. RepeaterTastic starts a managed plugin with `RT_PLUGIN_ID`, `RT_PLUGIN_SOCKET`, `RT_PLUGIN_TOKEN`
+   and `RT_PLUGIN_DATA` in its environment. An attached plugin is given its address and token.
+2. The plugin opens a `Session` and sends `Hello`. It gets `Welcome`, with its granted permissions,
+   settings and the site's radios, and then the events it may see: packets, node changes, relay
+   persona messages, traceroute replies, settings changes and panel actions.
+3. It reports `Status`, log lines and panel data on the same stream.
+4. While the session is open, it calls `ListRadios`, `ListNodes`, `SendText` and `Traceroute`.
+   Sends fail while a radio's relay is in Monitor or Off mode.
+5. When RepeaterTastic sends `Stop`, it closes the stream and exits. After 5 seconds it gets SIGTERM,
+   and after another 5 SIGKILL.
 
-### The API
-
-The API is [`proto/plugin/v1/plugin.proto`](../proto/plugin/v1/plugin.proto); the generated Go code
-is `pluginapi/v1`. Every call carries `authorization: Bearer <token>` metadata.
-
-1. Open the `Session` stream and send `Hello {plugin_id, api_version: 1, plugin_version}`. An
-   attached plugin may add `manifest_yaml` so the GUI shows its details and settings form.
-2. Receive `Welcome`, which carries the granted permissions, settings as JSON, the radios (each
-   with its relay persona) and the data folder.
-3. Events follow, filtered by what was granted:
-   - `PacketEvent` (see [Packet events](#packet-events));
-   - `NodeEvent`: a node in that radio's node database changed;
-   - `TextMessageEvent`: relay persona messages;
-   - `TracerouteEvent`;
-   - `SettingsChanged`;
-   - `PanelAction`;
-   - `Stop`.
-4. On the stream, send `Status`, `LogLine`, `PanelData` and a `Heartbeat` now and then.
-5. While the session is open, call `ListRadios`, `ListNodes`, `SendText` and `Traceroute`.
-
-A slow plugin loses events rather than holding up the radio. The dropped count shows on its page.
-
-### Packet events
-
-A `PacketEvent` is one packet a radio heard or sent.
-
-| Field | |
-| --- | --- |
-| `direction` | `rx` or `tx` |
-| `kind` | rx: `heard` (decoded, not for our identities), `delivered` (to one of our identities), `relayed`, `dup` (seen before), `echo` (our own packet repeated back), `legacy` (pre-2.3 firmware, ignored), `undecryptable`, `bad`. tx: `ours`, `relayed` |
-| `mesh_packet` | A `meshtastic.MeshPacket` protobuf. `decoded` when any channel or key on that radio could read it, otherwise encrypted as heard. Received packets have `rx_time` set. `pki_encrypted` marks a DM |
-| `decoded` | Whether the payload is decoded |
-| `channel_hash`, `channel_name` | The on-air channel hash (0 for DMs); the channel it decoded on, `PKI` for a DM, empty when undecoded |
-| `relay_channel_index` | The channel's index (0–7) on the radio's relay persona, or `-1`. Set when the relay persona holds the channel, or for a DM addressed to the relay persona. When set, `mesh_packet.channel` is that index; otherwise it's the on-air hash |
-| `holders` | Every identity on the radio that would hear the packet as a node does, with the channel's index on it: those holding the channel, or the recipient of a DM. Use it to report as an identity other than the relay persona |
-| `reporter_node_num` | The radio's relay persona |
-
-Decoding uses every identity's channels and keys, not just the relay persona's. A plugin that
-reports **as an identity** should keep only what that node would hear itself: the identity is
-in `holders` (use its `channel_index` as the channel), and `to` is either broadcast or that
-identity. For the relay persona, `relay_channel_index >= 0` says the same thing. `ListRadios`
-lists each radio's identities. `Traceroute` always sends from the identity chosen in the plugin's
-`identities` settings on that radio, or its relay persona when none is chosen there. A `from`
-naming any other identity is refused, so the operator decides who transmits.
-
-The node database (`ListNodes`, `NodeEvent`) is shared by all of a radio's identities. It can hold
-names, positions and metrics learned on channels or in DMs the relay persona can't read.
-
-### Go SDK
+The Go SDK does the connecting for you:
 
 ```go
 c, err := pluginsdk.Connect(ctx, pluginsdk.Options{Version: "1.0.0"}) // reads RT_PLUGIN_* from the environment
@@ -281,28 +244,9 @@ if err != nil { log.Fatal(err) }
 defer c.Close()
 _ = c.Status("connected", "ok", nil)
 for msg := range c.Events() {
-    if t := msg.GetText(); t != nil && t.Direction == "in" && t.Text == "ping" {
-        req := &pluginv1.SendTextRequest{RadioId: t.RadioId, Channel: t.Channel, Text: "pong"}
-        if t.Direct {
-            req.To, req.Channel = fmt.Sprintf("!%08x", t.From), 0 // answer a DM with a DM
-        }
-        c.Host.SendText(c.Context(), req)
-    }
+    if p := msg.GetPacket(); p != nil { /* … */ }
 }
 ```
 
-Other languages can generate a client from the proto.
-
-### Panels
-
-The panel is served with `Content-Security-Policy: sandbox allow-scripts allow-popups` and
-`connect-src 'none'`. It can't make network requests or read the GUI's storage. Messages:
-
-| Direction | Message |
-| --- | --- |
-| GUI → panel | `{type: "data", data, theme: "light" \| "dark"}`: the plugin's latest `PanelData`, sent when it changes and when the panel loads |
-| panel → GUI | `{type: "ready"}`: ask for the data now |
-| panel → GUI | `{type: "action", name, payload}`: delivered to the plugin as `PanelAction` |
-| panel → GUI | `{type: "resize", height}`: set the frame height in pixels |
-
-Build the panel from `data` with DOM methods, not `innerHTML`: packet contents come from the mesh.
+Other languages can generate a client from
+[`proto/plugin/v1/plugin.proto`](../proto/plugin/v1/plugin.proto).

@@ -1407,7 +1407,10 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 	var b backupFile
-	if !readJSON(w, r, &b) {
+	// A backup with several radios' identities is bigger than readJSON's usual 1 MB.
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<20)
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid backup file: "+err.Error())
 		return
 	}
 	if b.Format != "repeatertastic-backup-1" || len(b.Identities) == 0 {

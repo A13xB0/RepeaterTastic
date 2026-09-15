@@ -1,6 +1,6 @@
 # Several radios
 
-[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [MQTT](mqtt.md) · [Architecture](architecture.md)
+[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [MQTT](mqtt.md) · [HTTP API](api.md) · [Architecture](architecture.md)
 
 Add radios under `radios:` in the config: each gets its own modem, preset, relay persona,
 identities, node DB and airtime budget, so one host can serve LongFast and MediumFast side by side.
@@ -16,14 +16,17 @@ The top-level radio stays the **main** radio and existing configs keep working u
 - **Identities:** each lives on one radio. Move one from its editor: key, node ID, app port and
   chats go with it, and its primary channel follows the new preset. A key can't be imported onto a
   second radio.
-- **API:** `?radio=<id>` selects a radio (see [`docs/api.md`](docs/api.md)).
+- **Relay:** each radio has its own relay role: client, router, mute, monitor (listens only) or off
+  (the radio is ignored). Set it from the top bar or Configuration → Relay with that radio picked.
+- **API:** `?radio=<id>` selects a radio (see [HTTP API](api.md#radios-and-the-radio-parameter)).
 - **EU_868 notes:** LongTurbo's 500 kHz doesn't fit the 250 kHz sub-band, and LongSlow sits on 869.4625 MHz.
 
 ## Adding a radio
 
 1. Flash and plug in another board ([Hardware](hardware.md)); note its `/dev/serial/by-id/` path.
-2. **Configuration → Radios → Add radio:** pick the region, preset, device, TX power and relay role.
-   The relay starts muted so a new radio doesn't repeat until you decide it should.
+2. **Configuration → Radios → Add radio:** pick the region, preset, device, TX power and relay role
+   (client, router, mute, monitor or off). The relay starts muted so a new radio doesn't repeat until you decide
+   it should.
 3. Restart when the banner asks. The radio comes up with its own relay persona.
 4. Switch to it in the top bar to add identities, MQTT connections and a position.
 

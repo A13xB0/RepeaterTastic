@@ -15,7 +15,7 @@ You need:
 ## 1. Flash the modem
 
 Prebuilt images and Pi binaries are attached to the `v0.1.0-bench` GitHub release
-(`gh release download v0.1.0-bench -R A13xB0/RepeaterTastic`); `firmware-boards.md` there says
+(`gh release download v0.1.0-bench -R ScotMesh/RepeaterTastic`); `firmware-boards.md` there says
 which file to flash for each board. Or build them yourself:
 
 ```bash

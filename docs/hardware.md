@@ -28,8 +28,9 @@ runs on air today.
 ## Get the firmware
 
 - **Prebuilt:** each release has `kiss-firmware-<board>.zip` and an all-boards zip, plus
-  `firmware-boards.md`. For example:
-  `gh release download -R A13xB0/RepeaterTastic -p 'kiss-firmware-Heltec_v3_kiss_modem.zip'`.
+  `firmware-boards.md`. Get them from the
+  [latest release](https://github.com/ScotMesh/RepeaterTastic/releases/latest), or for example:
+  `gh release download -R ScotMesh/RepeaterTastic -p 'kiss-firmware-Heltec_v3_kiss_modem.zip'`.
 - **Build:** `./firmware/build.sh Heltec_v3_kiss_modem` (PlatformIO; `./firmware/build.sh all` for
   every board). Images land in `firmware/out/<board>/`. See [`firmware/README.md`](../firmware/README.md).
 
@@ -99,7 +100,7 @@ docker run … \
   --device /dev/serial/by-id/usb-…-if00-port0:/dev/ttyUSB0 \
   --group-add "$(getent group dialout | cut -d: -f3)" \
   -e REPEATERTASTIC_RADIO_DEVICE=/dev/ttyUSB0 \
-  ghcr.io/a13xb0/repeatertastic:latest
+  ghcr.io/scotmesh/repeatertastic:latest
 ```
 
 - Map the **by-id** path on the host to a fixed name inside the container.
@@ -129,6 +130,6 @@ Each extra radio is another board on its own USB port, set up in Configuration �
 | "rejected Meshtastic's sync word" | Stock MeshCore KISS firmware: flash Mesh KISS |
 | Modem connected, nothing heard | Region, preset or primary channel name don't match the mesh; antenna not attached |
 | `rx` counter rises but nothing decodes | PHY mismatch (preset, bandwidth) or a different channel key |
-| Heard, but nobody hears us | Duty-cycle budget used up, TX power too low, or relay role `mute` (identities still send) |
+| Heard, but nobody hears us | Duty-cycle budget used up, TX power too low, or the relay in `monitor` or `off` mode (nothing is sent). `mute` only stops repeating |
 
 The [bench test](bench-test.md) walks through a first real-radio test step by step.

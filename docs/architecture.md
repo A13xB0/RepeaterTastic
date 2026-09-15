@@ -1,6 +1,6 @@
 # Architecture and development
 
-[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [Several radios](radios.md) · [MQTT](mqtt.md)
+[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [Several radios](radios.md) · [MQTT](mqtt.md) · [Plugins](plugins.md) · [HTTP API](api.md)
 
 ## How it fits together
 
@@ -21,6 +21,8 @@ LoRa modem ──USB/KISS── radio driver ── receive pipeline ── mesh
   - Every identity's packets go through one queue.
   - The queue uses Meshtastic's contention window, a channel-busy check before each transmission, and the region duty cycle.
 - **Relay:** only the relay persona rebroadcasts, following the firmware's flooding and next-hop rules. N identities never relay the same packet N times.
+  In `monitor` mode the radio transmits nothing, and in `off` mode it is ignored; sends then fail
+  with `NO_INTERFACE`.
 - **Several radios:** each radio is its own mesh host (identities, node DB, queue). `internal/site`
   makes radios on overlapping frequencies take turns and applies the site airtime cap;
   `mesh.Federation` joins the hosts for the experimental identities on several radios.
@@ -28,9 +30,12 @@ LoRa modem ──USB/KISS── radio driver ── receive pipeline ── mesh
   broker packets into the receive pipeline marked `via_mqtt`.
 - **App API:** each identity listens on its own TCP port with the Meshtastic client protocol
   (`internal/phoneapi`); the web GUI and scripts use the REST/SSE API on `:8080`.
+- **Plugins:** separate programs, started by `internal/plugins` or attached over TCP, talk gRPC to
+  the Plugin API host. They see bus events their permissions allow, and send through the same queue
+  within a per-plugin budget.
 
 The original plan and research are in [`plan.html`](plan.html). The HTTP API is documented in
-[`api.md`](api.md). Coding agents and new contributors: read [`AGENTS.md`](../AGENTS.md) first.
+[`api.md`](api.md), and the Plugin API in [`plugin-api.md`](plugin-api.md). Coding agents and new contributors: read [`AGENTS.md`](../AGENTS.md) first.
 
 ## Layout
 

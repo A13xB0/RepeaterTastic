@@ -31,7 +31,8 @@ These override the file, which suits containers:
 Most changes apply the moment you save. These need a restart; the GUI shows a banner listing them,
 with a **Restart now** button:
 
-- the modem connection (`radio.driver`, `radio.device`, `radio.baud`)
+- the modem connection (`radio.driver`, `radio.device`, `radio.baud`), once the modem has opened;
+  before that, a new device is used at once
 - adding or removing a radio
 - MQTT connections and UDP multicast
 - `web.bind`, `web.port` and `mdns`

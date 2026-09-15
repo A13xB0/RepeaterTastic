@@ -1,9 +1,13 @@
 # Using the web GUI
 
-[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Several radios](radios.md) · [MQTT](mqtt.md) · [Architecture](architecture.md)
+[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Several radios](radios.md) · [MQTT](mqtt.md) · [Plugins](plugins.md) · [HTTP API](api.md) · [Architecture](architecture.md)
 
-Open `http://<host>:8080`. The first visit asks for an admin password and runs the setup wizard.
-The **account menu** (top right) changes the password, signs out, or signs every browser out.
+Open `http://<host>:8080`. The first visit runs the setup wizard: the modem, region and preset,
+the relay role (client, router or mute) and the admin password. The **account menu** (top right)
+changes the password, signs out, or signs every browser out.
+
+Pages update live. A tab left in the background gives up its live connection after 15 seconds, so
+many open tabs don't use up the browser's connections to the host, and catches up when shown again.
 
 ## Top bar
 
@@ -12,7 +16,9 @@ The **account menu** (top right) changes the password, signs out, or signs every
 - **Modem state, frequency and preset**, and the **airtime gauge**: this hour's transmit time against
   the duty-cycle budget.
 - **Relay switch:** client, router or mute for this radio's relay persona, then **Monitor** (the
-  radio only listens) and **Off** (the radio is ignored). Both ask before switching.
+  radio only listens and transmits nothing) and **Off** (the radio is ignored). Both ask before
+  switching. In either, sends from identities, the relay persona and plugins fail with "the radio
+  isn't transmitting". The same switch is under Configuration → Relay.
 - A **restart banner** appears under the bar when saved changes need a restart, listing them.
 
 ## Pages
@@ -21,13 +27,14 @@ The **account menu** (top right) changes the password, signs out, or signs every
 | --- | --- |
 | **Dashboard** | Radio health, noise floor, airtime, traffic and recent activity at a glance |
 | **Identities** | Create, import, edit, move and delete virtual nodes. Each shows its app port, connected apps, airtime and channels. The relay persona is created for you and can't be deleted |
-| **Chat** | Channel conversations and DMs for any identity, with delivery ticks |
+| **Chat** | Channel conversations and DMs for any identity, the relay persona included (**Speaking as**), with delivery ticks |
 | **Channels** | Every identity's eight channel slots: add, edit and remove channels, or add one to several identities at once |
-| **Nodes & map** | Nodes heard, with signal, hops and position on a map; traceroute and NodeInfo requests |
+| **Nodes & map** | Nodes heard, with signal, hops and position on a map. A node's drawer sends a traceroute, NodeInfo request or message from the identity picked in **Send from** |
 | **Packets** | Live packet log with decoded summaries |
 | **Statistics** | Airtime per identity, traffic and RF history |
 | **Links** | UDP multicast and each MQTT connection's state and counters |
 | **Configuration** | Radios, Relay, Airtime & duty, Position & hardware, MQTT, Web & API tokens, Experimental, Backup & restore |
+| **Plugins** | Install, attach, enable and configure plugins; their status, log and panel; **Send limits** for every plugin ([Plugins](plugins.md)) |
 | **Logs** | The daemon's log, live |
 
 ## Common jobs
