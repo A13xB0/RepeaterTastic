@@ -1,8 +1,9 @@
 # Bench test: first time on a real radio
 
-Nothing in RepeaterTastic has been on air yet. Everything below has been tested against real
-Meshtastic firmware over UDP multicast (`tests/interop`) and in simulation, but not over LoRa.
-Work through the steps in order: each one isolates a layer, so a failure points at one place.
+[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [Several radios](radios.md) · [MQTT](mqtt.md) · [Architecture](architecture.md)
+
+Use this for a first test of a new board, site or build. Work through the steps in order: each one
+isolates a layer, so a failure points at one place.
 
 You need:
 

@@ -10,7 +10,7 @@ Group addresses: firmware <= 2.7.x uses 224.0.0.69, firmware >= 2.8.0 uses
 239.0.0.69. By default both are joined.
 
 Deps: protobuf + cryptography + the ``meshtastic`` pip package (for its generated
-protobufs only). Runs from tests/interop/.venv or the hopstatic-interop-tools image.
+protobufs only). Runs from tests/interop/.venv or the repeatertastic-interop-tools image.
 
 Also importable: ``decode_datagram()`` / ``channel_hash()`` / ``decrypt_ctr()`` /
 ``decrypt_pki()`` are used by capture_vectors.py.

@@ -1,5 +1,7 @@
 # RepeaterTastic HTTP API (v1)
 
+[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [Several radios](radios.md) · [MQTT](mqtt.md) · [Architecture](architecture.md)
+
 JSON over HTTP, served by the daemon (default `:8080`). The web GUI is embedded at `/`. All endpoints
 are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are strings `"!a1c40e07"`;
 `node_num` is the same value as a number.
@@ -73,7 +75,9 @@ New identities default to `role: CLIENT_MUTE`: only each radio's relay persona r
 
 - `POST /api/v1/identities/{id}/move {"radio_id"}` moves an identity (not a relay persona) to another radio with its key, port and chats; unsent messages are marked failed.
 - Experimental (`GET/PUT /api/v1/experimental {"multi_radio_identities"}`): `PUT /identities/{id}/channels/{index}` takes `"radio"` (slots 1-7; `""` = the default radio), and channels carry `radio`, `radio_name` and `radio_removed`. `PATCH /identities/{id}` takes `"multi_radio": {"default_radio", "dm": "auto"|"default"|"<radio>", "fallback"}` (slot radios are kept; `"channels": {"2": "mf"}` replaces them) or `null`. `GET /identities/{id}/route?to=!node` or `?channel=N` → `{"radios", "radio_names", "reason", "enabled"}`. `GET /nodes/{id}/sightings` → what each radio knows about a node.
-- `GET /api/v1/status` carries `restart_reasons`: saved changes waiting for a restart.
+- `GET /api/v1/status` carries `restart_reasons`: saved changes waiting for a restart, as short labels such as `"web address"`, `"mDNS"`, `"site airtime cap"`, `"restored backup"`, `"<radio> added"`, `"<radio> removed"`, `"<radio> modem connection"`, `"<radio> MQTT"` and `"<radio> UDP multicast"`.
+- `POST /api/v1/restart` → 202: shuts the daemon down cleanly and exits with status 75 so its supervisor starts it again (systemd `Restart=on-failure`, a Docker restart policy). Without a supervisor it stays stopped.
+- `POST /api/v1/restore` (a backup file) → `{"restart_required": true}`: the backup is staged and replaces the configuration and identities when the daemon next starts.
 
 `GET /api/v1/identities` → `[Identity]`
 

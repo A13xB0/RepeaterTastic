@@ -35,13 +35,15 @@ relay:
 airtime:
   duty_cycle_percent: 0   # 0 = region default (EU_868: 10%)
   override_duty_cycle: false
-  nodeinfo_interval: 3h
+  identity_share_percent: 25   # share of the budget one identity may use before it's flagged "over share"
+  nodeinfo_interval: 3h        # at least 10m
+  telemetry_interval: 0s       # relay device telemetry; 0s = off, at least 30m
 
 links:
   local_dm_over_rf: false # DMs between identities on this host stay local
   udp_multicast:
     enabled: false        # join the LAN mesh of native meshtasticd nodes (224.0.0.69 + 239.0.0.69)
-  # Meshtastic MQTT broker connections (a list; see README "MQTT"). Recommended for a site on the
+  # Meshtastic MQTT broker connections (a list; see docs/mqtt.md). Recommended for a site on the
   # air: a gateway on the default channel only, downlink off (or on one gateway per mesh), no
   # private channels, relay_mqtt off.
   mqtt:
@@ -78,6 +80,7 @@ web:
   enabled: true
   bind: 0.0.0.0
   port: 8080
+  session_ttl: 168h      # how long a browser login lasts
   # Tiles for the Nodes & map page ({s} {z} {x} {y} {r}). Default: CARTO Positron (OpenStreetMap data).
   # tile.openstreetmap.org refuses browsers on a LAN address, so don't use it here.
   # {api_key} is filled from REPEATERTASTIC_MAP_API_KEY, else the key built into release binaries.
@@ -112,4 +115,4 @@ identities:
 
 # Features still being proven; all off by default.
 # experimental:
-#     multi_radio_identities: false   # identities on several radios, routed by channel and destination (set in the web GUI)
+#   multi_radio_identities: false   # identities on several radios: each channel slot on one radio (docs/radios.md)
