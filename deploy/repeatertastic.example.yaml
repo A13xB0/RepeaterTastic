@@ -14,7 +14,7 @@ mesh:
   channel_num: 0          # 0 = derive the frequency slot from the channel name, like the firmware
   override_frequency_mhz: 0
   frequency_offset_mhz: 0
-  tx_power_dbm: 0         # 0 = region limit. Check your antenna gain and local rules.
+  tx_power_dbm: 20        # SX1262 boards max out at 22 dBm; 0 = region limit. Check antenna gain and local rules.
   hop_limit: 3
 
 relay:
@@ -31,6 +31,9 @@ links:
   local_dm_over_rf: false # DMs between identities on this host stay local
   udp_multicast:
     enabled: false        # join the LAN mesh of native meshtasticd nodes (224.0.0.69 + 239.0.0.69)
+
+mdns:
+  enabled: true          # advertise each identity as _meshtastic._tcp for app discovery
 
 web:
   enabled: true

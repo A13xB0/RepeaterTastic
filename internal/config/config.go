@@ -22,6 +22,7 @@ type Config struct {
 	Airtime    Airtime    `yaml:"airtime" json:"airtime"`
 	Links      Links      `yaml:"links" json:"links"`
 	Web        Web        `yaml:"web" json:"web"`
+	MDNS       MDNS       `yaml:"mdns" json:"mdns"`
 	StateDir   string     `yaml:"state_dir" json:"state_dir"`
 	LogLevel   string     `yaml:"log_level" json:"log_level"`
 	Identities []Identity `yaml:"identities" json:"identities"`
@@ -68,6 +69,11 @@ type UDPMulticast struct {
 	Group   string `yaml:"group" json:"group"`
 }
 
+// MDNS advertises each identity as _meshtastic._tcp so apps can discover it.
+type MDNS struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
 type Web struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Bind    string `yaml:"bind" json:"bind"`
@@ -86,11 +92,12 @@ type Identity struct {
 func Default() *Config {
 	return &Config{
 		Radio:    Radio{Driver: "kiss", Device: "/dev/ttyUSB0", Baud: 115200},
-		Mesh:     Mesh{Region: "EU_868", Preset: "LONG_FAST", HopLimit: 3},
+		Mesh:     Mesh{Region: "EU_868", Preset: "LONG_FAST", HopLimit: 3, TxPowerDBm: 20},
 		Relay:    Relay{Role: mesh.RoleClient, LongName: "RepeaterTastic Relay", ShortName: "RPTR"},
 		Airtime:  Airtime{NodeInfoInterval: 3 * time.Hour},
 		Links:    Links{UDPMulticast: UDPMulticast{Group: "239.0.0.69:4403"}},
 		Web:      Web{Enabled: true, Bind: "0.0.0.0", Port: 8080},
+		MDNS:     MDNS{Enabled: true},
 		StateDir: "/var/lib/repeatertastic",
 		LogLevel: "info",
 	}

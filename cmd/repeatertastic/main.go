@@ -16,6 +16,7 @@ import (
 	"github.com/A13xB0/RepeaterTastic/internal/config"
 	"github.com/A13xB0/RepeaterTastic/internal/links/udp"
 	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
+	"github.com/A13xB0/RepeaterTastic/internal/mdns"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
 	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
 	"github.com/A13xB0/RepeaterTastic/internal/radio"
@@ -80,6 +81,10 @@ func run(cfgPath string) error {
 
 	api := phoneapi.NewManager(host, log)
 	go api.Run(ctx)
+
+	if cfg.MDNS.Enabled {
+		go runMDNS(ctx, host, log)
+	}
 
 	var udpLink *udp.Link
 	if cfg.Links.UDPMulticast.Enabled {
@@ -183,4 +188,34 @@ func newUniqueIdentity(host *mesh.Host, long, short string) (*mesh.Identity, err
 		}
 	}
 	return nil, errors.New("couldn't find a free node number")
+}
+
+// runMDNS keeps the advertised _meshtastic._tcp services in step with the identities.
+func runMDNS(ctx context.Context, host *mesh.Host, log *slog.Logger) {
+	r := mdns.New(log)
+	update := func() {
+		var svcs []mdns.Service
+		for _, id := range host.Identities() {
+			if id.IsRelay || !id.Enabled || id.APIPort <= 0 {
+				continue
+			}
+			u := id.UserCopy()
+			svcs = append(svcs, mdns.Service{Instance: fmt.Sprintf("%s (%s)", u.LongName, id.NodeID()), Port: id.APIPort,
+				TXT: map[string]string{"id": id.NodeID(), "shortname": u.ShortName, "pio_env": "repeatertastic"}})
+		}
+		r.SetServices(svcs)
+	}
+	update()
+	events, unsub := host.Bus.Subscribe(16)
+	defer unsub()
+	go func() {
+		for e := range events {
+			if e.Type == "identity" {
+				update()
+			}
+		}
+	}()
+	if err := r.Run(ctx); err != nil {
+		log.Warn("mDNS advertising disabled", "err", err)
+	}
 }
