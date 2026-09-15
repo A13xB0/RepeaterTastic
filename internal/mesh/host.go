@@ -122,6 +122,7 @@ type Host struct {
 	links  []Link
 
 	started      time.Time
+	stateDir     string
 	radioOK      atomic.Bool
 	nodeInfoAsks sync.Map // uint32 → time.Time
 }
@@ -159,6 +160,7 @@ func NewHost(cfg Config, r radio.Radio, log *slog.Logger) (*Host, error) {
 		txq:       NewTxQueue(64),
 		pending:   map[pktKey]*pendingTx{},
 		started:   time.Now(),
+		stateDir:  cfg.StateDir,
 	}, nil
 }
 
@@ -231,9 +233,10 @@ func (h *Host) AddIdentity(id *Identity) error {
 		h.relay = id
 	}
 	// The primary channel name is shared: it picks the frequency.
+	primary := h.Config().PrimaryChannel
 	id.mu.Lock()
 	if id.Channels[0] != nil && id.Channels[0].Settings != nil {
-		id.Channels[0].Settings.Name = h.cfg.PrimaryChannel
+		id.Channels[0].Settings.Name = primary
 		id.Channels[0].Role = pb.Channel_PRIMARY
 	}
 	id.nextNodeInfo = time.Now().Add(30*time.Second + time.Duration(len(h.ids))*20*time.Second)
@@ -345,8 +348,8 @@ func (h *Host) Run(ctx context.Context) error {
 	if h.Relay() == nil {
 		return errors.New("no relay persona configured")
 	}
-	if h.cfg.StateDir != "" {
-		if err := h.DB.Load(filepath.Join(h.cfg.StateDir, "nodedb.json")); err != nil {
+	if h.stateDir != "" {
+		if err := h.DB.Load(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
 			h.log.Warn("node DB not loaded", "err", err)
 		}
 		for _, id := range h.Identities() { // re-assert local entries over stale saved ones
@@ -360,8 +363,8 @@ func (h *Host) Run(ctx context.Context) error {
 	go func() { defer wg.Done(); h.txLoop(ctx) }()
 	go func() { defer wg.Done(); h.timerLoop(ctx) }()
 	wg.Wait()
-	if h.cfg.StateDir != "" {
-		_ = h.DB.Save(filepath.Join(h.cfg.StateDir, "nodedb.json"))
+	if h.stateDir != "" {
+		_ = h.DB.Save(filepath.Join(h.stateDir, "nodedb.json"))
 	}
 	return ctx.Err()
 }
@@ -425,9 +428,9 @@ func (h *Host) timerLoop(ctx context.Context) {
 		case now := <-tick.C:
 			h.doRetransmissions(now)
 			h.periodicNodeInfo(now)
-			if h.cfg.StateDir != "" && now.Sub(lastSave) > time.Minute {
+			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
 				lastSave = now
-				if err := h.DB.Save(filepath.Join(h.cfg.StateDir, "nodedb.json")); err != nil {
+				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
 					h.log.Warn("saving node DB", "err", err)
 				}
 			}
@@ -516,14 +519,14 @@ type MessageEvent struct {
 
 // SaveIdentities writes all identities to the state dir.
 func (h *Host) SaveIdentities() error {
-	if h.cfg.StateDir == "" {
+	if h.stateDir == "" {
 		return nil
 	}
 	var recs []IdentityRecord
 	for _, id := range h.Identities() {
 		recs = append(recs, id.Record())
 	}
-	return writeJSONAtomic(filepath.Join(h.cfg.StateDir, "identities.json"), recs)
+	return writeJSONAtomic(filepath.Join(h.stateDir, "identities.json"), recs)
 }
 
 // LoadIdentityRecords reads identities saved by SaveIdentities.
@@ -556,7 +559,7 @@ func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
 	}
 	h.cfgMu.Lock()
 	old := h.rp
-	cfg.StateDir = h.cfg.StateDir
+	cfg.StateDir = h.stateDir // fixed at start
 	h.cfg = cfg
 	h.rp = rp
 	h.cfgMu.Unlock()

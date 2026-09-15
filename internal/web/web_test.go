@@ -1,0 +1,150 @@
+package web
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/A13xB0/RepeaterTastic/internal/config"
+	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
+	"github.com/A13xB0/RepeaterTastic/internal/mesh"
+	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
+	"github.com/A13xB0/RepeaterTastic/internal/radio/null"
+)
+
+func testWeb(t *testing.T) *httptest.Server {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.StateDir = dir
+	cfg.Radio.Driver = "none"
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h, err := mesh.NewHost(cfg.MeshConfig(), null.New(), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay, _ := mesh.NewIdentity(nil, "Relay", "RLY")
+	relay.IsRelay = true
+	if err := h.AddIdentity(relay); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = h.Run(ctx) }()
+	s, err := New(Options{Config: cfg, Host: h, API: phoneapi.NewManager(h, log), Logs: logbuf.New(10), Version: "test", Log: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func call(t *testing.T, srv *httptest.Server, method, path, token string, body any) (int, map[string]any, []any) {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, srv.URL+path, rd)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var obj map[string]any
+	var arr []any
+	if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
+		_ = json.Unmarshal(raw, &arr)
+	} else {
+		_ = json.Unmarshal(raw, &obj)
+	}
+	return resp.StatusCode, obj, arr
+}
+
+func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
+	srv := testWeb(t)
+	if code, obj, _ := call(t, srv, "GET", "/api/v1/setup", "", nil); code != 200 || obj["needed"] != true {
+		t.Fatalf("setup needed: %d %v", code, obj)
+	}
+	if code, _, _ := call(t, srv, "GET", "/api/v1/status", "", nil); code != 401 {
+		t.Fatalf("status without token: %d", code)
+	}
+	code, obj, _ := call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse", "region": "EU_868", "preset": "LONG_FAST"})
+	if code != 200 {
+		t.Fatalf("setup: %d %v", code, obj)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "wrong"}); code != 401 {
+		t.Fatal("wrong password accepted")
+	}
+	_, obj, _ = call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok, _ := obj["token"].(string)
+	if tok == "" {
+		t.Fatal("no token")
+	}
+
+	code, st, _ := call(t, srv, "GET", "/api/v1/status", tok, nil)
+	if code != 200 || st["phy"].(map[string]any)["frequency_mhz"].(float64) != 869.525 {
+		t.Fatalf("status %d %v", code, st)
+	}
+
+	code, pv, _ := call(t, srv, "POST", "/api/v1/identities/preview-key", tok, map[string]any{})
+	if code != 200 || !strings.HasPrefix(pv["node_id"].(string), "!") {
+		t.Fatalf("preview %d %v", code, pv)
+	}
+	code, a, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Base Camp", "short_name": "BASE", "api_port": 0})
+	if code != 201 {
+		t.Fatalf("create %d %v", code, a)
+	}
+	code, b, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Ops Desk", "short_name": "OPS"})
+	if code != 201 {
+		t.Fatalf("create 2 %d %v", code, b)
+	}
+	if code, _, list := call(t, srv, "GET", "/api/v1/identities", tok, nil); code != 200 || len(list) != 3 {
+		t.Fatalf("list %d %d", code, len(list))
+	}
+
+	aID, bID := a["node_id"].(string), b["node_id"].(string)
+	code, m, _ := call(t, srv, "POST", "/api/v1/identities/"+aID+"/messages", tok, map[string]any{"to": bID, "text": "hello ops"})
+	if code != 202 {
+		t.Fatalf("send %d %v", code, m)
+	}
+	_, _, msgs := call(t, srv, "GET", "/api/v1/identities/"+bID+"/messages?conversation=dm:"+aID, tok, nil)
+	if len(msgs) != 1 || msgs[0].(map[string]any)["text"] != "hello ops" {
+		t.Fatalf("local DM not delivered: %v", msgs)
+	}
+
+	code, u, _ := call(t, srv, "GET", "/api/v1/identities/"+aID+"/channels/url", tok, nil)
+	if code != 200 || !strings.HasPrefix(u["url"].(string), "https://meshtastic.org/e/#") {
+		t.Fatalf("channel url %d %v", code, u)
+	}
+	if code, e, _ := call(t, srv, "PUT", "/api/v1/identities/"+aID+"/channels/0", tok,
+		map[string]any{"name": "Renamed", "psk": "AQ==", "role": "PRIMARY"}); code != 409 {
+		t.Fatalf("primary rename should be refused: %d %v", code, e)
+	}
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/identities/"+aID+"/channels/1", tok,
+		map[string]any{"name": "Ops", "psk": "AQ==", "role": "SECONDARY"}); code != 200 {
+		t.Fatalf("secondary channel %d", code)
+	}
+	code, tk, _ := call(t, srv, "POST", "/api/v1/tokens", tok, map[string]any{"name": "Home Assistant"})
+	if code != 201 {
+		t.Fatalf("token %d", code)
+	}
+	if code, _, _ := call(t, srv, "GET", "/api/v1/nodes", tk["token"].(string), nil); code != 200 {
+		t.Fatalf("api token rejected: %d", code)
+	}
+	if code, _, _ := call(t, srv, "GET", "/some/spa/route", "", nil); code != 200 {
+		t.Fatalf("spa fallback %d", code)
+	}
+}
