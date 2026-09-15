@@ -1,5 +1,6 @@
-// Command kisstool is a bench tool for the KISS modem driver: modem info, a Meshtastic listener
-// that decodes default-key channel traffic, and a LongFast-style broadcast text sender.
+// Command kisstool is a bench tool for the radio drivers (a KISS modem, or with --board an SX126x on
+// SPI): modem info, a Meshtastic listener that decodes default-key channel traffic, and a
+// LongFast-style broadcast text sender.
 package main
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/sx126x"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
@@ -32,6 +34,7 @@ commands:
   send-text [flags] TEXT   broadcast a text message on the preset's default channel
 
 common flags: --dev /dev/ttyUSB0 --baud 115200
+  or --board /etc/meshtasticd/config.d/lora-….yaml for an SX126x on SPI (experimental)
 PHY flags (listen, send-text): --region EU_868 --preset LONG_FAST --power 10
 send-text flags: --from !xxxxxxxx (default random)
 `
@@ -46,6 +49,7 @@ func main() {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	dev := fs.String("dev", "/dev/ttyUSB0", "serial device")
 	baud := fs.Int("baud", 115200, "baud rate")
+	board := fs.String("board", "", "meshtasticd board file: use an SX126x on SPI instead of a KISS modem")
 	region := fs.String("region", "EU_868", "Meshtastic region")
 	preset := fs.String("preset", "LONG_FAST", "Meshtastic modem preset")
 	power := fs.Int("power", 10, "TX power dBm (0 = region limit)")
@@ -64,7 +68,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	var run func(context.Context, *kiss.Modem) error
+	var run func(context.Context, radio.Radio) error
 	switch cmd {
 	case "info":
 		run = info
@@ -74,7 +78,7 @@ func main() {
 			fatal(err)
 		}
 		if cmd == "listen" {
-			run = func(ctx context.Context, m *kiss.Modem) error { return listen(ctx, m, rp) }
+			run = func(ctx context.Context, m radio.Radio) error { return listen(ctx, m, rp) }
 			break
 		}
 		text := strings.Join(args, " ")
@@ -87,23 +91,44 @@ func main() {
 				fatal(fmt.Errorf("--from: %w", err))
 			}
 		}
-		run = func(ctx context.Context, m *kiss.Modem) error { return sendText(ctx, m, rp, node, text) }
+		run = func(ctx context.Context, m radio.Radio) error { return sendText(ctx, m, rp, node, text) }
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
 
 	octx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	m, err := kiss.Open(octx, kiss.Options{Device: *dev, Baud: *baud})
+	m, err := open(octx, *dev, *baud, *board)
 	cancel()
 	if err != nil {
-		fatal(fmt.Errorf("open %s: %w", *dev, err))
+		fatal(err)
 	}
 	defer m.Close()
 	if err := run(ctx, m); err != nil && !errors.Is(err, context.Canceled) {
 		m.Close()
 		fatal(err)
 	}
+}
+
+func open(ctx context.Context, dev string, baud int, board string) (radio.Radio, error) {
+	if board == "" {
+		m, err := kiss.Open(ctx, kiss.Options{Device: dev, Baud: baud})
+		if err != nil {
+			return nil, fmt.Errorf("open %s: %w", dev, err)
+		}
+		return m, nil
+	}
+	b, err := sx126x.LoadBoard(board)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("board:      %s\n", b.Summary())
+	logf := func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) }
+	r, err := sx126x.Open(ctx, b, logf)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", b.SPIDev, err)
+	}
+	return r, nil
 }
 
 func fatal(err error) {
@@ -124,7 +149,7 @@ func radioConfig(rp phy.RadioParams) radio.Config {
 		SyncWord: rp.SyncWord, Preamble: uint16(rp.Preamble), TxPowerDBm: int8(rp.TxPowerDBm)}
 }
 
-func configure(ctx context.Context, m *kiss.Modem, rp phy.RadioParams) error {
+func configure(ctx context.Context, m radio.Radio, rp phy.RadioParams) error {
 	c := radioConfig(rp)
 	if err := m.Configure(ctx, c); err != nil {
 		return err
@@ -134,7 +159,11 @@ func configure(ctx context.Context, m *kiss.Modem, rp phy.RadioParams) error {
 	return nil
 }
 
-func info(ctx context.Context, m *kiss.Modem) error {
+func info(ctx context.Context, r radio.Radio) error {
+	if s, ok := r.(*sx126x.Radio); ok {
+		return spiInfo(ctx, s)
+	}
+	m := r.(*kiss.Modem)
 	in := m.Info()
 	patched := "no, flash firmware/out/Heltec_v3_kiss_modem-factory.bin"
 	if m.Version() >= kiss.PatchedVersion {
@@ -154,7 +183,53 @@ func info(ctx context.Context, m *kiss.Modem) error {
 	return nil
 }
 
-func listen(ctx context.Context, m *kiss.Modem, rp phy.RadioParams) error {
+// spiInfo reports what an SX126x on SPI says about itself. Open has already proven SPI works (the
+// sync word register read back as 0x1424).
+func spiInfo(ctx context.Context, r *sx126x.Radio) error {
+	in := r.Info()
+	fmt.Printf("device:     %s\nchip:       %s (answered on SPI: sync word register 0x1424 after reset)\n", in.Device, in.Firmware)
+	status, errs, err := r.Diagnostics()
+	if err != nil {
+		return err
+	}
+	modes := map[byte]string{2: "standby RC", 3: "standby XOSC", 4: "FS", 5: "RX", 6: "TX"}
+	mode, ok := modes[status>>4&7]
+	if !ok {
+		mode = fmt.Sprintf("unexpected mode %d", status>>4&7)
+	}
+	fmt.Printf("status:     0x%02x (%s)\n", status, mode)
+	fmt.Printf("dev errors: 0x%04x%s\n", errs, deviceErrorNames(errs))
+	// A noise floor needs the chip in RX on a real channel: configure EU_868 LongFast for a moment.
+	rp, err := resolve("EU_868", "LONG_FAST", 0)
+	if err != nil {
+		return err
+	}
+	if err := configure(ctx, r, rp); err != nil {
+		return fmt.Errorf("configure: %w", err)
+	}
+	time.Sleep(6 * time.Second)
+	st := r.Stats(ctx)
+	fmt.Printf("noise:      %d dBm (RX on %.4f MHz; about -100 to -125 is normal)\nstats:      rx %d, tx %d, errors %d\n",
+		st.NoiseFloorDBm, rp.FrequencyMHz, st.RxPackets, st.TxPackets, st.Errors)
+	return nil
+}
+
+func deviceErrorNames(e uint16) string {
+	names := []string{"RC64K calibration", "RC13M calibration", "PLL calibration", "ADC calibration",
+		"image calibration", "XOSC start (check the TCXO voltage)", "PLL lock", "", "PA ramp"}
+	var out []string
+	for i, n := range names {
+		if e&(1<<i) != 0 && n != "" {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 {
+		return " (none)"
+	}
+	return " (" + strings.Join(out, ", ") + ")"
+}
+
+func listen(ctx context.Context, m radio.Radio, rp phy.RadioParams) error {
 	if err := configure(ctx, m, rp); err != nil {
 		return err
 	}
@@ -199,7 +274,7 @@ func printFrame(w io.Writer, f radio.Frame, hash uint8) {
 	fmt.Fprintln(w)
 }
 
-func sendText(ctx context.Context, m *kiss.Modem, rp phy.RadioParams, from uint32, text string) error {
+func sendText(ctx context.Context, m radio.Radio, rp phy.RadioParams, from uint32, text string) error {
 	if err := configure(ctx, m, rp); err != nil {
 		return err
 	}

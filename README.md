@@ -112,6 +112,7 @@ Docker) bakes in a default map tile key; see [Configuration](docs/configuration.
 | Guide | What's in it |
 | --- | --- |
 | [Hardware and modems](docs/hardware.md) | Supported boards, flashing Mesh KISS, stable device paths, permissions, Docker devices, `kisstool`, troubleshooting |
+| [Testing the SPI radio driver](docs/spi-radio-testing.md) | Experimental: meshtasticd Pi HATs (SX126x on SPI) without a USB modem |
 | [Configuration](docs/configuration.md) | The config file section by section, environment variables, what applies live, backups |
 | [Using the web GUI](docs/web-gui.md) | Identities, chat, channels, nodes and map, packets, statistics, configuration tabs |
 | [Several radios](docs/radios.md) | Running LongFast and MediumFast side by side, the site airtime cap, and the experimental identities on several radios |

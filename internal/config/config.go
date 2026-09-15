@@ -208,7 +208,7 @@ func (c *Config) validateRadios() error {
 				return fmt.Errorf("radios[%s]: %w", rc.ID, err)
 			}
 		}
-		if rc.Radio.Driver == "kiss" && rc.Radio.Device != "" {
+		if (rc.Radio.Driver == "kiss" || rc.Radio.Driver == "spi") && rc.Radio.Device != "" {
 			dev := rc.Radio.Device
 			if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
 				dev = real
@@ -232,7 +232,9 @@ func (c *Config) validateRadios() error {
 }
 
 type Radio struct {
-	Driver string `yaml:"driver" json:"driver"` // kiss | sim
+	Driver string `yaml:"driver" json:"driver"` // kiss | spi | sim | none
+	// Device is the serial port for kiss, or the meshtasticd board file for spi
+	// (/etc/meshtasticd/config.d/lora-….yaml).
 	Device string `yaml:"device" json:"device"`
 	Baud   int    `yaml:"baud" json:"baud"`
 }
@@ -611,8 +613,12 @@ func (c *Config) validateOne() error {
 	}
 	switch c.Radio.Driver {
 	case "kiss", "sim", "none":
+	case "spi":
+		if strings.TrimSpace(c.Radio.Device) == "" {
+			return errors.New("radio.driver spi needs radio.device: the meshtasticd board file, e.g. /etc/meshtasticd/config.d/lora-meshadv-pi-hat-sx1262.yaml")
+		}
 	default:
-		return fmt.Errorf("radio.driver must be kiss or none, not %q", c.Radio.Driver)
+		return fmt.Errorf("radio.driver must be kiss, spi or none, not %q", c.Radio.Driver)
 	}
 	if name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel)); name != "" && name != "AUTO" {
 		if _, ok := pb.HardwareModel_value[name]; !ok {

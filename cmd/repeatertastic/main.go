@@ -28,6 +28,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/lazy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/sx126x"
 	"github.com/ScotMesh/RepeaterTastic/internal/site"
 	"github.com/ScotMesh/RepeaterTastic/internal/web"
 )
@@ -258,6 +259,18 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 			return kiss.Open(ctx, kiss.Options{Device: device, Baud: baud, Logf: logf})
 		},
 			radio.Info{Driver: "kiss", Device: rc.Radio.Device}, 5*time.Second, logf)
+	case "spi":
+		// Experimental: an SX126x on the Pi's SPI bus, described by a meshtasticd board file.
+		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "spi") }
+		r = lazy.New(func(ctx context.Context, device string) (radio.Radio, error) {
+			b, err := sx126x.LoadBoard(device)
+			if err != nil {
+				return nil, err
+			}
+			logf("opening %s", b.Summary())
+			return sx126x.Open(ctx, b, logf)
+		},
+			radio.Info{Driver: "spi", Device: rc.Radio.Device}, 5*time.Second, logf)
 	default:
 		r = null.New()
 	}

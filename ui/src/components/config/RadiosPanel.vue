@@ -150,7 +150,7 @@ async function add() {
   busy.value = true
   try {
     if (editingId.value) {
-      await api.put(`/radios/${enc(editingId.value)}`, { name: form.value.name, driver: 'kiss', device: form.value.device, region: form.value.region,
+      await api.put(`/radios/${enc(editingId.value)}`, { name: form.value.name, device: form.value.device, region: form.value.region,
         preset: form.value.preset, tx_power_dbm: form.value.tx_power_dbm, relay_role: form.value.relay_role })
       adding.value = false
       await load()

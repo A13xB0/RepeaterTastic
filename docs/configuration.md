@@ -50,12 +50,17 @@ The GUI's restart shuts down cleanly and exits with status 75, so the service ma
 
 ```yaml
 radio:
-    driver: kiss          # kiss (a Mesh KISS modem), sim (tests), none (no radio: UDP link only)
+    driver: kiss          # kiss (a Mesh KISS modem), spi (experimental), sim (tests), none (no radio: UDP link only)
     device: /dev/serial/by-id/usb-…-if00-port0
     baud: 115200
 ```
 
 See [Hardware and modems](hardware.md) for device paths and permissions.
+
+`driver: spi` (experimental) drives an SX1262/SX1268/LLCC68 chip on a Pi HAT directly over SPI,
+with `device` set to the meshtasticd board file for the HAT, e.g.
+`/etc/meshtasticd/config.d/lora-MeshAdv-900M30S.yaml`. See
+[Testing the SPI radio driver](spi-radio-testing.md).
 
 ### `mesh`: how the radio joins the mesh
 

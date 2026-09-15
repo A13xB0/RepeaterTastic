@@ -70,7 +70,8 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	if req.PrimaryChannel != nil {
 		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
 	}
-	if req.Device != "" {
+	// The wizard picks serial ports; an SPI radio's device is its board file, set in the config.
+	if req.Device != "" && next.Radio.Driver != "spi" {
 		next.Radio.Device = req.Device
 	}
 	if err := next.Validate(); err != nil {
