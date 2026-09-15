@@ -51,13 +51,19 @@ A host can run several radios (see `radios:` in the example config). Every endpo
              "firmware": "Mesh KISS v2", "connected": true, "configured": true, "noise_floor_dbm": -111,
              "phy": {"…": "as status.phy"}, "relay": {"role": "mute", "node_id": "!be77562b", "long_name": "Relay"},
              "identities": 3, "tx_pct": 0.1, "channel_util_pct": 6.2, "overlaps": ["mf"]}],
- "site": {"radios": 2, "duty_limit_pct": 0, "tx_pct": 0.3}}
+ "site": {"radios": 2, "duty_limit_pct": 0, "tx_pct": 0.3},
+ "pending": [{"id": "ls", "name": "LongSlow", "device": "/dev/rt-ls", "preset": "LONG_SLOW", "relay_role": "mute", "action": "start"}],
+ "restart_required": true}
 ```
 
 `overlaps` lists radios whose channel overlaps this one's; overlapping radios take turns to
 transmit. `site` is `null` for a single radio without a site airtime cap. `PUT /relay?radio=<id>`
-changes an extra radio's relay role. The configuration endpoints still describe the main radio;
-extra radios are configured in the YAML file.
+changes an extra radio's relay role. `GET/PUT /config?radio=<id>` edits a radio's own sections.
+
+- `POST /api/v1/radios` `{"id", "name", "driver": "kiss", "device", "region", "preset", "primary_channel", "tx_power_dbm", "relay_role": "mute", "copy_position": true}` → 201 `{"id", "restart_required": true}`. The radio is written to `radios:` and starts at the next restart (`pending` shows it until then).
+- `PATCH /api/v1/radios/{id}` `{"name"}` renames a radio, the main one included (`site.main_radio_name`).
+- `DELETE /api/v1/radios/{id}` removes an extra radio from the config; it stops at the next restart. Its state dir is kept, so re-adding the id brings its identities back.
+- `GET/PUT /api/v1/site` `{"duty_cycle_percent"}` → `{"duty_cycle_percent", "main_radio_name", "running_duty_cycle_percent", "coordinator", "restart_required"}`. Applies live when a site coordinator is running (several radios, or a cap set at start).
 
 New identities default to `role: CLIENT_MUTE`: only each radio's relay persona repeats.
 
