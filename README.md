@@ -24,6 +24,8 @@ Scottish mesh sites, and useful anywhere.
 - **Several radios on one host** (LongFast, MediumFast, …) that take turns on shared frequencies.
 - **MQTT** to one or more brokers (gateway, uplink-only, map reports, monitor, bridge), a fixed
   site position, device telemetry and an optional UDP multicast link to `meshtasticd` on the LAN.
+- **Plugins** add uploaders, bots and dashboards: upload a .zip in the GUI or drop it in a folder,
+  and choose what each one may see and send.
 - **One static binary or one container.** About 10 MB, no CGO, GUI embedded.
 
 > **Status:** running on a ScotMesh site on a Heltec V3, alongside Reticulum. Still young: expect
@@ -99,7 +101,7 @@ docker build -t repeatertastic .         # container image
 ./firmware/build.sh Heltec_v3_kiss_modem # modem firmware (PlatformIO)
 ```
 
-Go 1.24+ is needed. `MAP_API_KEY=… make build` (or `--secret id=map_api_key,env=CARTO_API_KEY` for
+Go 1.25+ is needed. `MAP_API_KEY=… make build` (or `--secret id=map_api_key,env=CARTO_API_KEY` for
 Docker) bakes in a default map tile key; see [Configuration](docs/configuration.md#web-and-map-tiles).
 
 ## Documentation
@@ -111,6 +113,7 @@ Docker) bakes in a default map tile key; see [Configuration](docs/configuration.
 | [Using the web GUI](docs/web-gui.md) | Identities, chat, channels, nodes and map, packets, statistics, configuration tabs |
 | [Several radios](docs/radios.md) | Running LongFast and MediumFast side by side, the site airtime cap, and the experimental identities on several radios |
 | [MQTT](docs/mqtt.md) | Broker connections, modes, channels, relaying and map reports |
+| [Plugins](docs/plugins.md) | Installing plugins (GUI, folder, CLI, Docker), permissions, attached plugins, and writing your own |
 | [Architecture and development](docs/architecture.md) | How it fits together, code layout, tests and interop |
 | [HTTP API](docs/api.md) | REST and event-stream API for scripts and integrations |
 | [Bench test](docs/bench-test.md) | Step-by-step first test on a real radio |

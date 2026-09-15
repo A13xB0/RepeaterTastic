@@ -12,6 +12,7 @@ import Spinner from '@/components/ui/Spinner.vue'
 import { toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { BROADCAST, clock, dayLabel, relTime, utf8Len } from '@/lib/format'
+import { sendError } from '@/lib/relay'
 
 const route = useRoute()
 const router = useRouter()
@@ -352,7 +353,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
                       <Clock3 v-if="r.m.status === 'queued'" class="size-3" aria-label="queued" />
                       <Check v-else-if="r.m.status === 'sent'" class="size-3" aria-label="sent" />
                       <CheckCheck v-else-if="r.m.status === 'acked'" class="size-3.5 text-brand" aria-label="acknowledged" />
-                      <span v-else-if="r.m.status === 'failed'" class="inline-flex items-center gap-1 text-bad"><CircleAlert class="size-3" />{{ r.m.error || 'failed' }}</span>
+                      <span v-else-if="r.m.status === 'failed'" class="inline-flex items-center gap-1 text-bad"><CircleAlert class="size-3" />{{ sendError(r.m.error) }}</span>
                       <span class="max-sm:hidden">{{ r.m.status === 'acked' ? (current.kind === 'dm' ? 'delivered' : 'heard relayed') : r.m.status === 'failed' ? '' : r.m.status }}</span>
                     </template>
                   </div>

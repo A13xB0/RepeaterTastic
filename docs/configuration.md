@@ -36,6 +36,8 @@ with a **Restart now** button:
 - MQTT connections and UDP multicast
 - `web.bind`, `web.port` and `mdns`
 - turning a site airtime cap on for a single radio
+- anything in `plugins:` except the send limits (enabled, dir, listen, URL installs, entries); the
+  send limits apply live from **Plugins → Send limits**
 - a restored backup
 
 The GUI's restart shuts down cleanly and exits with status 75, so the service manager starts it again
@@ -75,12 +77,21 @@ Each radio has one relay persona, the only identity that repeats other nodes' pa
 
 ```yaml
 relay:
-    role: client          # client: repeat like a normal node · router: repeat first · mute: never repeat
+    role: client          # client · router · mute · monitor · off
     long_name: RepeaterTastic Relay
     short_name: RPTR
 ```
 
-GUI: **Configuration → Relay**, or the role switch in the top bar.
+| Role | The relay persona | Identities |
+| --- | --- | --- |
+| `client` | Repeats like a normal node: after routers, and cancels if another node relays first | Send and receive |
+| `router` | Repeats first; for a well-placed site the mesh relies on | Send and receive |
+| `mute` | Never repeats | Send and receive |
+| `monitor` | Never repeats | Receive only: **nothing is transmitted** (no messages, ACKs, NodeInfo or telemetry); sends fail |
+| `off` | The radio is ignored: nothing received or sent (the modem stays powered) | Local DMs, links and apps still work |
+
+Switching to monitor or off fails anything still queued. GUI: **Configuration → Relay**, or the
+switch in the top bar.
 
 ### `airtime`: duty cycle and background traffic
 
@@ -156,6 +167,11 @@ account menu) and stored in the state folder, not in this file.
 
 Extra radios, the site-wide airtime cap and the experimental identities on several radios are
 covered in [Several radios](radios.md).
+
+### `plugins`
+
+The plugin system: its folder, the TCP address for attached plugins, URL installs, send budgets and
+plugins pinned by the config file. See [Plugins](plugins.md#configuration).
 
 ## Backups
 

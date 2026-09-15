@@ -28,7 +28,7 @@ position:
   identities: relay       # relay (the relay persona only) or all
 
 relay:
-  role: client            # client (relay like a normal node) | router (relay first) | mute (never relay)
+  role: client            # client (relay like a normal node) | router (relay first) | mute (never relay) | monitor (listen only, never transmit) | off (ignore the radio)
   long_name: RepeaterTastic Relay
   short_name: RPTR
 
@@ -112,6 +112,16 @@ identities:
   - long_name: Base Camp
     short_name: BASE
     api_port: 4403
+
+# Plugins: separate programs that extend RepeaterTastic (docs/plugins.md). Install them from the
+# GUI (Plugins), by copying a bundle into <state_dir>/plugins/inbox (or <dir>/inbox), or with
+# `repeatertastic plugin`. Changes here need a restart.
+plugins:
+    enabled: true
+    listen: ""                    # e.g. 127.0.0.1:4450 to let plugins running elsewhere attach
+    allow_url_install: true
+    messages_per_hour: 30         # per plugin, sent from a relay persona; 0 = never
+    traceroutes_per_hour: 12
 
 # Features still being proven; all off by default.
 # experimental:

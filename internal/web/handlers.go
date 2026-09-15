@@ -23,9 +23,9 @@ import (
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 // ---------------------------------------------------------------------------------- setup/auth
@@ -1530,6 +1530,16 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				payload = nodeJSON(en, s.localIDs(s.hostFor(r)))
+			case "plugin":
+				id, _ := e.Data.(string)
+				if s.opt.Plugins == nil {
+					continue
+				}
+				if in, err := s.opt.Plugins.Get(id); err == nil {
+					payload = s.pluginJSON(in)
+				} else {
+					payload = map[string]any{"id": id, "deleted": true}
+				}
 			}
 			if !send(e.Type, payload) {
 				return

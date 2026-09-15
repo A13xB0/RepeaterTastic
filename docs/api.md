@@ -37,7 +37,7 @@ are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are 
 }
 ```
 
-`PUT /api/v1/relay` `{"role": "client" | "router" | "mute"}` → status.relay
+`PUT /api/v1/relay` `{"role": "client" | "router" | "mute" | "monitor" | "off"}` → status.relay. Monitor never transmits; off ignores the radio. Sends in either mode fail with routing error `NO_INTERFACE`.
 
 ## Radios
 
@@ -162,6 +162,7 @@ A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": 
 - `node` → Node (on change)
 - `traceroute` → `{"identity", "target", "route": ["!…"], "snr_towards": [6.5], "route_back": [...], "snr_back": [...]}`
 - `log` → `{"time", "level": "info|warn|error|debug", "msg"}`
+- `plugin` → Plugin (on change; `{"id", "deleted": true}` when removed)
 
 ## Statistics
 
@@ -182,6 +183,25 @@ A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": 
 - `GET /api/v1/links[?radio=<id>]` → the UDP link, then one entry per MQTT connection (`{"name": "mqtt:<connection>", "connection", "type": "mqtt", "mode", "format", "gateway", "gateway_id", "enabled", "connected", "broker", "root", "tls", "rx", "tx", "dropped", "uplink": ["LongFast"], "downlink": [], "ok_to_mqtt", "relay_mqtt", "cross_link", "map_report"}`), then the legacy shape:
 - `GET/PUT /api/v1/config` `mqtt` is a list of connections (a single object is accepted on PUT). `password` is write-only (`password_set` says one is saved, `clear_password` removes it); `key` is the saved name, so a renamed connection keeps its password. `mode: "bridge"` needs `bridge_acknowledged: true`.
 - `GET /api/v1/links` (legacy shape) → `[{"name": "udp", "type": "udp_multicast", "enabled": false, "connected": false, "rx": 0, "tx": 0}]`
+
+## Plugins
+
+See [Plugins](plugins.md). A Plugin is `{"id", "name", "version", "description", "author", "homepage", "license", "kind": "managed|attached", "enabled", "pinned", "state", "detail", "permissions": [{"key", "text", "granted"}], "network", "settings": [schema], "values" (secrets as "••••••••"), "secrets_set", "status": {"summary", "state", "fields"}, "has_logo", "has_panel", "logo_url", "panel_url", "connected", "connected_at", "started_at", "restarts", "dropped_events", "installed_at", "source"}`.
+`state` is one of `disabled`, `needs_review`, `needs_settings`, `starting`, `running`, `restarting`, `crashed`, `stopped`, `waiting` or `unsupported`.
+
+- `GET /api/v1/plugins` → `{"enabled", "plugins": [Plugin], "permissions": {key: text}, "attach_address", "allow_url_install", "folder", "messages_per_hour", "traceroutes_per_hour", "identities": [{"node_id", "long_name", "short_name", "radio_id", "radio_name", "is_relay"}]}` (`identities` are the choices for `identities` settings)
+- `POST /api/v1/plugins`: a multipart upload (field `bundle`) or JSON `{"url"}` → 201 Plugin (installed off, or upgraded)
+- `PUT /api/v1/plugins/limits` `{"messages_per_hour": 0-600, "traceroutes_per_hour": 0-120}` → the limits; applies to every plugin at once and saves the config
+- `POST /api/v1/plugins/attach` `{"id", "name", "permissions"}` → `{"plugin", "token", "address"}` (the token is shown once)
+- `GET /api/v1/plugins/{id}` → Plugin; `DELETE /api/v1/plugins/{id}[?keep_data=1]` → 204
+- `POST /api/v1/plugins/{id}/enable` `{"permissions": [...]}`, `POST …/disable`, `POST …/restart` → Plugin
+- `PUT /api/v1/plugins/{id}/settings` `{key: value}` (`null` clears; the secret mask keeps a saved secret) → Plugin
+- `POST /api/v1/plugins/{id}/token` → `{"token", "address"}` (attached plugins)
+- `GET /api/v1/plugins/{id}/logs` → `[{"time", "level", "source": "plugin|stdout|stderr|host", "message"}]`
+- `GET /api/v1/plugins/{id}/panel-data` → the plugin's panel JSON (`null` if none); `POST …/panel-action` `{"name", "payload"}` → 202
+- `GET /plugin-assets/{id}/{key}/logo` and `/plugin-assets/{id}/{key}/panel/…`: no bearer token needed, since `logo_url` and `panel_url` carry the key; served with a sandbox Content-Security-Policy.
+
+A plugin whose settings are pinned by `plugins.entries` answers 409 to enable, disable, settings and remove. `…/restart` answers 409 while the plugin can't run (it needs settings or a permission review). With `plugins.enabled: false`, `GET /api/v1/plugins` returns `{"enabled": false, "plugins": []}` and the other endpoints return 503.
 
 ## Proposed additions (from the web GUI)
 

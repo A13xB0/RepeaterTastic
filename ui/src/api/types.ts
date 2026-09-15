@@ -1,7 +1,7 @@
 // Types for the RepeaterTastic HTTP API — see docs/api.md (including "Proposed additions").
 // Shared by the SPA and the dev mock, so keep this file free of runtime imports.
 
-export type RelayRole = 'client' | 'router' | 'mute'
+export type RelayRole = 'client' | 'router' | 'mute' | 'monitor' | 'off'
 export type ChannelRole = 'PRIMARY' | 'SECONDARY' | 'DISABLED'
 export type PacketKind = 'ours' | 'relayed' | 'dup' | 'undecryptable' | 'delivered' | 'local'
 export type MessageStatus = 'queued' | 'sent' | 'acked' | 'failed' | 'received'
@@ -425,4 +425,81 @@ export interface Config {
 export interface ConfigPutResult {
   config: Config
   restart_required: boolean
+}
+
+// ------------------------------------------------------------------------------------ plugins
+
+export type PluginState =
+  | 'disabled' | 'needs_review' | 'needs_settings' | 'starting' | 'running' | 'restarting' | 'crashed' | 'stopped' | 'waiting' | 'unsupported'
+
+export interface PluginSetting {
+  key: string
+  label: string
+  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select' | 'multiselect' | 'radios' | 'identities'
+  help?: string
+  required?: boolean
+  default?: unknown
+  options?: string[]
+  placeholder?: string
+}
+
+export interface Plugin {
+  id: string
+  name: string
+  version?: string
+  description?: string
+  author?: string
+  homepage?: string
+  license?: string
+  kind: 'managed' | 'attached'
+  enabled: boolean
+  pinned: boolean
+  state: PluginState
+  detail?: string
+  permissions: { key: string; text: string; granted: boolean }[]
+  network?: string[]
+  settings: PluginSetting[]
+  values: Record<string, unknown>
+  secrets_set: string[]
+  status?: { summary: string; state: 'ok' | 'warning' | 'error'; fields?: Record<string, string> }
+  has_logo: boolean
+  has_panel: boolean
+  logo_url?: string
+  panel_url?: string
+  connected: boolean
+  connected_at?: number
+  started_at?: number
+  restarts: number
+  dropped_events: number
+  installed_at: number
+  source?: string
+  deleted?: boolean
+}
+
+export interface PluginsResponse {
+  enabled: boolean
+  plugins: Plugin[]
+  permissions?: Record<string, string>
+  attach_address?: string
+  allow_url_install?: boolean
+  folder?: string
+  messages_per_hour?: number
+  traceroutes_per_hour?: number
+  identities?: PluginIdentityChoice[]
+}
+
+export interface PluginIdentityChoice {
+  node_id: string
+  long_name: string
+  short_name: string
+  radio_id: string
+  radio_name: string
+  is_relay: boolean
+}
+
+export interface PluginLogLine {
+  time: number
+  level: 'debug' | 'info' | 'warn' | 'error'
+  source: 'plugin' | 'stdout' | 'stderr' | 'host'
+  message: string
 }

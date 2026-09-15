@@ -1,7 +1,7 @@
 // Small reactive store fed by REST snapshots plus the SSE stream (/api/v1/events).
 import { markRaw, reactive, shallowRef, triggerRef } from 'vue'
 import { API_BASE, api, radio, setRadio, token, withRadio } from '@/api/client'
-import type { Identity, LogLine, MeshNode, Message, Packet, RadioSummary, RadiosResponse, RfStats, Status, TracerouteEvent } from '@/api/types'
+import type { Identity, LogLine, MeshNode, Message, Packet, Plugin, RadioSummary, RadiosResponse, RfStats, Status, TracerouteEvent } from '@/api/types'
 
 const PACKET_BUFFER = 400
 const LOG_BUFFER = 1500
@@ -105,6 +105,9 @@ const listeners = {
   message: new Set<Handler<{ identity: string; message: Message }>>(),
   traceroute: new Set<Handler<TracerouteEvent>>(),
   log: new Set<Handler<LogLine>>(),
+  plugin: new Set<Handler<Plugin>>(),
+  /** The event stream reconnected after a pause: views that load their own data should reload. */
+  resync: new Set<Handler<void>>(),
 }
 type Events = typeof listeners
 
@@ -237,6 +240,10 @@ export function connect() {
     const t = parse<TracerouteEvent>(e as MessageEvent)
     if (t) listeners.traceroute.forEach((fn) => fn(t))
   })
+  es.addEventListener('plugin', (e) => {
+    const p = parse<Plugin>(e as MessageEvent)
+    if (p) listeners.plugin.forEach((fn) => fn(p))
+  })
   es.addEventListener('log', (e) => {
     const l = parse<LogLine>(e as MessageEvent)
     if (!l) return
@@ -265,6 +272,33 @@ export async function startLive() {
     api.get<RfStats>('/stats/rf?window=1h').then((r) => (live.noiseSeed = r.points.slice(-40).map((p) => p.noise_floor_dbm))),
   ])
 }
+
+// A browser allows only six connections to one address, and every open tab's event stream holds
+// one for good: with six tabs open, nothing else can load. Tabs in the background give their
+// stream up after a short while and catch up when they're shown again.
+const HIDDEN_GRACE_MS = 15_000
+let hiddenTimer: number | undefined
+let pausedHidden = false
+document.addEventListener('visibilitychange', () => {
+  if (!started) return
+  if (document.hidden) {
+    clearTimeout(hiddenTimer)
+    hiddenTimer = window.setTimeout(() => {
+      if (document.hidden && started) {
+        pausedHidden = true
+        disconnect()
+      }
+    }, HIDDEN_GRACE_MS)
+    return
+  }
+  clearTimeout(hiddenTimer)
+  if (pausedHidden) {
+    pausedHidden = false
+    connect()
+    void Promise.allSettled([refreshStatus(), refreshIdentities(), refreshNodes(), refreshPackets(), refreshLogs(), refreshRadios()])
+    listeners.resync.forEach((fn) => fn())
+  }
+})
 
 export function stopLive() {
   started = false

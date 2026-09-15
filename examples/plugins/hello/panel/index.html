@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hello Mesh</title>
+<style>
+  :root { --bg: #fff; --ink: #0d1a17; --ink-3: #72807c; --line: #e7edeb; --brand: #0c8a6c; font: 13px/1.5 system-ui, sans-serif; }
+  :root.dark { --bg: #111917; --ink: #e6efec; --ink-3: #8a9a95; --line: #26312e; --brand: #3ecf9f; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 15px; margin: 0; }
+  .muted { color: var(--ink-3); }
+  .tiles { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-width: 110px; }
+  .tile b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 500; color: var(--ink-3); }
+  td.num { font-variant-numeric: tabular-nums; }
+  button { margin-left: auto; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--brand); }
+</style>
+</head>
+<body>
+<header><h1>Heard since the plugin started</h1><span class="muted" id="updated"></span><button id="clear">Clear</button></header>
+<div class="tiles" id="tiles"></div>
+<table><thead><tr><th>Node</th><th>Name</th><th>Radio</th><th>Packets</th><th>SNR</th><th>Last heard</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+  const el = (id) => document.getElementById(id)
+  const text = (s) => document.createTextNode(s == null ? '' : String(s))
+  function render(d) {
+    el('tiles').replaceChildren(...Object.entries(d?.radios ?? {}).map(([id, n]) => {
+      const t = document.createElement('div'); t.className = 'tile'
+      const b = document.createElement('b'); b.append(text(n)); t.append(b, text('packets on ' + id)); return t
+    }))
+    el('rows').replaceChildren(...(d?.nodes ?? []).map((n) => {
+      const tr = document.createElement('tr')
+      for (const [v, cls] of [[n.id], [n.name], [n.radio], [n.packets, 'num'], [n.snr?.toFixed(1), 'num'], [new Date(n.last_seen).toLocaleTimeString()]]) {
+        const td = document.createElement('td'); if (cls) td.className = cls; td.append(text(v)); tr.append(td)
+      }
+      return tr
+    }))
+    el('updated').textContent = d?.updated ? 'updated ' + new Date(d.updated).toLocaleTimeString() : 'waiting for data'
+    parent.postMessage({ type: 'resize', height: Math.ceil(document.body.getBoundingClientRect().height) + 32 }, '*')
+  }
+  addEventListener('message', (e) => {
+    if (e.source !== parent || e.data?.type !== 'data') return
+    document.documentElement.classList.toggle('dark', e.data.theme === 'dark')
+    render(e.data.data)
+  })
+  el('clear').onclick = () => parent.postMessage({ type: 'action', name: 'clear' }, '*')
+  parent.postMessage({ type: 'ready' }, '*')
+</script>
+</body>
+</html>

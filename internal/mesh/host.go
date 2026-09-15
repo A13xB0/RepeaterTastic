@@ -19,18 +19,40 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/radio"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
-// Relay roles for the host's relay persona.
+// Relay roles for the host's relay persona. Monitor and off are radio modes: monitor listens and
+// never transmits anything (no relaying, no identity traffic, no ACKs); off ignores the radio
+// altogether (nothing received, nothing sent).
 const (
-	RoleClient = "client"
-	RoleRouter = "router"
-	RoleMute   = "mute"
+	RoleClient  = "client"
+	RoleRouter  = "router"
+	RoleMute    = "mute"
+	RoleMonitor = "monitor"
+	RoleOff     = "off"
 )
+
+// ValidRelayRole reports whether role is one of the relay roles.
+func ValidRelayRole(role string) bool {
+	switch role {
+	case RoleClient, RoleRouter, RoleMute, RoleMonitor, RoleOff:
+		return true
+	}
+	return false
+}
+
+// ErrNotTransmitting is returned for sends while the radio is in monitor or off mode.
+var ErrNotTransmitting = &RoutingError{pb.Routing_NO_INTERFACE}
+
+// Transmits reports whether the radio may transmit (not monitor or off).
+func (h *Host) Transmits() bool {
+	r := h.Config().RelayRole
+	return r != RoleMonitor && r != RoleOff
+}
 
 const (
 	numReliableRetx         = 3
@@ -187,6 +209,9 @@ type Host struct {
 
 	gateMu sync.RWMutex
 	gate   TxGate
+
+	// PacketCopies: put the packet and its decoded payload on bus packet events (plugins use them).
+	PacketCopies atomic.Bool
 }
 
 // NewHost validates the PHY and prepares a host. Call AddIdentity for each node, then Run.
@@ -264,20 +289,22 @@ func (h *Host) Started() time.Time { return h.started }
 
 // SetRelayRole changes the relay persona role at runtime.
 func (h *Host) SetRelayRole(role string) error {
-	switch role {
-	case RoleClient, RoleRouter, RoleMute:
-	default:
+	if !ValidRelayRole(role) {
 		return fmt.Errorf("unknown relay role %q", role)
 	}
 	h.cfgMu.Lock()
+	prev := h.cfg.RelayRole
 	h.cfg.RelayRole = role
 	h.cfgMu.Unlock()
+	if prev != role && (role == RoleMonitor || role == RoleOff) {
+		h.dropAllOutgoing(role)
+	}
 	if r := h.Relay(); r != nil {
 		r.mu.Lock()
 		switch role {
 		case RoleRouter:
 			r.User.Role = pb.Config_DeviceConfig_ROUTER
-		case RoleMute:
+		case RoleMute, RoleMonitor, RoleOff:
 			r.User.Role = pb.Config_DeviceConfig_CLIENT_MUTE
 		default:
 			r.User.Role = pb.Config_DeviceConfig_CLIENT
@@ -534,6 +561,9 @@ func (h *Host) rxLoop(ctx context.Context) {
 				return
 			}
 			h.Air.AddRx(f.At, h.RadioParams().AirtimeMs(len(f.Data)))
+			if h.Config().RelayRole == RoleOff {
+				continue // the radio is off: whatever the modem hears is ignored
+			}
 			p := wire.DecodeFrame(f.Data, int32(f.RSSI), f.SNR)
 			if p == nil {
 				h.Counters.RxBad.Add(1)
@@ -603,6 +633,15 @@ func (h *Host) txLoop(ctx context.Context) {
 			h.log.Warn("duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
 			continue
 		}
+		if !h.Transmits() {
+			// Monitor or off: nothing goes on air. Local senders hear why.
+			if !it.relay {
+				if o := h.Identity(it.origin); o != nil && it.plain.GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP {
+					h.nakLocal(o, it.pkt.Id, pb.Routing_NO_INTERFACE)
+				}
+			}
+			continue
+		}
 		if busy, err := h.radio.ChannelBusy(ctx); err == nil && busy && it.attempts < 12 {
 			it.attempts++
 			it.due = now.Add(time.Duration(phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())+rp.SlotTimeMs()) * time.Millisecond)
@@ -632,6 +671,11 @@ func (h *Host) txLoop(ctx context.Context) {
 			}
 			release = rel
 		}
+		if !h.Transmits() {
+			// Switched to monitor or off while waiting for the site's turn to transmit.
+			release()
+			continue
+		}
 		sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
 		err = h.radio.Send(sctx, frame)
 		cancel()
@@ -652,7 +696,7 @@ func (h *Host) txLoop(ctx context.Context) {
 		rec := h.baseRecord(it.pkt, frame, "tx", kind)
 		rec.AirtimeMs = ms
 		if it.plain != nil {
-			rec.Port, rec.PKI = it.plain.Portnum.String(), it.pkt.PkiEncrypted
+			rec.Port, rec.PKI, rec.Data = it.plain.Portnum.String(), it.pkt.PkiEncrypted, it.plain
 			rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
 		} else if dec := h.decode(it.pkt); dec.ok {
 			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold
@@ -760,6 +804,18 @@ func (h *Host) QueueLen() int { return h.txq.Len() }
 
 // DropOutgoing cancels an identity's queued transmissions and pending retries (before it moves
 // to another radio). Its unsent messages are marked failed so they can be sent again.
+// dropAllOutgoing fails every identity's queued and retrying packets when the radio stops
+// transmitting.
+func (h *Host) dropAllOutgoing(role string) {
+	reason := "the radio is in monitor mode (listen only)"
+	if role == RoleOff {
+		reason = "the radio is off"
+	}
+	for _, id := range h.Identities() {
+		h.DropOutgoing(id.NodeNum, reason)
+	}
+}
+
 func (h *Host) DropOutgoing(num uint32, reason string) int {
 	ids := h.txq.DropOrigin(num)
 	h.pmu.Lock()

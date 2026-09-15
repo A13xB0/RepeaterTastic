@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/sim"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 func TestDropOutgoing(t *testing.T) {

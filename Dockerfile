@@ -2,7 +2,7 @@
 # user in a distroless image. The web GUI is embedded (internal/web/dist is committed), so no
 # Node toolchain is needed here. See deploy/docker-compose.example.yml and the README.
 
-FROM golang:1.24-bookworm AS build
+FROM golang:1.25-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT

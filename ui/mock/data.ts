@@ -72,7 +72,7 @@ export const state = {
   password: 'meshtastic',
   sessions: new Set<string>(),
   startedAt: now() - 5234_000,
-  relayRole: 'client' as 'client' | 'router' | 'mute',
+  relayRole: 'client' as 'client' | 'router' | 'mute' | 'monitor' | 'off',
   identities: [] as Identity[],
   nodes: new Map<string, MeshNode>(),
   packets: [] as Packet[],

@@ -8,8 +8,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) PacketRecord {
@@ -27,6 +27,7 @@ func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) 
 		r.Size = wire.HeaderLen + len(p.GetEncrypted())
 	}
 	r.AirtimeMs = h.RadioParams().AirtimeMs(r.Size)
+	r.Mesh = p
 	if gs := h.channelGroups(uint8(p.Channel)); len(gs) > 0 && !(p.Channel == 0 && h.Identity(p.To) != nil) {
 		r.Channel = gs[0].name
 	}
@@ -35,6 +36,17 @@ func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) 
 
 func (h *Host) fillRecordFromDecoded(r *PacketRecord, p *pb.MeshPacket, dec decodeResult) {
 	r.Port = dec.data.Portnum.String()
+	r.Data = dec.data
+	r.Holders = nil
+	if dec.pki {
+		if dec.target != nil {
+			r.Holders = []ChannelHolder{{NodeNum: dec.target.NodeNum, Index: 0, Relay: dec.target.IsRelay}}
+		}
+	} else if dec.group != nil {
+		for _, m := range dec.group.members {
+			r.Holders = append(r.Holders, ChannelHolder{NodeNum: m.id.NodeNum, Index: m.index, Relay: m.id.IsRelay})
+		}
+	}
 	r.PKI = dec.pki
 	if dec.group != nil {
 		r.Channel = dec.group.name
@@ -51,7 +63,19 @@ func (h *Host) fillRecordFromDecoded(r *PacketRecord, p *pb.MeshPacket, dec deco
 }
 
 func (h *Host) publishPacket(r PacketRecord) {
+	mp, data, holders := r.Mesh, r.Data, r.Holders
+	r.Mesh, r.Data, r.Holders = nil, nil, nil
 	r = h.Packets.Add(r)
+	// Copies for plugins, only when some are listening: the pipeline keeps using the originals.
+	if h.PacketCopies.Load() {
+		if mp != nil {
+			r.Mesh = clonePacket(mp)
+		}
+		if data != nil {
+			r.Data = proto.Clone(data).(*pb.Data)
+		}
+		r.Holders = holders
+	}
 	h.Bus.Publish(Event{Type: "packet", Data: r})
 }
 

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 const (

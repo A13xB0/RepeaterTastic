@@ -8,9 +8,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 // RoutingError is a send failure the client API reports as a Routing NAK.
@@ -65,6 +65,12 @@ func (h *Host) Send(from *Identity, p *pb.MeshPacket) error {
 	}
 	if p.To == wire.BroadcastNoLoRa {
 		return nil
+	}
+	if !h.Transmits() && len(route) == 0 {
+		if d.Portnum == pb.PortNum_TEXT_MESSAGE_APP {
+			h.failSend(from, p, pb.Routing_NO_INTERFACE)
+		}
+		return ErrNotTransmitting
 	}
 	if len(route) > 0 { // experimental multi-radio routing
 		var err error

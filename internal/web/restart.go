@@ -43,6 +43,9 @@ func (s *Server) restartReasons() []string {
 	if (b.Site.DutyCyclePct > 0) != (c.Site.DutyCyclePct > 0) && s.opt.Site == nil {
 		out = append(out, "site airtime cap")
 	}
+	if !reflect.DeepEqual(b.Plugins, c.Plugins) {
+		out = append(out, "plugins")
+	}
 	running := map[string]config.RadioConfig{}
 	for _, rc := range b.RadioConfigs() {
 		running[rc.ID] = rc

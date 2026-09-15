@@ -11,7 +11,8 @@ The **account menu** (top right) changes the password, signs out, or signs every
   MQTT settings follow the radio picked here.
 - **Modem state, frequency and preset**, and the **airtime gauge**: this hour's transmit time against
   the duty-cycle budget.
-- **Relay switch:** client, router or mute for this radio's relay persona.
+- **Relay switch:** client, router or mute for this radio's relay persona, then **Monitor** (the
+  radio only listens) and **Off** (the radio is ignored). Both ask before switching.
 - A **restart banner** appears under the bar when saved changes need a restart, listing them.
 
 ## Pages

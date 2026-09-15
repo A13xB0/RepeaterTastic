@@ -98,6 +98,36 @@ export async function request<T>(method: Method, path: string, body?: unknown, o
   return (text ? JSON.parse(text) : undefined) as T
 }
 
+/** Upload a file as multipart form data (field name `field`). */
+export async function upload<T>(path: string, field: string, file: File): Promise<T> {
+  const form = new FormData()
+  form.append(field, file)
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (token.value) headers.Authorization = `Bearer ${token.value}`
+  let res: Response
+  try {
+    res = await fetch(API_BASE + path, { method: 'POST', headers, body: form })
+  } catch {
+    throw new ApiError(0, 'Cannot reach the RepeaterTastic daemon')
+  }
+  const text = await res.text()
+  let body: unknown
+  try {
+    body = text ? JSON.parse(text) : undefined
+  } catch {
+    body = undefined
+  }
+  if (!res.ok) {
+    const msg = body && typeof (body as { error?: unknown }).error === 'string' ? (body as { error: string }).error : `${res.status} ${res.statusText}`
+    if (res.status === 401) {
+      setToken(null)
+      onUnauthorized()
+    }
+    throw new ApiError(res.status, msg)
+  }
+  return body as T
+}
+
 export const api = {
   get: <T>(p: string) => request<T>('GET', p),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b ?? {}),

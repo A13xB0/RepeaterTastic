@@ -7,7 +7,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X main.mapAPIKey=$(MAP_API_KEY)
 GOFLAGS := -trimpath
 DIST := dist
 
-.PHONY: all build ui test race interop dist clean proto firmware
+.PHONY: all build ui test race interop dist clean proto firmware plugin-example
 
 all: build
 
@@ -45,6 +45,10 @@ dist:
 
 firmware:
 	./firmware/build.sh
+
+# The example plugin as an installable bundle.
+plugin-example:
+	./scripts/bundle-plugin.sh examples/plugins/hello ./examples/plugins/hello $(DIST)/hello-plugin.zip
 
 clean:
 	rm -rf bin $(DIST)

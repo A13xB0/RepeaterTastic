@@ -23,6 +23,7 @@ import (
 	"github.com/A13xB0/RepeaterTastic/internal/mdns"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
 	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
+	"github.com/A13xB0/RepeaterTastic/internal/plugins"
 	"github.com/A13xB0/RepeaterTastic/internal/radio"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/kiss"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/lazy"
@@ -62,6 +63,9 @@ func main() {
 	}
 	cfgPath := flag.String("config", defaultConfig, "configuration file (env REPEATERTASTIC_CONFIG)")
 	flag.Parse()
+	if flag.Arg(0) == "plugin" {
+		os.Exit(pluginCommand(*cfgPath, flag.Args()[1:]))
+	}
 	if err := run(*cfgPath); err != nil {
 		fmt.Fprintln(os.Stderr, "repeatertastic:", err)
 		os.Exit(1)
@@ -160,6 +164,27 @@ func run(cfgPath string) error {
 		go runMDNS(ctx, hosts, log)
 	}
 
+	var pm *plugins.Manager
+	if cfg.Plugins.Enabled {
+		prs := make([]plugins.Radio, 0, len(radios))
+		for _, rt := range radios {
+			prs = append(prs, plugins.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Host: rt.host})
+		}
+		pm, err = plugins.New(plugins.Options{Config: cfg.Plugins, Dir: cfg.PluginDir(), Radios: prs, Version: version, Log: log,
+			Notify: func(id string) {
+				for _, rt := range radios {
+					rt.host.Bus.Publish(mesh.Event{Type: "plugin", Data: id})
+				}
+			}})
+		if err != nil {
+			return fmt.Errorf("plugins: %w", err)
+		}
+		if err := pm.Start(ctx); err != nil {
+			return fmt.Errorf("plugins: %w", err)
+		}
+		defer func() { stop(); pm.Wait() }() // plugins stop before the radios close
+	}
+
 	if cfg.Web.Enabled {
 		extra := make([]web.Radio, 0, len(radios)-1)
 		for _, rt := range radios[1:] {
@@ -168,7 +193,7 @@ func run(cfgPath string) error {
 		key, source := resolveMapAPIKey()
 		log.Info("map tiles", "api_key", source)
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
-			MapAPIKey: key, MapKeySource: source, LogLevel: level, Federation: fed,
+			MapAPIKey: key, MapKeySource: source, LogLevel: level, Federation: fed, Plugins: pm,
 			Restart: func() { restartRequested.Store(true); stop() },
 			Radios:  extra, Site: st, Version: version, Log: log})
 		if err != nil {
@@ -415,4 +440,19 @@ func applyStaged(path string) bool {
 		return false
 	}
 	return true
+}
+
+// pluginCommand runs "repeatertastic plugin ...".
+func pluginCommand(cfgPath string, args []string) int {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "repeatertastic:", err)
+		return 1
+	}
+	cfg.ApplyEnv()
+	if err := plugins.CLI(cfg, args, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "repeatertastic plugin:", err)
+		return 1
+	}
+	return 0
 }

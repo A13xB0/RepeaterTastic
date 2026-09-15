@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/null"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 // An identity's hop-limit cap applies to everything it sends, whatever its client asked for.

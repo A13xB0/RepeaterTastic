@@ -5,9 +5,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 type delivery struct {
@@ -362,7 +362,7 @@ func (h *Host) responseHopLimit(p *pb.MeshPacket) uint32 {
 // perhapsRelay is the relay persona's rebroadcast decision (NextHopRouter::perhapsRebroadcast).
 func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
 	cfg := h.Config()
-	if cfg.RelayRole == RoleMute || p.To == wire.BroadcastNoLoRa || p.HopLimit == 0 || p.Id == 0 {
+	if (cfg.RelayRole != RoleClient && cfg.RelayRole != RoleRouter) || p.To == wire.BroadcastNoLoRa || p.HopLimit == 0 || p.Id == 0 {
 		return false
 	}
 	if p.ViaMqtt && cfg.IgnoreMQTT {

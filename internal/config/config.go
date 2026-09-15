@@ -14,8 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 type Config struct {
@@ -37,8 +37,44 @@ type Config struct {
 	Site   Site            `yaml:"site,omitempty" json:"site,omitempty"`
 	// Experimental switches features that may change or go away. All off by default.
 	Experimental Experimental `yaml:"experimental,omitempty" json:"experimental,omitempty"`
+	// Plugins are separate programs that extend RepeaterTastic (docs/plugins.md).
+	Plugins Plugins `yaml:"plugins" json:"plugins"`
 
 	path string
+}
+
+// Plugins configures the plugin manager. Plugins are installed from the GUI, the CLI or by
+// dropping a bundle into <dir>/inbox; Entries here pin a plugin's switch, permissions and
+// settings so they can't be changed from the GUI.
+type Plugins struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Dir holds installed plugins, their data and state ("" = <state_dir>/plugins).
+	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
+	// Listen is a TCP address attached plugins connect to, e.g. "127.0.0.1:4450" ("" = off).
+	// Managed plugins always use a Unix socket in Dir.
+	Listen string `yaml:"listen,omitempty" json:"listen,omitempty"`
+	// AllowURLInstall lets the GUI download bundles from a URL.
+	AllowURLInstall bool `yaml:"allow_url_install" json:"allow_url_install"`
+	// MessagesPerHour and traceroutesPerHour cap what each plugin may transmit.
+	MessagesPerHour    int           `yaml:"messages_per_hour" json:"messages_per_hour"`
+	TraceroutesPerHour int           `yaml:"traceroutes_per_hour" json:"traceroutes_per_hour"`
+	Entries            []PluginEntry `yaml:"entries,omitempty" json:"entries,omitempty"`
+}
+
+// PluginEntry pins one installed plugin. Settings values may use ${ENV_VAR}.
+type PluginEntry struct {
+	ID          string         `yaml:"id" json:"id"`
+	Enabled     bool           `yaml:"enabled" json:"enabled"`
+	Permissions []string       `yaml:"permissions,omitempty" json:"permissions,omitempty"`
+	Settings    map[string]any `yaml:"settings,omitempty" json:"settings,omitempty"`
+}
+
+// PluginDir is where plugins live.
+func (c *Config) PluginDir() string {
+	if c.Plugins.Dir != "" {
+		return c.Plugins.Dir
+	}
+	return filepath.Join(c.StateDir, "plugins")
 }
 
 // RadioInstance is one extra radio: its own modem, preset, relay persona and identities.
@@ -475,6 +511,7 @@ func Default() *Config {
 		Links:    Links{UDPMulticast: UDPMulticast{Group: "239.0.0.69:4403"}},
 		Web:      Web{Enabled: true, Bind: "0.0.0.0", Port: 8080, SessionTTL: 7 * 24 * time.Hour, MapTileURL: DefaultMapTileURL},
 		MDNS:     MDNS{Enabled: true},
+		Plugins:  Plugins{Enabled: true, AllowURLInstall: true, MessagesPerHour: 30, TraceroutesPerHour: 12},
 		StateDir: "/var/lib/repeatertastic",
 		LogLevel: "info",
 	}
@@ -545,6 +582,16 @@ func (c *Config) Validate() error {
 	if c.Site.DutyCyclePct < 0 || c.Site.DutyCyclePct > 100 {
 		return fmt.Errorf("site.duty_cycle_percent must be between 0 and 100")
 	}
+	if c.Plugins.MessagesPerHour < 0 || c.Plugins.MessagesPerHour > 600 || c.Plugins.TraceroutesPerHour < 0 || c.Plugins.TraceroutesPerHour > 120 {
+		return errors.New("plugins.messages_per_hour must be 0-600 and traceroutes_per_hour 0-120")
+	}
+	seen := map[string]bool{}
+	for _, e := range c.Plugins.Entries {
+		if e.ID == "" || seen[e.ID] {
+			return fmt.Errorf("plugins.entries: every entry needs a unique id (%q)", e.ID)
+		}
+		seen[e.ID] = true
+	}
 	return c.validateRadios()
 }
 
@@ -559,10 +606,8 @@ func (c *Config) validateOne() error {
 	if iv := c.Airtime.TelemetryInterval; iv != 0 && iv < 30*time.Minute {
 		return errors.New("airtime.telemetry_interval must be 0 (off) or at least 30m")
 	}
-	switch c.Relay.Role {
-	case mesh.RoleClient, mesh.RoleRouter, mesh.RoleMute:
-	default:
-		return fmt.Errorf("relay.role must be client, router or mute, not %q", c.Relay.Role)
+	if !mesh.ValidRelayRole(c.Relay.Role) {
+		return fmt.Errorf("relay.role must be client, router, mute, monitor or off, not %q", c.Relay.Role)
 	}
 	switch c.Radio.Driver {
 	case "kiss", "sim", "none":
