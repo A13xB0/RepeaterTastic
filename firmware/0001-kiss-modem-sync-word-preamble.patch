@@ -1,0 +1,754 @@
+From 75ae28c854dc8863c4bfd47194a30037d8ce881a Mon Sep 17 00:00:00 2001
+From: R0ck <random@email.com>
+Date: Tue, 15 Sep 2026 02:02:41 +0100
+Subject: [PATCH] feat(kiss_modem): runtime LoRa sync word and preamble
+ overrides
+
+Add KISS SetHardware sub-commands so a host can drive non-MeshCore LoRa
+networks (e.g. Meshtastic, sync word 0x2B):
+
+  0x1B SetSyncWord  sync(1)            -> OK / Error
+  0x1C SetPreamble  symbols(u16 LE)    -> OK / Error (0 = default, else 6..65535)
+  0x1D GetPhyExtra                     -> 0x9D sync(1) + preamble(u16 LE)
+
+KISS_FIRMWARE_VERSION is bumped to 2 so hosts can detect support.
+
+RadioLibWrapper gains setLoRaSyncWord() (dispatching to each chip's RadioLib
+setSyncWord) and setPreambleOverride(). The preamble override survives
+setParams()/updatePreamble(), is used for the header/payload RX timeouts and
+the LR11x0/LR2021 post-TX preamble reset, and both overrides are re-applied
+after AGC resets. Defaults are unchanged when the commands are not used.
+
+Also only call Serial.setTxTimeoutMs() when Serial is HWCDC
+(ARDUINO_USB_CDC_ON_BOOT), fixing the Heltec_v3_kiss_modem build.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014ezDJkF9APrttJ1fHwhsVA
+---
+ docs/kiss_modem_protocol.md                   |  43 ++++++++
+ examples/kiss_modem/KissModem.cpp             |  69 ++++++++++++
+ examples/kiss_modem/KissModem.h               |  20 +++-
+ examples/kiss_modem/main.cpp                  |  18 ++-
+ src/helpers/radiolib/CustomLLCC68Wrapper.h    |   9 +-
+ src/helpers/radiolib/CustomLR1110Wrapper.h    |  10 +-
+ src/helpers/radiolib/CustomLR2021Wrapper.h    |  13 ++-
+ src/helpers/radiolib/CustomSTM32WLxWrapper.h  |   8 +-
+ src/helpers/radiolib/CustomSX1262Wrapper.h    |   8 +-
+ src/helpers/radiolib/CustomSX1268Wrapper.h    |   8 +-
+ src/helpers/radiolib/CustomSX1276Wrapper.h    |   4 +
+ src/helpers/radiolib/RadioLibWrappers.cpp     |  35 +++++-
+ src/helpers/radiolib/RadioLibWrappers.h       |  50 ++++++++-
+ test/test_kiss_modem/test_tx_backpressure.cpp | 103 ++++++++++++++++++
+ 14 files changed, 379 insertions(+), 19 deletions(-)
+
+diff --git a/docs/kiss_modem_protocol.md b/docs/kiss_modem_protocol.md
+index 3f4dbf9c..7177e2da 100644
+--- a/docs/kiss_modem_protocol.md
++++ b/docs/kiss_modem_protocol.md
+@@ -118,6 +118,9 @@ MeshCore-specific functionality uses the standard KISS SetHardware command. The
+ | Reboot          | `0x18` | -                                        |
+ | SetSignalReport | `0x19` | Enable (1): 0x00=disable, nonzero=enable |
+ | GetSignalReport | `0x1A` | -                                        |
++| SetSyncWord     | `0x1B` | Sync word (1)                            |
++| SetPreamble     | `0x1C` | Symbols (2, uint16 LE): 0 or 6-65535     |
++| GetPhyExtra     | `0x1D` | -                                        |
+ 
+ ### Response Sub-commands (TNC to Host)
+ 
+@@ -147,6 +150,7 @@ Response codes use the high-bit convention: `response = command | 0x80`. Generic
+ | DeviceName   | `0x96` | Name (variable, UTF-8)                  |
+ | Pong         | `0x97` | -                                       |
+ | SignalReport | `0x9A` | Status (1): 0x00=disabled, 0x01=enabled |
++| PhyExtra     | `0x9D` | Sync word (1) + Preamble symbols (2)    |
+ | OK           | `0xF0` | -                                       |
+ | Error        | `0xF1` | Error code (1)                          |
+ | TxDone       | `0xF8` | Result (1): 0x00=failed, 0x01=success   |
+@@ -192,6 +196,44 @@ All values little-endian.
+ | Version  | 1 byte | Firmware version |
+ | Reserved | 1 byte | Always 0         |
+ 
++| Version | Changes                                                        |
++|---------|----------------------------------------------------------------|
++| 1       | Initial release                                                |
++| 2       | Adds SetSyncWord (`0x1B`), SetPreamble (`0x1C`), GetPhyExtra (`0x1D`) |
++
++Hosts should check for version >= 2 before using the PHY override commands; older firmware answers them with `Error` / `UnknownCmd`.
++
++### Sync Word (SetSyncWord)
++
++| Field     | Size   | Description                                            |
++|-----------|--------|--------------------------------------------------------|
++| Sync word | 1 byte | LoRa sync word in RadioLib single-byte form            |
++
++Default is `0x12` (MeshCore / LoRa "private"). `0x34` is the LoRaWAN public sync word, `0x2B` is used by Meshtastic. The value is applied with RadioLib `setSyncWord()` for the radio chip (SX126x: register `0x0740` = `0xY4 0xZ4` for sync `0xYZ`, e.g. `0x24 0xB4` for `0x2B`; SX127x: register `0x39`; LR11x0 / LR2021: LoRa sync word command). Responds `OK` on success, `Error` + `InvalidParam` if the radio rejected the value, `Error` + `TxBusy` if a transmission is in progress. The setting is kept until reboot (not persisted to flash) and survives later SetRadio calls.
++
++### Preamble Length (SetPreamble)
++
++All values little-endian.
++
++| Field   | Size    | Description                                                  |
++|---------|---------|--------------------------------------------------------------|
++| Symbols | 2 bytes | uint16_t preamble length in symbols: 6-65535, or 0 = default |
++
++By default MeshCore selects the preamble length from the spreading factor (32 symbols for SF <= 8, 16 otherwise) and re-applies it on every SetRadio. A non-zero value overrides this and persists across later SetRadio calls until reboot or until 0 is sent. Airtime estimates (GetAirtime, TX timeouts) and the receive header timeouts use the effective preamble length. Responds `OK` on success, `Error` + `InvalidParam` for 1-5 or a value the radio rejected, `Error` + `InvalidLength` if fewer than 2 bytes are supplied, `Error` + `TxBusy` if a transmission is in progress.
++
++### PHY Extra (PhyExtra response)
++
++All values little-endian.
++
++| Field     | Size    | Description                                         |
++|-----------|---------|-----------------------------------------------------|
++| Sync word | 1 byte  | Current LoRa sync word                              |
++| Preamble  | 2 bytes | uint16_t effective preamble length in symbols       |
++
++The preamble value is the length currently in effect (the override if one is set, otherwise the SF-derived default).
++
++Changing the sync word or preamble puts the radio into standby and restarts receive; a packet arriving at that moment may be lost. Configure the PHY before queueing traffic.
++
+ ### Encrypted (Encrypted response)
+ 
+ | Field      | Size     | Description                                    |
+@@ -285,5 +327,6 @@ Data returned in CayenneLPP format. See [CayenneLPP documentation](https://docs.
+ - All multi-byte values are little-endian unless stated otherwise
+ - SNR values in RxMeta are multiplied by 4 for 0.25 dB precision
+ - TxDone is sent as a SetHardware event after each transmission
++- Sync word, preamble, radio parameters and TX power are not stored in flash; the host must re-send them after every reboot/reconnect
+ - Standard KISS clients receive only type 0x00 data frames and can safely ignore all SetHardware (0x06) frames
+ - See [packet_format.md](./packet_format.md) for packet format
+diff --git a/examples/kiss_modem/KissModem.cpp b/examples/kiss_modem/KissModem.cpp
+index 2c770d98..58a7803f 100644
+--- a/examples/kiss_modem/KissModem.cpp
++++ b/examples/kiss_modem/KissModem.cpp
+@@ -20,6 +20,9 @@ KissModem::KissModem(Stream& serial, mesh::LocalIdentity& identity, mesh::RNG& r
+   _setTxPowerCallback = nullptr;
+   _getCurrentRssiCallback = nullptr;
+   _getStatsCallback = nullptr;
++  _setSyncWordCallback = nullptr;
++  _setPreambleCallback = nullptr;
++  _getPhyExtraCallback = nullptr;
+   _config = {0, 0, 0, 0, 0};
+   _signal_report_enabled = true;
+   resetOutputQueue();
+@@ -381,6 +384,15 @@ void KissModem::handleHardwareCommand(uint8_t sub_cmd, const uint8_t* data, uint
+     case HW_CMD_GET_SIGNAL_REPORT:
+       handleGetSignalReport();
+       break;
++    case HW_CMD_SET_SYNC_WORD:
++      handleSetSyncWord(data, len);
++      break;
++    case HW_CMD_SET_PREAMBLE:
++      handleSetPreamble(data, len);
++      break;
++    case HW_CMD_GET_PHY_EXTRA:
++      handleGetPhyExtra();
++      break;
+     default:
+       writeHardwareError(HW_ERR_UNKNOWN_CMD);
+       break;
+@@ -732,3 +744,60 @@ void KissModem::handleGetSignalReport() {
+   uint8_t val = _signal_report_enabled ? 0x01 : 0x00;
+   writeHardwareFrame(HW_RESP(HW_CMD_GET_SIGNAL_REPORT), &val, 1);
+ }
++
++void KissModem::handleSetSyncWord(const uint8_t* data, uint16_t len) {
++  if (len < 1) {
++    writeHardwareError(HW_ERR_INVALID_LENGTH);
++    return;
++  }
++  if (!_setSyncWordCallback) {
++    writeHardwareError(HW_ERR_NO_CALLBACK);
++    return;
++  }
++  if (_tx_state == TX_SENDING) {
++    writeHardwareError(HW_ERR_TX_BUSY);
++    return;
++  }
++  if (!_setSyncWordCallback(data[0])) {
++    writeHardwareError(HW_ERR_INVALID_PARAM);
++    return;
++  }
++  writeHardwareFrame(HW_RESP_OK, nullptr, 0);
++}
++
++void KissModem::handleSetPreamble(const uint8_t* data, uint16_t len) {
++  if (len < 2) {
++    writeHardwareError(HW_ERR_INVALID_LENGTH);
++    return;
++  }
++  if (!_setPreambleCallback) {
++    writeHardwareError(HW_ERR_NO_CALLBACK);
++    return;
++  }
++  uint16_t symbols = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
++  if (symbols != 0 && symbols < KISS_MIN_PREAMBLE_SYMBOLS) {
++    writeHardwareError(HW_ERR_INVALID_PARAM);
++    return;
++  }
++  if (_tx_state == TX_SENDING) {
++    writeHardwareError(HW_ERR_TX_BUSY);
++    return;
++  }
++  if (!_setPreambleCallback(symbols)) {
++    writeHardwareError(HW_ERR_INVALID_PARAM);
++    return;
++  }
++  writeHardwareFrame(HW_RESP_OK, nullptr, 0);
++}
++
++void KissModem::handleGetPhyExtra() {
++  if (!_getPhyExtraCallback) {
++    writeHardwareError(HW_ERR_NO_CALLBACK);
++    return;
++  }
++  uint8_t sync_word = 0;
++  uint16_t preamble = 0;
++  _getPhyExtraCallback(&sync_word, &preamble);
++  uint8_t buf[3] = { sync_word, (uint8_t)(preamble & 0xFF), (uint8_t)(preamble >> 8) };
++  writeHardwareFrame(HW_RESP(HW_CMD_GET_PHY_EXTRA), buf, 3);
++}
+diff --git a/examples/kiss_modem/KissModem.h b/examples/kiss_modem/KissModem.h
+index a23e459b..f38c8786 100644
+--- a/examples/kiss_modem/KissModem.h
++++ b/examples/kiss_modem/KissModem.h
+@@ -62,6 +62,9 @@
+ #define HW_CMD_REBOOT            0x18
+ #define HW_CMD_SET_SIGNAL_REPORT 0x19
+ #define HW_CMD_GET_SIGNAL_REPORT 0x1A
++#define HW_CMD_SET_SYNC_WORD     0x1B
++#define HW_CMD_SET_PREAMBLE      0x1C
++#define HW_CMD_GET_PHY_EXTRA     0x1D
+ 
+ /* Response code = command code | 0x80.  Generic / unsolicited use 0xF0+. */
+ #define HW_RESP(cmd)             ((cmd) | 0x80)
+@@ -82,12 +85,18 @@
+ #define HW_ERR_ENCRYPT_FAILED    0x06
+ #define HW_ERR_TX_BUSY           0x07
+ 
+-#define KISS_FIRMWARE_VERSION 1
++/* 2: adds SetSyncWord (0x1B), SetPreamble (0x1C), GetPhyExtra (0x1D) */
++#define KISS_FIRMWARE_VERSION 2
++
++#define KISS_MIN_PREAMBLE_SYMBOLS 6
+ 
+ typedef void (*SetRadioCallback)(float freq, float bw, uint8_t sf, uint8_t cr);
+ typedef void (*SetTxPowerCallback)(uint8_t power);
+ typedef float (*GetCurrentRssiCallback)();
+ typedef void (*GetStatsCallback)(uint32_t* rx, uint32_t* tx, uint32_t* errors);
++typedef bool (*SetSyncWordCallback)(uint8_t sync_word);
++typedef bool (*SetPreambleCallback)(uint16_t symbols);   // 0 = restore firmware default
++typedef void (*GetPhyExtraCallback)(uint8_t* sync_word, uint16_t* preamble_symbols);
+ 
+ struct RadioConfig {
+   uint32_t freq_hz;
+@@ -136,6 +145,9 @@ class KissModem {
+   SetTxPowerCallback _setTxPowerCallback;
+   GetCurrentRssiCallback _getCurrentRssiCallback;
+   GetStatsCallback _getStatsCallback;
++  SetSyncWordCallback _setSyncWordCallback;
++  SetPreambleCallback _setPreambleCallback;
++  GetPhyExtraCallback _getPhyExtraCallback;
+ 
+   RadioConfig _config;
+   bool _signal_report_enabled;
+@@ -192,6 +204,9 @@ class KissModem {
+   void handleGetDeviceName();
+   void handleSetSignalReport(const uint8_t* data, uint16_t len);
+   void handleGetSignalReport();
++  void handleSetSyncWord(const uint8_t* data, uint16_t len);
++  void handleSetPreamble(const uint8_t* data, uint16_t len);
++  void handleGetPhyExtra();
+ 
+ public:
+   KissModem(Stream& serial, mesh::LocalIdentity& identity, mesh::RNG& rng,
+@@ -204,6 +219,9 @@ public:
+   void setTxPowerCallback(SetTxPowerCallback cb) { _setTxPowerCallback = cb; }
+   void setGetCurrentRssiCallback(GetCurrentRssiCallback cb) { _getCurrentRssiCallback = cb; }
+   void setGetStatsCallback(GetStatsCallback cb) { _getStatsCallback = cb; }
++  void setSyncWordCallback(SetSyncWordCallback cb) { _setSyncWordCallback = cb; }
++  void setPreambleCallback(SetPreambleCallback cb) { _setPreambleCallback = cb; }
++  void setGetPhyExtraCallback(GetPhyExtraCallback cb) { _getPhyExtraCallback = cb; }
+ 
+   void onPacketReceived(int8_t snr, int8_t rssi, const uint8_t* packet, uint16_t len);
+   bool isTxBusy() const { return _tx_state != TX_IDLE; }
+diff --git a/examples/kiss_modem/main.cpp b/examples/kiss_modem/main.cpp
+index 5836a694..55365b5f 100644
+--- a/examples/kiss_modem/main.cpp
++++ b/examples/kiss_modem/main.cpp
+@@ -75,6 +75,19 @@ void onGetStats(uint32_t* rx, uint32_t* tx, uint32_t* errors) {
+   *errors = radio_driver.getPacketsRecvErrors();
+ }
+ 
++bool onSetSyncWord(uint8_t sync_word) {
++  return radio_driver.setLoRaSyncWord(sync_word);
++}
++
++bool onSetPreamble(uint16_t symbols) {
++  return radio_driver.setPreambleOverride(symbols);
++}
++
++void onGetPhyExtra(uint8_t* sync_word, uint16_t* preamble_symbols) {
++  *sync_word = radio_driver.getLoRaSyncWord();
++  *preamble_symbols = radio_driver.getPreambleLength();
++}
++
+ void setup() {
+   board.begin();
+ 
+@@ -113,7 +126,7 @@ void setup() {
+   uint32_t start = millis();
+   while (!Serial && millis() - start < 3000) delay(10);
+   delay(100);
+-#if defined(ESP32) && ARDUINO_USB_MODE
++#if defined(ESP32) && ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT  // Serial is HWCDC only when CDC-on-boot; UART bridges (e.g. Heltec V3 CP2102) use HardwareSerial
+   Serial.setTxTimeoutMs(USB_TX_TIMEOUT_MS);
+   Serial.setTxBufferSize(USB_TX_BUFFER_SIZE);
+ #endif
+@@ -124,6 +137,9 @@ void setup() {
+   modem->setTxPowerCallback(onSetTxPower);
+   modem->setGetCurrentRssiCallback(onGetCurrentRssi);
+   modem->setGetStatsCallback(onGetStats);
++  modem->setSyncWordCallback(onSetSyncWord);
++  modem->setPreambleCallback(onSetPreamble);
++  modem->setGetPhyExtraCallback(onGetPhyExtra);
+   modem->begin();
+ 
+   board.onBootComplete();
+diff --git a/src/helpers/radiolib/CustomLLCC68Wrapper.h b/src/helpers/radiolib/CustomLLCC68Wrapper.h
+index ae0fe0a2..cc82d5d1 100644
+--- a/src/helpers/radiolib/CustomLLCC68Wrapper.h
++++ b/src/helpers/radiolib/CustomLLCC68Wrapper.h
+@@ -14,10 +14,15 @@ public:
+     ((CustomLLCC68 *)_radio)->setBandwidth(bw);
+     ((CustomLLCC68 *)_radio)->setCodingRate(cr);
+     updatePreamble(sf);
+-    PacketMillis pm = calcMaxPacketMillis(sf, bw, cr, preambleLengthForSF(sf));
++    applyPacketTiming(sf, bw, cr);
++  }
++
++  void setPacketMillis(const PacketMillis& pm) override {
+     ((CustomLLCC68 *)_radio)->setPreambleMillis(pm.preambleMillis);
+     ((CustomLLCC68 *)_radio)->setMaxPayloadMillis(pm.payloadMillis);
+-
++  }
++  int16_t applySyncWord(uint8_t sync_word) override {
++    return ((SX126x *)_radio)->setSyncWord(sync_word);
+   }
+ 
+   bool isReceivingPacket() override { 
+diff --git a/src/helpers/radiolib/CustomLR1110Wrapper.h b/src/helpers/radiolib/CustomLR1110Wrapper.h
+index e7aaeb93..3d8fb05a 100644
+--- a/src/helpers/radiolib/CustomLR1110Wrapper.h
++++ b/src/helpers/radiolib/CustomLR1110Wrapper.h
+@@ -14,10 +14,16 @@ public:
+     ((CustomLR1110 *)_radio)->setBandwidth(bw);
+     ((CustomLR1110 *)_radio)->setCodingRate(cr);
+     updatePreamble(sf);
+-    PacketMillis pm = calcMaxPacketMillis(sf, bw, cr, preambleLengthForSF(sf));
++    applyPacketTiming(sf, bw, cr);
++  }
++
++  void setPacketMillis(const PacketMillis& pm) override {
+     ((CustomLR1110 *)_radio)->setPreambleMillis(pm.preambleMillis);
+     ((CustomLR1110 *)_radio)->setMaxPayloadMillis(pm.payloadMillis);
+   }
++  int16_t applySyncWord(uint8_t sync_word) override {
++    return ((LR11x0 *)_radio)->setSyncWord(sync_word);
++  }
+ 
+   bool isReceivingPacket() override {
+     return ((CustomLR1110 *)_radio)->isReceiving();
+@@ -35,7 +41,7 @@ public:
+ 
+   void onSendFinished() override {
+     RadioLibWrapper::onSendFinished();
+-    _radio->setPreambleLength(preambleLengthForSF(getSpreadingFactor())); // overcomes weird issues with small and big pkts
++    _radio->setPreambleLength(getPreambleLength(getSpreadingFactor())); // overcomes weird issues with small and big pkts
+   }
+ 
+   float getLastRSSI() const override { return ((CustomLR1110 *)_radio)->getRSSI(); }
+diff --git a/src/helpers/radiolib/CustomLR2021Wrapper.h b/src/helpers/radiolib/CustomLR2021Wrapper.h
+index 8299e2bf..61ebc5cb 100644
+--- a/src/helpers/radiolib/CustomLR2021Wrapper.h
++++ b/src/helpers/radiolib/CustomLR2021Wrapper.h
+@@ -22,10 +22,15 @@ public:
+     ((CustomLR2021 *)_radio)->setCodingRate(cr);
+     updatePreamble(sf);
+     applySideDetectorConfig();
+-    PacketMillis pm = calcMaxPacketMillis(sf, bw, cr, preambleLengthForSF(sf));
++    applyPacketTiming(sf, bw, cr);
++  }
++
++  void setPacketMillis(const PacketMillis& pm) override {
+     ((CustomLR2021 *)_radio)->setPreambleMillis(pm.preambleMillis);
+     ((CustomLR2021 *)_radio)->setMaxPayloadMillis(pm.payloadMillis);
+-
++  }
++  int16_t applySyncWord(uint8_t sync_word) override {
++    return ((LR2021 *)_radio)->setSyncWord(sync_word);
+   }
+ 
+   bool configSideDetectors(const uint8_t* sideDetSFs, uint8_t num, float bw) override {
+@@ -46,7 +51,7 @@ public:
+         tmp[i].ldro = false; 
+       }
+       tmp[i].invertIQ = false;
+-      tmp[i].syncWord = 0x12;
++      tmp[i].syncWord = _sync_word;
+     }
+     int16_t status = ((CustomLR2021 *)_radio)->setSideDetector(tmp, num);
+     RadioLibWrapper::idle(); // trigger startReceive()
+@@ -85,7 +90,7 @@ public:
+ 
+   void onSendFinished() override {
+     RadioLibWrapper::onSendFinished();
+-    _radio->setPreambleLength(preambleLengthForSF(getSpreadingFactor())); // overcomes weird issues with small and big pkts
++    _radio->setPreambleLength(getPreambleLength(getSpreadingFactor())); // overcomes weird issues with small and big pkts
+   }
+ 
+   float getLastRSSI() const override { return ((CustomLR2021 *)_radio)->getRSSI(); }
+diff --git a/src/helpers/radiolib/CustomSTM32WLxWrapper.h b/src/helpers/radiolib/CustomSTM32WLxWrapper.h
+index a4ba4971..4d2d8984 100644
+--- a/src/helpers/radiolib/CustomSTM32WLxWrapper.h
++++ b/src/helpers/radiolib/CustomSTM32WLxWrapper.h
+@@ -15,10 +15,16 @@ public:
+     ((CustomSTM32WLx *)_radio)->setBandwidth(bw);
+     ((CustomSTM32WLx *)_radio)->setCodingRate(cr);
+     updatePreamble(sf);
+-    PacketMillis pm = calcMaxPacketMillis(sf, bw, cr, preambleLengthForSF(sf));
++    applyPacketTiming(sf, bw, cr);
++  }
++
++  void setPacketMillis(const PacketMillis& pm) override {
+     ((CustomSTM32WLx *)_radio)->setPreambleMillis(pm.preambleMillis);
+     ((CustomSTM32WLx *)_radio)->setMaxPayloadMillis(pm.payloadMillis);
+   }
++  int16_t applySyncWord(uint8_t sync_word) override {
++    return ((SX126x *)_radio)->setSyncWord(sync_word);
++  }
+ 
+   bool isReceivingPacket() override { 
+     return ((CustomSTM32WLx *)_radio)->isReceiving();
+diff --git a/src/helpers/radiolib/CustomSX1262Wrapper.h b/src/helpers/radiolib/CustomSX1262Wrapper.h
+index be314471..d0d4aa78 100644
+--- a/src/helpers/radiolib/CustomSX1262Wrapper.h
++++ b/src/helpers/radiolib/CustomSX1262Wrapper.h
+@@ -18,10 +18,16 @@ public:
+     ((CustomSX1262 *)_radio)->setBandwidth(bw);
+     ((CustomSX1262 *)_radio)->setCodingRate(cr);
+     updatePreamble(sf);
+-    PacketMillis pm = calcMaxPacketMillis(sf, bw, cr, preambleLengthForSF(sf));
++    applyPacketTiming(sf, bw, cr);
++  }
++
++  void setPacketMillis(const PacketMillis& pm) override {
+     ((CustomSX1262 *)_radio)->setPreambleMillis(pm.preambleMillis);
+     ((CustomSX1262 *)_radio)->setMaxPayloadMillis(pm.payloadMillis);
+   }
++  int16_t applySyncWord(uint8_t sync_word) override {
++    return ((SX126x *)_radio)->setSyncWord(sync_word);
++  }
+ 
+   bool isReceivingPacket() override { 
+     return ((CustomSX1262 *)_radio)->isReceiving();
+diff --git a/src/helpers/radiolib/CustomSX1268Wrapper.h b/src/helpers/radiolib/CustomSX1268Wrapper.h
+index 70f5dabd..b9df3cb4 100644
+--- a/src/helpers/radiolib/CustomSX1268Wrapper.h
++++ b/src/helpers/radiolib/CustomSX1268Wrapper.h
+@@ -18,10 +18,16 @@ public:
+     ((CustomSX1268 *)_radio)->setBandwidth(bw);
+     ((CustomSX1268 *)_radio)->setCodingRate(cr);
+     updatePreamble(sf);
+-    PacketMillis pm = calcMaxPacketMillis(sf, bw, cr, preambleLengthForSF(sf));
++    applyPacketTiming(sf, bw, cr);
++  }
++
++  void setPacketMillis(const PacketMillis& pm) override {
+     ((CustomSX1268 *)_radio)->setPreambleMillis(pm.preambleMillis);
+     ((CustomSX1268 *)_radio)->setMaxPayloadMillis(pm.payloadMillis);
+   }
++  int16_t applySyncWord(uint8_t sync_word) override {
++    return ((SX126x *)_radio)->setSyncWord(sync_word);
++  }
+ 
+   bool isReceivingPacket() override { 
+     return ((CustomSX1268 *)_radio)->isReceiving();
+diff --git a/src/helpers/radiolib/CustomSX1276Wrapper.h b/src/helpers/radiolib/CustomSX1276Wrapper.h
+index 9d75ce12..c6641049 100644
+--- a/src/helpers/radiolib/CustomSX1276Wrapper.h
++++ b/src/helpers/radiolib/CustomSX1276Wrapper.h
+@@ -19,6 +19,10 @@ public:
+     updatePreamble(sf);
+   }
+ 
++  int16_t applySyncWord(uint8_t sync_word) override {
++    return ((SX127x *)_radio)->setSyncWord(sync_word);
++  }
++
+   bool isReceivingPacket() override { 
+     return ((CustomSX1276 *)_radio)->isReceiving();
+   }
+diff --git a/src/helpers/radiolib/RadioLibWrappers.cpp b/src/helpers/radiolib/RadioLibWrappers.cpp
+index e4d2ba1c..9bd3830a 100644
+--- a/src/helpers/radiolib/RadioLibWrappers.cpp
++++ b/src/helpers/radiolib/RadioLibWrappers.cpp
+@@ -27,7 +27,7 @@ void setFlag(void) {
+ void RadioLibWrapper::begin() {
+   _radio->setPacketReceivedAction(setFlag);  // this is also SentComplete interrupt
+   _preamble_sf = getSpreadingFactor();
+-  _radio->setPreambleLength(preambleLengthForSF(_preamble_sf)); // longer preamble for lower SF improves reliability
++  _radio->setPreambleLength(getPreambleLength(_preamble_sf)); // longer preamble for lower SF improves reliability
+   state = STATE_IDLE;
+ 
+   if (_board->getStartupReason() == BD_STARTUP_RX_PACKET) {  // received a LoRa packet (while in deep sleep)
+@@ -76,6 +76,9 @@ void RadioLibWrapper::resetAGC() {
+   if ((state & STATE_INT_READY) != 0 || isReceivingPacket()) return;
+ 
+   doResetAGC();
++  // re-apply host PHY overrides in case sleep/calibration did not retain them (no-op with MeshCore defaults)
++  if (_sync_word != MESHCORE_LORA_SYNC_WORD) applySyncWord(_sync_word);
++  if (_preamble_override != 0) _radio->setPreambleLength(_preamble_override);
+   state = STATE_IDLE;   // trigger a startReceive()
+ 
+   // Reset noise floor sampling so it reconverges from scratch.
+@@ -241,13 +244,39 @@ float RadioLibWrapper::packetScoreInt(float snr, int sf, int packet_len) {
+   return max(0.0, min(1.0, success_rate_based_on_snr * collision_penalty));
+ }
+ 
+-PacketMillis RadioLibWrapper::calcMaxPacketMillis(uint8_t sf, float bw, uint8_t cr, uint8_t preambleSymbols) {
++bool RadioLibWrapper::setPreambleOverride(uint16_t symbols) {
++  if (state == STATE_TX_WAIT) return false;   // don't disturb an in-flight transmit
++  idle();
++  _preamble_override = symbols;
++  int16_t err = _radio->setPreambleLength(getPreambleLength(_preamble_sf));
++  applyPacketTiming(_preamble_sf, _timing_bw, _timing_cr);
++  if (err != RADIOLIB_ERR_NONE) {
++    MESH_DEBUG_PRINTLN("RadioLibWrapper: error: setPreambleLength(%d)", err);
++    return false;
++  }
++  return true;
++}
++
++bool RadioLibWrapper::setLoRaSyncWord(uint8_t sync_word) {
++  if (state == STATE_TX_WAIT) return false;   // don't disturb an in-flight transmit
++  idle();
++  int16_t err = applySyncWord(sync_word);
++  if (err != RADIOLIB_ERR_NONE) {
++    MESH_DEBUG_PRINTLN("RadioLibWrapper: error: setSyncWord(%d)", err);
++    return false;
++  }
++  _sync_word = sync_word;
++  return true;
++}
++
++PacketMillis RadioLibWrapper::calcMaxPacketMillis(uint8_t sf, float bw, uint8_t cr, uint16_t preambleSymbols) {
+   // based on RadioLib's calculateTimeOnAir()
+   uint32_t tsym_us = ((uint32_t)10000 << sf) / (bw * 10);
+   uint32_t sfCoeff1_x4 = (sf == 5 || sf == 6) ? 25 : 17; // 6.25 : 4.25, semtech magic numbers to account for sync word + sfd
+ 
+   // preamble + syncword + sfd + header
+-  uint32_t preamble_us = (((preambleSymbols + 8) * 4 + sfCoeff1_x4) * tsym_us) / 4;
++  uint64_t preamble_us64 = ((((uint64_t)preambleSymbols + 8) * 4 + sfCoeff1_x4) * tsym_us) / 4;
++  uint32_t preamble_us = preamble_us64 > 0xFFFF0000UL ? 0xFFFF0000UL : (uint32_t)preamble_us64;
+ 
+   // airtime for max packet at current radio settings
+   uint32_t total_us   = _radio->getTimeOnAir(MAX_TRANS_UNIT);
+diff --git a/src/helpers/radiolib/RadioLibWrappers.h b/src/helpers/radiolib/RadioLibWrappers.h
+index 77dd9311..e2971a64 100644
+--- a/src/helpers/radiolib/RadioLibWrappers.h
++++ b/src/helpers/radiolib/RadioLibWrappers.h
+@@ -6,6 +6,9 @@
+ #ifdef USE_CC310_HW_CRYPTO
+ #include <Adafruit_nRFCrypto.h>
+ #endif
++// default LoRa sync word used by MeshCore (RadioLib "private" sync word, 0x12)
++#define MESHCORE_LORA_SYNC_WORD  0x12
++
+ struct PacketMillis {
+   uint32_t preambleMillis;  // preamble-detect -> header-valid deadline
+   uint32_t payloadMillis;   // header-valid   -> rx-done deadline
+@@ -21,6 +24,10 @@ protected:
+   uint16_t _num_floor_samples;
+   int32_t _floor_sample_sum;
+   uint8_t _preamble_sf;
++  uint16_t _preamble_override;  // 0 = MeshCore default (preambleLengthForSF)
++  uint8_t _sync_word;           // LoRa sync word as passed to RadioLib setSyncWord()
++  float _timing_bw;             // last bandwidth / coding rate passed to applyPacketTiming()
++  uint8_t _timing_cr;
+ 
+   void idle();
+   void startRecv();
+@@ -28,8 +35,28 @@ protected:
+   virtual bool isReceivingPacket() =0;
+   virtual void doResetAGC();
+ 
++  // chip-specific hooks for PHY overrides (sync word / preamble)
++  virtual int16_t applySyncWord(uint8_t sync_word) { return RADIOLIB_ERR_UNSUPPORTED; }
++  virtual void setPacketMillis(const PacketMillis& pm) { }
++  void applyPacketTiming(uint8_t sf, float bw, uint8_t cr) {
++    _timing_bw = bw; _timing_cr = cr;
++    setPacketMillis(calcMaxPacketMillis(sf, bw, cr, getPreambleLength(sf)));
++  }
++
+ public:
+-  RadioLibWrapper(PhysicalLayer& radio, mesh::MainBoard& board) : _radio(&radio), _board(&board), _preamble_sf(0) { n_recv = n_sent = 0; }
++  RadioLibWrapper(PhysicalLayer& radio, mesh::MainBoard& board)
++    : _radio(&radio), _board(&board), _preamble_sf(0), _preamble_override(0), _sync_word(MESHCORE_LORA_SYNC_WORD),
++#ifdef LORA_BW
++      _timing_bw(LORA_BW),
++#else
++      _timing_bw(250.0f),
++#endif
++#ifdef LORA_CR
++      _timing_cr(LORA_CR)
++#else
++      _timing_cr(5)
++#endif
++    { n_recv = n_sent = 0; }
+ 
+   void begin() override;
+   virtual void powerOff() { _radio->sleep(); }
+@@ -54,8 +81,25 @@ public:
+   virtual float getCurrentRSSI() =0;
+   virtual uint8_t getSpreadingFactor() const { return LORA_SF; }
+   static uint16_t preambleLengthForSF(uint8_t sf) { return sf <= 8 ? 32 : 16; }
+-  void updatePreamble(uint8_t sf) { _preamble_sf = sf; _radio->setPreambleLength(preambleLengthForSF(sf)); }
+-  PacketMillis calcMaxPacketMillis(uint8_t sf, float bw, uint8_t cr, uint8_t preambleSymbols);
++  /** effective preamble length (symbols) for given SF: host override if set, else MeshCore default */
++  uint16_t getPreambleLength(uint8_t sf) const { return _preamble_override ? _preamble_override : preambleLengthForSF(sf); }
++  uint16_t getPreambleLength() const { return getPreambleLength(_preamble_sf); }
++  void updatePreamble(uint8_t sf) { _preamble_sf = sf; _radio->setPreambleLength(getPreambleLength(sf)); }
++  PacketMillis calcMaxPacketMillis(uint8_t sf, float bw, uint8_t cr, uint16_t preambleSymbols);
++
++  /**
++   * \brief  override the preamble length (symbols). 0 restores MeshCore default (SF-dependent).
++   *         Persists across later setParams() calls. Puts radio in standby; RX restarts on next recvRaw().
++   */
++  bool setPreambleOverride(uint16_t symbols);
++  uint16_t getPreambleOverride() const { return _preamble_override; }
++
++  /**
++   * \brief  set LoRa sync word (RadioLib single-byte form, e.g. 0x12 MeshCore/private, 0x2B Meshtastic).
++   *         Puts radio in standby; RX restarts on next recvRaw().
++   */
++  bool setLoRaSyncWord(uint8_t sync_word);
++  uint8_t getLoRaSyncWord() const { return _sync_word; }
+   virtual int16_t performChannelScan();
+ 
+   int getNoiseFloor() const override { return _noise_floor; }
+diff --git a/test/test_kiss_modem/test_tx_backpressure.cpp b/test/test_kiss_modem/test_tx_backpressure.cpp
+index 39a5e3b7..ad00fbf2 100644
+--- a/test/test_kiss_modem/test_tx_backpressure.cpp
++++ b/test/test_kiss_modem/test_tx_backpressure.cpp
+@@ -288,6 +288,109 @@ TEST_F(KissModemFixture, MaxPacketWorstCaseEscapingFitsQueuedFrame) {
+   EXPECT_EQ(serial.writesSnapshot(), expected);
+ }
+ 
++static uint8_t g_sync_word = 0x12;
++static uint16_t g_preamble = 0;
++static int g_set_preamble_calls = 0;
++
++static bool fakeSetSyncWord(uint8_t sync_word) { g_sync_word = sync_word; return true; }
++static bool fakeSetPreamble(uint16_t symbols) { g_preamble = symbols; g_set_preamble_calls++; return true; }
++static void fakeGetPhyExtra(uint8_t* sync_word, uint16_t* preamble) {
++  *sync_word = g_sync_word;
++  *preamble = g_preamble ? g_preamble : 16;
++}
++
++class KissModemPhyFixture : public KissModemFixture {
++protected:
++  KissModemPhyFixture() {
++    g_sync_word = 0x12;
++    g_preamble = 0;
++    g_set_preamble_calls = 0;
++    modem.setSyncWordCallback(fakeSetSyncWord);
++    modem.setPreambleCallback(fakeSetPreamble);
++    modem.setGetPhyExtraCallback(fakeGetPhyExtra);
++  }
++
++  std::vector<uint8_t> hw(const std::vector<uint8_t>& payload) {
++    std::vector<uint8_t> frame = {KISS_FEND, KISS_CMD_SETHARDWARE};
++    frame.insert(frame.end(), payload.begin(), payload.end());
++    frame.push_back(KISS_FEND);
++    return frame;
++  }
++};
++
++TEST_F(KissModemFixture, GetVersionReportsPhyExtensions) {
++  serial.pushRx({KISS_FEND, KISS_CMD_SETHARDWARE, HW_CMD_GET_VERSION, KISS_FEND});
++  modem.loop();
++  const std::vector<uint8_t> expected = {KISS_FEND, KISS_CMD_SETHARDWARE, HW_RESP(HW_CMD_GET_VERSION), 2, 0, KISS_FEND};
++  EXPECT_EQ(serial.writesSnapshot(), expected);
++}
++
++TEST_F(KissModemFixture, PhyCommandsWithoutCallbackReportNoCallback) {
++  serial.pushRx({KISS_FEND, KISS_CMD_SETHARDWARE, HW_CMD_SET_SYNC_WORD, 0x2B, KISS_FEND});
++  modem.loop();
++  const std::vector<uint8_t> expected = {KISS_FEND, KISS_CMD_SETHARDWARE, HW_RESP_ERROR, HW_ERR_NO_CALLBACK, KISS_FEND};
++  EXPECT_EQ(serial.writesSnapshot(), expected);
++}
++
++TEST_F(KissModemPhyFixture, SetSyncWordAndPreambleThenGetPhyExtra) {
++  serial.pushRx(hw({HW_CMD_SET_SYNC_WORD, 0x2B}));
++  modem.loop();
++  serial.pushRx(hw({HW_CMD_SET_PREAMBLE, 0x10, 0x00}));
++  modem.loop();
++  serial.pushRx(hw({HW_CMD_GET_PHY_EXTRA}));
++  modem.loop();
++
++  std::vector<uint8_t> expected = hw({HW_RESP_OK});
++  auto ok2 = hw({HW_RESP_OK});
++  auto phy = hw({HW_RESP(HW_CMD_GET_PHY_EXTRA), 0x2B, 0x10, 0x00});
++  expected.insert(expected.end(), ok2.begin(), ok2.end());
++  expected.insert(expected.end(), phy.begin(), phy.end());
++  EXPECT_EQ(serial.writesSnapshot(), expected);
++  EXPECT_EQ(g_sync_word, 0x2B);
++  EXPECT_EQ(g_preamble, 16);
++}
++
++TEST_F(KissModemPhyFixture, SetPreambleValidatesInput) {
++  serial.pushRx(hw({HW_CMD_SET_PREAMBLE, 0x05, 0x00}));
++  modem.loop();
++  serial.pushRx(hw({HW_CMD_SET_PREAMBLE, 0x10}));
++  modem.loop();
++  serial.pushRx(hw({HW_CMD_SET_PREAMBLE, 0xFF, 0xFF}));
++  modem.loop();
++  serial.pushRx(hw({HW_CMD_SET_PREAMBLE, 0x00, 0x00}));
++  modem.loop();
++
++  std::vector<uint8_t> expected = hw({HW_RESP_ERROR, HW_ERR_INVALID_PARAM});
++  for (auto part : {hw({HW_RESP_ERROR, HW_ERR_INVALID_LENGTH}), hw({HW_RESP_OK}), hw({HW_RESP_OK})}) {
++    expected.insert(expected.end(), part.begin(), part.end());
++  }
++  EXPECT_EQ(serial.writesSnapshot(), expected);
++  EXPECT_EQ(g_set_preamble_calls, 2);
++  EXPECT_EQ(g_preamble, 0);
++}
++
++TEST_F(KissModemPhyFixture, PhyChangeRejectedWhileTransmitting) {
++  radio.setSendComplete(false);
++  serial.pushRx(dataFrame({0x42}));
++  advanceToTxSending();
++  ASSERT_EQ(radio.startSendCount(), 1);
++
++  serial.pushRx(hw({HW_CMD_SET_SYNC_WORD, 0x2B}));
++  modem.loop();
++  EXPECT_EQ(serial.writesSnapshot(), hw({HW_RESP_ERROR, HW_ERR_TX_BUSY}));
++  EXPECT_EQ(g_sync_word, 0x12);
++}
++
++TEST_F(KissModemFixture, RawPacketPassesThroughUnmodified) {
++  // RX path must not validate or alter packet contents (e.g. non-MeshCore payloads)
++  std::vector<uint8_t> packet(KISS_MAX_PACKET_SIZE);
++  for (size_t i = 0; i < packet.size(); i++) packet[i] = (uint8_t)(i == 0 ? 0xFF : (i % 0xC0));
++  modem.onPacketReceived((int8_t)TEST_SNR, (int8_t)TEST_RSSI, packet.data(), packet.size());
++  std::vector<uint8_t> expected = dataFrame(packet);
++  expected.insert(expected.end(), {KISS_FEND, KISS_CMD_SETHARDWARE, HW_RESP_RX_META, TEST_SNR, TEST_RSSI, KISS_FEND});
++  EXPECT_EQ(serial.writesSnapshot(), expected);
++}
++
+ int main(int argc, char** argv) {
+   ::testing::InitGoogleTest(&argc, argv);
+   return RUN_ALL_TESTS();
+-- 
+2.55.0
+
