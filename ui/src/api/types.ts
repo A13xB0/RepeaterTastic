@@ -24,8 +24,33 @@ export interface Phy {
   primary_channel: string
 }
 
+export interface RadioSummary {
+  id: string
+  name: string
+  main: boolean
+  device: string
+  driver: string
+  firmware: string
+  connected: boolean
+  configured: boolean
+  noise_floor_dbm: number
+  phy: Status['phy']
+  relay: { role: string; node_id?: string; long_name?: string }
+  identities: number
+  tx_pct: number
+  channel_util_pct: number
+  overlaps: string[] | null
+}
+
+export interface RadiosResponse {
+  radios: RadioSummary[]
+  site: { radios: number; duty_limit_pct: number; tx_pct: number } | null
+}
+
 export interface Status {
   version: string
+  radio_id?: string
+  radio_name?: string
   map?: { tile_url: string }
   uptime_s: number
   radio: {
@@ -270,6 +295,15 @@ export interface Link {
   tx: number
   /** Proposed: human-readable endpoint, e.g. "239.0.0.69:4403". */
   detail?: string
+  dropped?: number
+  // MQTT only
+  broker?: string
+  root?: string
+  tls?: boolean
+  downlink?: string[] | null
+  ok_to_mqtt?: boolean
+  relay_mqtt?: boolean
+  map_report?: boolean
 }
 
 /** Proposed: effective config shape for GET/PUT /config (mirrors the YAML file). */

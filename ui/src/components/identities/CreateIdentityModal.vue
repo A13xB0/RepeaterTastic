@@ -2,7 +2,7 @@
 // Create or import an identity. The key is previewed first so the node number and last-byte clash are visible before saving.
 import { computed, ref, watch } from 'vue'
 import { RefreshCw, TriangleAlert, CircleCheck } from '@lucide/vue'
-import { api } from '@/api/client'
+import { api, radio } from '@/api/client'
 import type { Identity, KeyPreview } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -16,7 +16,9 @@ const longName = ref('')
 const shortName = ref('')
 const shortTouched = ref(false)
 const port = ref(4403)
-const role = ref('CLIENT')
+// Only the relay persona repeats; other identities say so by default.
+const role = ref('CLIENT_MUTE')
+const radioId = ref(radio.value)
 const tab = ref<'generate' | 'import'>('generate')
 const importKey = ref('')
 const preview = ref<KeyPreview | null>(null)
@@ -43,7 +45,8 @@ watch(
     shortName.value = ''
     shortTouched.value = false
     port.value = nextPort()
-    role.value = 'CLIENT'
+    role.value = 'CLIENT_MUTE'
+    radioId.value = radio.value
     tab.value = props.mode === 'import' ? 'import' : 'generate'
     importKey.value = ''
     preview.value = null
@@ -112,6 +115,7 @@ async function save() {
       private_key: preview.value.private_key,
       api_port: port.value,
       role: role.value,
+      radio_id: live.radios.length > 1 ? radioId.value : undefined,
     })
     upsertIdentity(ident)
     toast(`${ident.long_name} created as ${ident.node_id}`)
@@ -145,6 +149,12 @@ async function save() {
         <label class="label" for="role">Device role</label>
         <select id="role" v-model="role" class="input">
           <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
+        </select>
+      </div>
+      <div v-if="live.radios.length > 1" class="sm:col-span-2">
+        <label class="label" for="radio">Radio</label>
+        <select id="radio" v-model="radioId" class="input">
+          <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }} · {{ r.phy.preset_name }} · {{ r.phy.frequency_mhz.toFixed(3) }} MHz</option>
         </select>
       </div>
       <div>

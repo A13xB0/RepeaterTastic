@@ -3,7 +3,7 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Menu, Monitor, Moon, Sun } from '@lucide/vue'
-import { api } from '@/api/client'
+import { api, radio, setRadio } from '@/api/client'
 import type { RelayRole, Status } from '@/api/types'
 import { live } from '@/store/live'
 import { cycleTheme, themeMode } from '@/composables/theme'
@@ -41,6 +41,7 @@ const gauge = computed(() => {
   const ratio = s.value.airtime.tx_pct / (s.value.airtime.duty_limit_pct || 100)
   return { pct: Math.min(100, ratio * 100), cls: ratio > 0.9 ? 'bg-bad' : ratio > 0.7 ? 'bg-warn' : 'bg-brand' }
 })
+const overlaps = computed(() => live.radios.find((r) => r.id === radio.value)?.overlaps ?? [])
 const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(16).toUpperCase().padStart(2, '0') : ''))
 </script>
 
@@ -55,6 +56,19 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
     </div>
 
     <div v-if="s" class="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2">
+      <div v-if="live.radios.length > 1" class="flex min-w-0 items-center gap-2">
+        <label class="eyebrow" for="radio-pick">Radio</label>
+        <select id="radio-pick" class="input !h-8 !py-0 text-[13px]" :value="radio" @change="setRadio(($event.target as HTMLSelectElement).value)">
+          <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }} · {{ r.phy.preset_name }}</option>
+        </select>
+        <span
+          v-if="overlaps.length"
+          class="chip bg-warn/15 text-warn"
+          :title="`Shares its channel with ${overlaps.join(', ')}: these radios take turns to transmit`"
+        >shared channel</span>
+      </div>
+
+      <div v-if="live.radios.length > 1" class="hidden h-7 w-px bg-line-soft sm:block" />
       <div class="flex min-w-0 items-center gap-2.5" :title="`${s.radio.firmware} · rx ${s.radio.rx} · tx ${s.radio.tx} · errors ${s.radio.errors} · reconnects ${s.radio.reconnects}`">
         <span :class="['dot size-2.5', s.radio.connected ? 'pulse-dot bg-ok text-ok' : 'bg-bad']" />
         <div class="min-w-0 leading-tight">

@@ -73,11 +73,19 @@ onBeforeUnmount(() => clearInterval(timer))
             </div>
             <div class="text-xs text-ink-3">{{ meta[l.type]?.label ?? l.type }}</div>
           </div>
-          <Toggle :model-value="l.enabled" :label="`Enable ${l.name}`" @update:model-value="setEnabled(l, $event)" />
+          <Toggle v-if="l.type !== 'mqtt'" :model-value="l.enabled" :label="`Enable ${l.name}`" @update:model-value="setEnabled(l, $event)" />
+          <span v-else class="text-2xs text-ink-3" title="Broker, credentials and map reporting live under links.mqtt in the config file">config file</span>
         </div>
         <p v-if="l.detail" class="mono mt-3 truncate rounded-lg bg-raised px-2.5 py-1.5 text-xs text-ink-2" :title="l.detail">{{ l.detail }}</p>
         <p class="mt-3 flex-1 text-xs leading-relaxed text-ink-3">{{ meta[l.type]?.about }}</p>
-        <div class="mt-4 grid grid-cols-2 gap-2 border-t border-line-soft pt-3">
+        <dl v-if="l.type === 'mqtt' && l.enabled" class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          <dt class="text-ink-3">Topic root</dt><dd class="mono truncate">{{ l.root || '—' }}{{ l.tls ? ' · TLS' : '' }}</dd>
+          <dt class="text-ink-3">Downlink</dt><dd class="truncate">{{ l.downlink?.length ? l.downlink.join(', ') : 'none (uplink only)' }}</dd>
+          <dt class="text-ink-3">Our packets</dt><dd>{{ l.ok_to_mqtt ? 'OK to uplink' : 'not OK to uplink' }}</dd>
+          <dt class="text-ink-3">Relay</dt><dd :class="l.relay_mqtt ? 'text-warn' : ''">{{ l.relay_mqtt ? 'rebroadcasts MQTT traffic on air' : 'never puts MQTT traffic on air' }}</dd>
+          <dt class="text-ink-3">Map report</dt><dd>{{ l.map_report ? 'on' : 'off' }}</dd>
+        </dl>
+        <div :class="['mt-4 grid gap-2 border-t border-line-soft pt-3', l.type === 'mqtt' ? 'grid-cols-3' : 'grid-cols-2']">
           <div>
             <div class="text-2xs text-ink-3">Received</div>
             <div class="text-lg font-semibold tabular-nums">{{ compact(l.rx) }}</div>
@@ -85,6 +93,10 @@ onBeforeUnmount(() => clearInterval(timer))
           <div>
             <div class="text-2xs text-ink-3">Sent</div>
             <div class="text-lg font-semibold tabular-nums">{{ compact(l.tx) }}</div>
+          </div>
+          <div v-if="l.type === 'mqtt'" title="Downlink packets refused: not encrypted, wrong channel or over the rate limit">
+            <div class="text-2xs text-ink-3">Dropped</div>
+            <div class="text-lg font-semibold tabular-nums">{{ compact(l.dropped ?? 0) }}</div>
           </div>
         </div>
       </section>

@@ -1,7 +1,7 @@
 // Small reactive store fed by REST snapshots plus the SSE stream (/api/v1/events).
 import { markRaw, reactive, shallowRef, triggerRef } from 'vue'
-import { API_BASE, api, token } from '@/api/client'
-import type { Identity, LogLine, MeshNode, Message, Packet, RfStats, Status, TracerouteEvent } from '@/api/types'
+import { API_BASE, api, radio, setRadio, token, withRadio } from '@/api/client'
+import type { Identity, LogLine, MeshNode, Message, Packet, RadioSummary, RadiosResponse, RfStats, Status, TracerouteEvent } from '@/api/types'
 
 const PACKET_BUFFER = 400
 const LOG_BUFFER = 1500
@@ -30,7 +30,22 @@ export const live = reactive({
   /** Noise-floor points from /stats/rf so sparklines aren't empty right after login. */
   noiseSeed: [] as number[],
   lastEvent: 0,
+  /** Every radio on this host (one entry on a single-radio host). */
+  radios: [] as RadioSummary[],
+  site: null as RadiosResponse['site'],
 })
+
+export async function refreshRadios() {
+  try {
+    const r = await api.get<RadiosResponse>('/radios')
+    live.radios = r.radios
+    live.site = r.site
+    // A remembered radio that no longer exists falls back to the main one.
+    if (radio.value !== 'main' && !r.radios.some((x) => x.id === radio.value)) setRadio('main')
+  } catch {
+    live.radios = []
+  }
+}
 
 /** Newest first. Shallow so hundreds of packets don't become deep proxies. */
 export const packets = shallowRef<Packet[]>([])
@@ -119,7 +134,7 @@ function parse<T>(e: MessageEvent): T | null {
 export function connect() {
   disconnect()
   if (!token.value) return
-  const es = new EventSource(`${API_BASE}/events?token=${encodeURIComponent(token.value)}`)
+  const es = new EventSource(API_BASE + withRadio(`/events?token=${encodeURIComponent(token.value)}`))
   source = es
   es.onopen = () => (live.connected = true)
   es.onerror = () => {
@@ -185,7 +200,7 @@ export async function startLive() {
   started = true
   connect()
   await Promise.allSettled([
-    refreshStatus(), refreshIdentities(), refreshNodes(), refreshPackets(), refreshLogs(),
+    refreshStatus(), refreshIdentities(), refreshNodes(), refreshPackets(), refreshLogs(), refreshRadios(),
     api.get<RfStats>('/stats/rf?window=1h').then((r) => (live.noiseSeed = r.points.slice(-40).map((p) => p.noise_floor_dbm))),
   ])
 }
