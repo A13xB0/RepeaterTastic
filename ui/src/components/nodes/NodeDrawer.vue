@@ -108,7 +108,8 @@ async function forget() {
 
 function dm() {
   if (!node.value) return
-  const sender = from.value && !live.identities.find((i) => i.node_id === from.value)?.is_relay ? from.value : live.identities.find((i) => !i.is_relay && i.enabled)?.node_id
+  // Send from the identity picked above, the relay persona included.
+  const sender = from.value || live.identities.find((i) => !i.is_relay && i.enabled)?.node_id
   router.push({ name: 'chat', params: { identity: sender, conversation: `dm:${node.value.node_id}` } })
 }
 
@@ -217,7 +218,7 @@ const nextHop = computed(() => (node.value?.next_hop ? nodeByLastByte(node.value
         <h3 class="eyebrow mb-2">Actions</h3>
         <label class="label" for="nd-from">Send from</label>
         <select id="nd-from" v-model="from" class="input">
-          <option v-for="s in senders" :key="s.node_id" :value="s.node_id">{{ s.long_name }} ({{ s.node_id }})</option>
+          <option v-for="s in senders" :key="s.node_id" :value="s.node_id">{{ s.long_name }} ({{ s.node_id }}){{ s.is_relay ? ' · relay persona' : '' }}</option>
         </select>
         <div class="mt-3 flex flex-wrap gap-2">
           <button class="btn btn-sm" :disabled="pending || !from" @click="traceroute"><Spinner v-if="pending" /><RouteIcon v-else class="size-3.5" />Traceroute</button>
