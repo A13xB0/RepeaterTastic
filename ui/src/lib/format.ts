@@ -45,6 +45,18 @@ export function compact(n: number): string {
   return n.toLocaleString()
 }
 
+/** A measured number with at most `digits` decimals and no float noise (968.7040000000001 → "968.7"). */
+export function num(v: number | null | undefined, digits = 1): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  return v.toLocaleString(undefined, { maximumFractionDigits: digits })
+}
+
+/** Airtime of one packet: whole milliseconds below 10 s ("928 ms"), seconds above. */
+export function airtime(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '—'
+  return ms < 10_000 ? `${num(ms, 0)} ms` : `${num(ms / 1000, 1)} s`
+}
+
 export function seconds(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)} ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`

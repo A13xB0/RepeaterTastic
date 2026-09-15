@@ -9,6 +9,7 @@ import { live } from '@/store/live'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
 import { cycleTheme, themeMode } from '@/composables/theme'
 import { toastError } from '@/composables/toast'
+import { num } from '@/lib/format'
 
 const emit = defineEmits<{ menu: [] }>()
 const route = useRoute()
@@ -86,7 +87,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
           {{ s.phy.region }} <span class="text-ink-3">·</span> {{ s.phy.preset_name }} <span class="text-ink-3">·</span>
           <span class="tabular-nums">{{ s.phy.frequency_mhz.toFixed(3) }} MHz</span>
         </div>
-        <div class="truncate text-2xs text-ink-3 max-sm:hidden">sync {{ syncHex }} · SF{{ s.phy.sf }} / {{ s.phy.bw_khz }} kHz · {{ s.phy.tx_power_dbm }} dBm</div>
+        <div class="truncate text-2xs text-ink-3 max-sm:hidden">sync {{ syncHex }} · SF{{ s.phy.sf }} / {{ num(s.phy.bw_khz) }} kHz · {{ s.phy.tx_power_dbm }} dBm</div>
       </div>
 
       <div class="hidden h-7 w-px bg-line-soft sm:block" />
@@ -94,7 +95,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
       <div class="w-32 leading-tight sm:w-40" :title="`TX airtime in the last ${s.airtime.window_s / 60} min against the region duty cycle`">
         <div class="flex items-baseline justify-between text-2xs text-ink-3">
           <span>Airtime 1 h</span>
-          <span class="text-[13px] font-semibold tabular-nums text-ink">{{ s.airtime.tx_pct.toFixed(1) }}<span class="text-ink-3"> / {{ s.airtime.duty_limit_pct }} %</span></span>
+          <span class="text-[13px] font-semibold tabular-nums text-ink">{{ s.airtime.tx_pct.toFixed(1) }}<span class="text-ink-3"> / {{ num(s.airtime.duty_limit_pct) }} %</span></span>
         </div>
         <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-ink-3/15">
           <div :class="['h-full rounded-full transition-all duration-500', gauge.cls]" :style="{ width: `${Math.max(gauge.pct, 1.5)}%` }" />

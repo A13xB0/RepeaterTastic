@@ -8,6 +8,7 @@ import type { Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/type
 import Logo from '@/components/ui/Logo.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { markSetupDone } from '@/router'
+import { num } from '@/lib/format'
 
 const router = useRouter()
 const steps = ['Modem', 'Radio', 'Relay', 'Password', 'Review']
@@ -210,7 +211,7 @@ async function finish() {
                 <select id="region" v-model="region" class="input">
                   <option v-for="r in regions" :key="r.name" :value="r.name">{{ r.name }}</option>
                 </select>
-                <p v-if="regionInfo" class="hint">Duty cycle {{ regionInfo.duty_cycle_pct }}% · max {{ regionInfo.power_limit_dbm }} dBm</p>
+                <p v-if="regionInfo" class="hint">Duty cycle {{ num(regionInfo.duty_cycle_pct) }}% · max {{ regionInfo.power_limit_dbm }} dBm</p>
               </div>
               <div>
                 <label class="label" for="primary">Primary channel name</label>
@@ -240,7 +241,7 @@ async function finish() {
                   <div class="mt-1 text-xs text-ink-3">slot {{ phy.slot + 1 }} of {{ phy.num_slots }} · channel "{{ phy.primary_channel }}"</div>
                 </div>
                 <dl class="grid grid-cols-3 gap-x-6 gap-y-1 text-xs">
-                  <div><dt class="text-ink-3">Bandwidth</dt><dd class="font-medium tabular-nums">{{ phy.bw_khz }} kHz</dd></div>
+                  <div><dt class="text-ink-3">Bandwidth</dt><dd class="font-medium tabular-nums">{{ num(phy.bw_khz) }} kHz</dd></div>
                   <div><dt class="text-ink-3">Spreading</dt><dd class="font-medium">SF{{ phy.sf }}</dd></div>
                   <div><dt class="text-ink-3">Coding</dt><dd class="font-medium">4/{{ phy.cr }}</dd></div>
                   <div><dt class="text-ink-3">Sync word</dt><dd class="mono font-medium">0x{{ phy.sync_word.toString(16).toUpperCase() }}</dd></div>

@@ -10,7 +10,7 @@ import Sparkline from '@/components/charts/Sparkline.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import { live } from '@/store/live'
 import { setToken } from '@/api/client'
-import { uptime } from '@/lib/format'
+import { num, uptime } from '@/lib/format'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -92,7 +92,7 @@ function logout() {
           <div class="mt-2 border-t border-line-soft pt-2">
             <div class="flex items-baseline justify-between text-2xs text-ink-3">
               <span>Noise floor</span>
-              <span class="font-semibold tabular-nums text-ink">{{ live.status.radio.noise_floor_dbm }} dBm</span>
+              <span class="font-semibold tabular-nums text-ink">{{ num(live.status.radio.noise_floor_dbm, 0) }} dBm</span>
             </div>
             <Sparkline class="mt-1" :data="noise" :height="22" color="var(--info)" />
           </div>

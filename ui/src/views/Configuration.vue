@@ -14,7 +14,7 @@ import ExperimentalPanel from '@/components/config/ExperimentalPanel.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
-import { relTime } from '@/lib/format'
+import { num, relTime } from '@/lib/format'
 
 type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
@@ -321,7 +321,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
               <div class="mt-2 text-[28px] font-semibold leading-none tracking-tight tabular-nums">{{ (phy.frequency_mhz + (form.radio.frequency_offset_mhz || 0)).toFixed(3) }}<span class="ml-1 text-sm font-normal text-ink-3">MHz</span></div>
               <div class="mt-1 text-xs text-ink-3">slot {{ phy.slot + 1 }}/{{ phy.num_slots }} · "{{ phy.primary_channel }}"</div>
               <dl class="kv mt-4 !grid-cols-[auto_1fr] text-xs">
-                <dt>Bandwidth</dt><dd class="tabular-nums">{{ phy.bw_khz }} kHz</dd>
+                <dt>Bandwidth</dt><dd class="tabular-nums">{{ num(phy.bw_khz) }} kHz</dd>
                 <dt>Spreading factor</dt><dd>SF{{ phy.sf }}</dd>
                 <dt>Coding rate</dt><dd>4/{{ phy.cr }}</dd>
                 <dt>Sync word</dt><dd class="mono">0x{{ phy.sync_word.toString(16).toUpperCase() }}</dd>
@@ -367,7 +367,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
         <!-- AIRTIME -->
         <div v-else-if="tab === 'airtime'" class="grid max-w-3xl gap-4 sm:grid-cols-2">
           <div>
-            <label class="label" for="c-duty">Duty cycle limit · {{ form.airtime.duty_cycle_percent }}%</label>
+            <label class="label" for="c-duty">Duty cycle limit · {{ num(form.airtime.duty_cycle_percent) }}%</label>
             <input id="c-duty" v-model.number="form.airtime.duty_cycle_percent" type="range" min="1" :max="Math.max(region?.duty_cycle_pct ?? 100, 1)" step="0.5" class="w-full accent-[var(--brand)]" />
             <p class="hint">Rolling one-hour TX budget shared by all identities. {{ form.radio.region }} allows {{ region?.duty_cycle_pct ?? '…' }}%.</p>
           </div>

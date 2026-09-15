@@ -10,6 +10,7 @@ import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
+import { num } from '@/lib/format'
 
 const props = defineProps<{ ports: SerialPort[]; regions: Region[] }>()
 const emit = defineEmits<{ restart: [] }>()
@@ -212,7 +213,7 @@ function openSettings(id: string) {
           <input id="site-duty" v-model.number="siteDuty" type="range" min="0" max="36" step="1" class="w-full accent-[var(--brand)]" />
           <p class="hint">
             On top of each radio's own duty limit. Radios still take turns on a shared channel with this off.
-            <template v-if="site && site.coordinator && site.running_duty_cycle_percent !== site.duty_cycle_percent"> Running with {{ site.running_duty_cycle_percent }}%.</template>
+            <template v-if="site && site.coordinator && site.running_duty_cycle_percent !== site.duty_cycle_percent"> Running with {{ num(site.running_duty_cycle_percent) }}%.</template>
           </p>
         </div>
         <div class="flex items-end">
@@ -263,7 +264,7 @@ function openSettings(id: string) {
         </div>
         <label class="flex items-center gap-2 text-[13px] sm:col-span-2"><input v-model="form.copy_position" type="checkbox" class="size-4 accent-[var(--brand)]" /> Same site position as the main radio</label>
         <p v-if="preview" class="hint sm:col-span-2">
-          {{ preview.frequency_mhz.toFixed(3) }} MHz · {{ preview.bw_khz }} kHz · SF{{ preview.sf }}
+          {{ preview.frequency_mhz.toFixed(3) }} MHz · {{ num(preview.bw_khz) }} kHz · SF{{ preview.sf }}
           <span v-if="sharesWith.length" class="!text-warn"><TriangleAlert class="mx-1 inline size-3.5 align-[-2px]" />Same channel as {{ sharesWith.join(', ') }}: they'll take turns to transmit.</span>
         </p>
         <p v-if="addError" class="hint !text-bad sm:col-span-2">{{ addError }}</p>
