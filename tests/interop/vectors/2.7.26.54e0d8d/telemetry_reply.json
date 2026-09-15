@@ -1,0 +1,91 @@
+{
+  "name": "telemetry_reply",
+  "description": "B's TELEMETRY_APP DeviceMetrics reply",
+  "firmware_version": "2.7.26.54e0d8d",
+  "image": "meshtastic/meshtasticd:2.7.26.54e0d8d-debian",
+  "captured_at": "2026-09-15T01:15:57Z",
+  "udp": {
+    "src_ip": "172.21.0.3",
+    "dst_group": "224.0.0.69",
+    "port": 4403,
+    "datagram_hex": "0d02a0e71e1501a0e71e2a31f7a6d26f83fff91c55ef05b714b73d7f147159fb39244d735ab99eb0332ecdf5cc3db78154590fda9c7f2bf45b7c983e4735ec6ae4d2480258467802880101900101980102",
+    "note": "datagram_hex is the complete UDP payload = protobuf-encoded meshtastic.MeshPacket"
+  },
+  "from": 518496258,
+  "to": 518496257,
+  "id": 3538184940,
+  "channel_hash": 0,
+  "hop_limit": 2,
+  "hop_start": 2,
+  "want_ack": false,
+  "via_mqtt": false,
+  "next_hop": 1,
+  "relay_node": 2,
+  "priority": 70,
+  "priority_name": "RELIABLE",
+  "transport_mechanism": 0,
+  "rx_time": 0,
+  "rx_snr": 0.0,
+  "rx_rssi": 0,
+  "pki_encrypted": true,
+  "public_key_hex": "",
+  "delayed": 0,
+  "all_set_fields": [
+    "encrypted",
+    "from",
+    "hop_limit",
+    "hop_start",
+    "id",
+    "next_hop",
+    "pki_encrypted",
+    "priority",
+    "relay_node",
+    "to"
+  ],
+  "encrypted_hex": "f7a6d26f83fff91c55ef05b714b73d7f147159fb39244d735ab99eb0332ecdf5cc3db78154590fda9c7f2bf45b7c983e47",
+  "derived_radio_header_hex": "01a0e71e02a0e71eec6ae4d242000102",
+  "plaintext_hex": "0843121a0d4d9ca86a1213086515000000001d184ba6402539fbf03d284b359160ca484800",
+  "crypto": {
+    "type": "pki_x25519_aes_ccm",
+    "sender_private_key_hex": "68ccb5022b04edbceebaebaafdc3923b9e8cb1a585636382dc8fd0b3064cc56b",
+    "sender_public_key_hex": "537d06cca95490112da507f263a222c58d6ede70699c5a3153e38a314e9a4f78",
+    "receiver_private_key_hex": "d0711a3dc5e7b776771d129fe46133c4bbb181262ee510aef6f7c294885abd72",
+    "receiver_public_key_hex": "f0b5087e9d9c87f1df559a5431ddcd470ee56a2ab9bf184e0bf17cd8ab333926",
+    "x25519_shared_secret_hex": "c58b534e5e0ef531731db5fd94afeeb2b84ff3bf5e78e36cedb7da30a507003f",
+    "aes_key_hex": "bc7135003b70716806e0472f0039ce3162560f7d8beb94d726346f1846c44460",
+    "extra_nonce_hex": "7c983e47",
+    "extra_nonce_u32_le": 1195284604,
+    "ccm_nonce_hex": "ec6ae4d27c983e4702a0e71e00",
+    "ciphertext_hex": "f7a6d26f83fff91c55ef05b714b73d7f147159fb39244d735ab99eb0332ecdf5cc3db78154",
+    "tag_hex": "590fda9c7f2bf45b",
+    "note": "key = SHA256(X25519(priv, peer_pub)); AES-256-CCM, M=8 tag, L=2 (13 byte nonce: id u32 LE | extra_nonce u32 LE | from u32 LE | 0x00); encrypted = ciphertext | tag(8) | extra_nonce(4)"
+  },
+  "decoded": {
+    "portnum": 67,
+    "portnum_name": "TELEMETRY_APP",
+    "payload_hex": "0d4d9ca86a1213086515000000001d184ba6402539fbf03d284b",
+    "want_response": false,
+    "dest": 0,
+    "source": 0,
+    "request_id": 1221222545,
+    "reply_id": 0,
+    "emoji": 0,
+    "bitfield": 0,
+    "all_set_fields": [
+      "bitfield",
+      "payload",
+      "portnum",
+      "request_id"
+    ],
+    "payload": {
+      "time": 1789434957,
+      "device_metrics": {
+        "battery_level": 101,
+        "voltage": 0.0,
+        "channel_utilization": 5.1966667,
+        "air_util_tx": 0.11766667,
+        "uptime_seconds": 75
+      }
+    }
+  }
+}

@@ -306,3 +306,30 @@ func randomBytes(n int) []byte {
 	_, _ = rand.Read(b)
 	return b
 }
+
+// SetChannel applies a client or web channel change. The primary channel's name and role are
+// shared by every identity (they pick the frequency), so only its PSK and module settings change.
+func (h *Host) SetChannel(id *Identity, ch *pb.Channel) error {
+	if ch == nil || ch.Index < 0 || int(ch.Index) >= MaxChannels {
+		return errors.New("channel index out of range")
+	}
+	nc := proto.Clone(ch).(*pb.Channel)
+	if nc.Settings == nil {
+		nc.Settings = &pb.ChannelSettings{}
+	}
+	if len(nc.Settings.Psk) > 32 {
+		return errors.New("PSK longer than 32 bytes")
+	}
+	if nc.Index == 0 {
+		nc.Role = pb.Channel_PRIMARY
+		nc.Settings.Name = h.Config().PrimaryChannel
+	} else if nc.Role == pb.Channel_PRIMARY {
+		return errors.New("only channel 0 can be primary")
+	}
+	id.mu.Lock()
+	id.Channels[nc.Index] = nc
+	id.mu.Unlock()
+	h.ChannelsChanged()
+	h.Bus.Publish(Event{Type: "identity", Data: id.NodeID()})
+	return nil
+}

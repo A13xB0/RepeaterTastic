@@ -1,0 +1,79 @@
+{
+  "name": "routing_ack",
+  "description": "ROUTING_APP ACK from B for the DM (Routing{error_reason=NONE}, request_id = DM id)",
+  "firmware_version": "2.7.26.54e0d8d",
+  "image": "meshtastic/meshtasticd:2.7.26.54e0d8d-debian",
+  "captured_at": "2026-09-15T01:15:39Z",
+  "udp": {
+    "src_ip": "172.21.0.3",
+    "dst_group": "224.0.0.69",
+    "port": 4403,
+    "datagram_hex": "0d02a0e71e1501a0e71e18082a0dbdca76eebf59f578a42f4a6c4935eaeea9814802500158787802980102",
+    "note": "datagram_hex is the complete UDP payload = protobuf-encoded meshtastic.MeshPacket"
+  },
+  "from": 518496258,
+  "to": 518496257,
+  "id": 2175397610,
+  "channel_hash": 8,
+  "hop_limit": 2,
+  "hop_start": 2,
+  "want_ack": true,
+  "via_mqtt": false,
+  "next_hop": 0,
+  "relay_node": 2,
+  "priority": 120,
+  "priority_name": "ACK",
+  "transport_mechanism": 0,
+  "rx_time": 0,
+  "rx_snr": 0.0,
+  "rx_rssi": 0,
+  "pki_encrypted": false,
+  "public_key_hex": "",
+  "delayed": 0,
+  "all_set_fields": [
+    "channel",
+    "encrypted",
+    "from",
+    "hop_limit",
+    "hop_start",
+    "id",
+    "priority",
+    "relay_node",
+    "to",
+    "want_ack"
+  ],
+  "encrypted_hex": "bdca76eebf59f578a42f4a6c49",
+  "derived_radio_header_hex": "01a0e71e02a0e71eeaeea9814a080002",
+  "plaintext_hex": "080512021800358f1019424800",
+  "crypto": {
+    "type": "channel_aes_ctr",
+    "channel_name": "LongFast",
+    "channel_key_hex": "d4f1bb3a20290759f0bcffabcf4e6901",
+    "channel_psk_alias": 1,
+    "channel_hash": 8,
+    "iv_hex": "eaeea9810000000002a0e71e00000000",
+    "note": "AES-128-CTR, IV = id(u64 LE) | from(u32 LE) | 0(u32); plaintext = Data protobuf"
+  },
+  "channel_key_hex": "d4f1bb3a20290759f0bcffabcf4e6901",
+  "decoded": {
+    "portnum": 5,
+    "portnum_name": "ROUTING_APP",
+    "payload_hex": "1800",
+    "want_response": false,
+    "dest": 0,
+    "source": 0,
+    "request_id": 1108938895,
+    "reply_id": 0,
+    "emoji": 0,
+    "bitfield": 0,
+    "all_set_fields": [
+      "bitfield",
+      "payload",
+      "portnum",
+      "request_id"
+    ],
+    "payload": {
+      "error_reason": "NONE"
+    }
+  }
+}

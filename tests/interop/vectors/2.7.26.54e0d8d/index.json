@@ -1,0 +1,246 @@
+{
+  "firmware_version": "2.7.26.54e0d8d",
+  "image": "meshtastic/meshtasticd:2.7.26.54e0d8d-debian",
+  "multicast_groups_seen": [
+    "224.0.0.69"
+  ],
+  "notes": [
+    "UDP payload is a bare protobuf MeshPacket, always the `encrypted` variant (receivers drop `decoded`).",
+    "channel = 8-bit channel hash for channel traffic, 0 for PKI DMs; rx_snr/rx_rssi/rx_time are not set.",
+    "Firmware >= 2.8 derives node_num = crc32(public_key) once keys exist (hwid only seeds the first boot); 2.7 uses MAC bytes 2..5.",
+    "Packets heard over UDP are re-emitted onto UDP by other nodes (hop_limit-1, relay_node=relayer, transport_mechanism=6)."
+  ],
+  "nodes": {
+    "!1ee7a001": {
+      "node_num": 518496257,
+      "private_key_hex": "d0711a3dc5e7b776771d129fe46133c4bbb181262ee510aef6f7c294885abd72",
+      "public_key_hex": "f0b5087e9d9c87f1df559a5431ddcd470ee56a2ab9bf184e0bf17cd8ab333926"
+    },
+    "!1ee7a002": {
+      "node_num": 518496258,
+      "private_key_hex": "68ccb5022b04edbceebaebaafdc3923b9e8cb1a585636382dc8fd0b3064cc56b",
+      "public_key_hex": "537d06cca95490112da507f263a222c58d6ede70699c5a3153e38a314e9a4f78"
+    }
+  },
+  "vectors": [
+    {
+      "name": "nodeinfo_broadcast",
+      "file": "2.7.26.54e0d8d/nodeinfo_broadcast.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "NODEINFO_APP"
+    },
+    {
+      "name": "text_broadcast",
+      "file": "2.7.26.54e0d8d/text_broadcast.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "TEXT_MESSAGE_APP"
+    },
+    {
+      "name": "text_broadcast_relayed",
+      "file": "2.7.26.54e0d8d/text_broadcast_relayed.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "TEXT_MESSAGE_APP"
+    },
+    {
+      "name": "dm_text",
+      "file": "2.7.26.54e0d8d/dm_text.json",
+      "crypto": "pki_x25519_aes_ccm",
+      "portnum": "TEXT_MESSAGE_APP"
+    },
+    {
+      "name": "routing_ack",
+      "file": "2.7.26.54e0d8d/routing_ack.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "ROUTING_APP"
+    },
+    {
+      "name": "routing_ack_zero_hop",
+      "file": "2.7.26.54e0d8d/routing_ack_zero_hop.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "ROUTING_APP"
+    },
+    {
+      "name": "position_request",
+      "file": "2.7.26.54e0d8d/position_request.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "POSITION_APP"
+    },
+    {
+      "name": "position_reply",
+      "file": "2.7.26.54e0d8d/position_reply.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "POSITION_APP"
+    },
+    {
+      "name": "telemetry_request",
+      "file": "2.7.26.54e0d8d/telemetry_request.json",
+      "crypto": "pki_x25519_aes_ccm",
+      "portnum": "TELEMETRY_APP"
+    },
+    {
+      "name": "telemetry_reply",
+      "file": "2.7.26.54e0d8d/telemetry_reply.json",
+      "crypto": "pki_x25519_aes_ccm",
+      "portnum": "TELEMETRY_APP"
+    },
+    {
+      "name": "traceroute_request",
+      "file": "2.7.26.54e0d8d/traceroute_request.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "TRACEROUTE_APP"
+    },
+    {
+      "name": "traceroute_reply",
+      "file": "2.7.26.54e0d8d/traceroute_reply.json",
+      "crypto": "channel_aes_ctr",
+      "portnum": "TRACEROUTE_APP"
+    }
+  ],
+  "datagrams_total": 22,
+  "packet_copies": {
+    "0x799c9ea2": [
+      [
+        "172.21.0.2",
+        3,
+        1
+      ],
+      [
+        "172.21.0.3",
+        2,
+        2
+      ]
+    ],
+    "0xcb5c62e6": [
+      [
+        "172.21.0.2",
+        2,
+        1
+      ],
+      [
+        "172.21.0.3",
+        3,
+        2
+      ]
+    ],
+    "0x20dd4ae9": [
+      [
+        "172.21.0.2",
+        2,
+        1
+      ],
+      [
+        "172.21.0.3",
+        3,
+        2
+      ]
+    ],
+    "0x426ca2a5": [
+      [
+        "172.21.0.2",
+        3,
+        1
+      ],
+      [
+        "172.21.0.3",
+        2,
+        2
+      ]
+    ],
+    "0x9108248e": [
+      [
+        "172.21.0.2",
+        3,
+        1
+      ],
+      [
+        "172.21.0.3",
+        2,
+        2
+      ]
+    ],
+    "0x4219108f": [
+      [
+        "172.21.0.2",
+        3,
+        1
+      ]
+    ],
+    "0x81a9eeea": [
+      [
+        "172.21.0.3",
+        2,
+        2
+      ]
+    ],
+    "0x758646a6": [
+      [
+        "172.21.0.2",
+        0,
+        1
+      ]
+    ],
+    "0x01722c90": [
+      [
+        "172.21.0.2",
+        3,
+        1
+      ]
+    ],
+    "0x927302eb": [
+      [
+        "172.21.0.3",
+        2,
+        2
+      ]
+    ],
+    "0x3ba8a6a7": [
+      [
+        "172.21.0.2",
+        0,
+        1
+      ]
+    ],
+    "0x48ca6091": [
+      [
+        "172.21.0.2",
+        3,
+        1
+      ]
+    ],
+    "0xd2e46aec": [
+      [
+        "172.21.0.3",
+        2,
+        2
+      ]
+    ],
+    "0x2a6802a8": [
+      [
+        "172.21.0.2",
+        0,
+        1
+      ]
+    ],
+    "0x52c86092": [
+      [
+        "172.21.0.2",
+        3,
+        1
+      ]
+    ],
+    "0x733f66ed": [
+      [
+        "172.21.0.3",
+        2,
+        2
+      ]
+    ],
+    "0x2b852aaa": [
+      [
+        "172.21.0.2",
+        0,
+        1
+      ]
+    ]
+  }
+}
