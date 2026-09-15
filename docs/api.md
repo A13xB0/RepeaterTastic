@@ -177,7 +177,8 @@ A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": 
   `GET /serial-ports`, `GET /regions`, `POST /phy/preview`, `POST /setup/probe`.
 - `POST /api/v1/setup/probe` `{"device": "/dev/ttyUSB0"}` → `{"ok": true, "driver": "kiss", "firmware": "Mesh KISS v2", "name": "Heltec V3", "sync_word_ok": true, "error": ""}` — ping the modem, read its version and check it accepts sync word 0x2B. Always 200; `ok: false` + `error` when nothing answers.
 - `POST /phy/preview` also accepts `"tx_power_dbm"` (clamped to the region limit in the reply).
-- `PUT /api/v1/auth/password` `{"current": "...", "new": "..."}` → 204 (400 with an error when `current` is wrong or `new` < 8 chars).
+- `PUT /api/v1/auth/password` `{"current": "...", "new": "..."}` → `{"token", "expires"}` (400 with an error when `current` is wrong or `new` < 8 chars). Every other browser session is signed out; the returned token keeps this one signed in.
+- `POST /api/v1/auth/logout-all` → 204: signs out every browser session, this one included. API tokens are unaffected.
 
 ### Identities
 

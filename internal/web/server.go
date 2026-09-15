@@ -218,6 +218,7 @@ func (s *Server) routes() {
 	setup("POST /api/v1/phy/preview", s.phyPreview)
 	setup("POST /api/v1/setup/probe", s.probe)
 	priv("PUT /api/v1/auth/password", s.changePassword)
+	priv("POST /api/v1/auth/logout-all", s.logoutAll)
 
 	priv("GET /api/v1/status", s.getStatus)
 	priv("GET /api/v1/radios", s.listRadios)

@@ -117,6 +117,15 @@ func (a *Auth) CheckPassword(pw string) bool {
 	return err == nil && subtle.ConstantTimeCompare(dk, want) == 1
 }
 
+// RevokeSessions signs every browser out by rotating the session signing secret. API tokens
+// are unaffected.
+func (a *Auth) RevokeSessions() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.f.JWTSecret = hex.EncodeToString(randBytes(32))
+	return a.save()
+}
+
 // ---------------------------------------------------------------------------------------- JWT
 
 var b64 = base64.RawURLEncoding

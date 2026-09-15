@@ -141,7 +141,7 @@ function logout() {
           <div>RepeaterTastic <span class="tabular-nums">v{{ (live.status?.version ?? '…').replace(/^v/, '') }}</span></div>
           <div>UI layout after openHop (MIT)</div>
         </div>
-        <button class="icon-btn" title="Sign out" aria-label="Sign out" @click="logout"><LogOut class="size-4" /></button>
+        <button class="btn btn-sm btn-ghost" title="Sign out" @click="logout"><LogOut class="size-4" />Sign out</button>
       </div>
     </div>
   </aside>

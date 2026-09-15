@@ -351,6 +351,19 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// A new password signs out every session; this browser gets a fresh one to stay signed in.
+	tok, exp := s.auth.IssueJWT()
+	s.log.Info("admin password changed; other sessions signed out")
+	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expires": exp.UnixMilli()})
+}
+
+// logoutAll is POST /api/v1/auth/logout-all: sign out every browser session, this one included.
+func (s *Server) logoutAll(w http.ResponseWriter, r *http.Request) {
+	if err := s.auth.RevokeSessions(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.log.Info("all web sessions signed out")
 	w.WriteHeader(http.StatusNoContent)
 }
 

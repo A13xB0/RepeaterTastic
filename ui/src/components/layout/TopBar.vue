@@ -6,6 +6,7 @@ import { Menu, Monitor, Moon, Sun } from '@lucide/vue'
 import { api, radio, setRadio } from '@/api/client'
 import type { RelayRole, Status } from '@/api/types'
 import { live } from '@/store/live'
+import AccountMenu from '@/components/layout/AccountMenu.vue'
 import { cycleTheme, themeMode } from '@/composables/theme'
 import { toastError } from '@/composables/toast'
 
@@ -53,6 +54,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
       <button class="icon-btn ml-auto" :title="`Theme: ${themeMode}`" @click="cycleTheme">
         <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />
       </button>
+      <AccountMenu />
     </div>
 
     <div v-if="s" class="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2">
@@ -109,6 +111,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
         <button class="icon-btn max-lg:hidden" :title="`Theme: ${themeMode}`" @click="cycleTheme">
           <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />
         </button>
+        <AccountMenu class="max-lg:hidden" />
       </div>
     </div>
     <div v-else class="h-9 flex-1 animate-pulse rounded-lg bg-sunken" />

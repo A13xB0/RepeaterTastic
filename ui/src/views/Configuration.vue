@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, KeyRound, Plus, RotateCcw, TriangleAlert, Trash, Upload } from '@lucide/vue'
-import { api, API_BASE, enc, token as authToken } from '@/api/client'
+import { api, API_BASE, enc, setToken as setAuthToken, token as authToken } from '@/api/client'
 import type { ApiToken, Config, ConfigPutResult, Phy, Region, SerialPort } from '@/api/types'
 import { live, refreshStatus } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
@@ -115,9 +115,10 @@ const pwBusy = ref(false)
 async function changePassword() {
   pwBusy.value = true
   try {
-    await api.put('/auth/password', { current: pw.value.current, new: pw.value.next })
+    const r = await api.put<{ token: string }>('/auth/password', { current: pw.value.current, new: pw.value.next })
+    if (r?.token) setAuthToken(r.token)
     pw.value = { current: '', next: '', repeat: '' }
-    toast('Password changed')
+    toast('Password changed. Other browsers have been signed out.')
   } catch (e) {
     toastError(e)
   } finally {
