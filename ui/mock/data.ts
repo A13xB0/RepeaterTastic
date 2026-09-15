@@ -640,6 +640,15 @@ state.config = {
   relay: { role: 'client', long_name: 'RepeaterTastic Relay', short_name: 'RPTR', local_dm: 'software' },
   airtime: { duty_cycle_percent: 10, identity_share_percent: 25, nodeinfo_interval: '3h', position: 'off', telemetry: 'off', cw_min: 3, cw_max: 8 },
   web: { bind: '0.0.0.0', port: 8080, session_ttl: '24h' },
+  position: { latitude: 55.9533, longitude: -3.1883, altitude: 47, precision_bits: 32, interval: '3h', identities: 'relay' },
+  hardware: { hw_model: 'AUTO', effective: 'HELTEC_V3', modem: 'Heltec V3' },
+  mqtt: {
+    enabled: false, address: 'mqtt.meshtastic.org:1883', username: 'meshdev', password: '', password_set: true, tls: false,
+    root: 'msh/EU_868/Scotland', ok_to_mqtt: false, relay_mqtt: false, downlink_per_minute: 30,
+    map_report: { enabled: false, interval: '1h', position_precision: 14, latitude: 0, longitude: 0 },
+  },
+  radio_id: 'main',
+  main: true,
 }
 
 state.tokens = [
