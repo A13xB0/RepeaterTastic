@@ -1,18 +1,26 @@
-// Package mqtt is a Meshtastic MQTT gateway for one radio: the relay persona is the gateway
-// node, and packets travel as ServiceEnvelope protobufs on <root>/2/e/<channel>/<!gateway>,
-// the same topics and payloads the firmware uses.
+// Package mqtt connects a radio to Meshtastic MQTT brokers. A radio can have several
+// connections; each speaks as one gateway identity (the relay persona by default) and uses
+// the firmware's topics and payloads: ServiceEnvelope protobufs on <root>/2/e/<channel>/<!gw>,
+// JSON on <root>/2/json/<channel>/<!gw> and map reports on <root>/2/map/.
 //
-// Uplink (mesh → broker): channel packets heard on air whose sender set OK_TO_MQTT, and
-// our own identities' channel packets, for channels with uplink enabled. Direct messages
-// (PKI) are never uplinked. Payloads stay encrypted with the channel key.
+// Modes:
+//   - gateway: uplink and downlink. Consent (OK_TO_MQTT) is respected, JSON is only published
+//     for channels anyone can read, broker packets are rebroadcast at most zero-hop.
+//   - uplink_only: gateway without the downlink.
+//   - map_only: map reports only.
+//   - monitor: uplink only, JSON by default, for dashboards and loggers.
+//   - bridge: joins sites or private meshes. May uplink without consent, publish JSON of
+//     private channels, rebroadcast with more hops. Needs bridge_acknowledged in the config.
 //
-// Downlink (broker → mesh): encrypted packets on channels with downlink enabled, rate
-// limited, marked via_mqtt and handed to the host like a received packet. The host
-// delivers them to our identities; the relay persona only rebroadcasts them when
-// relay_mqtt is set, so by default broker traffic never uses airtime.
+// Uplink (mesh → broker): channel packets heard on air and our own identities' channel
+// packets, on the connection's uplink channels. Direct messages (PKI) are never uplinked.
 //
-// Map reports (optional): the relay persona's MapReport on <root>/2/map/, with its
-// position truncated to position_precision bits.
+// Downlink (broker → mesh): encrypted packets on the connection's downlink channels, rate
+// limited, marked via_mqtt and handed to the host like a received packet. They are only
+// rebroadcast on air when the connection has relay_mqtt set.
+//
+// Packets that came from one connection are only passed to another when both allow
+// cross_link; the host's duplicate filter stops a packet looping back in.
 package mqtt
 
 import (
@@ -23,6 +31,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,14 +46,43 @@ import (
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
 )
 
-// Options configures a link.
+// Modes, formats and channel selection policies (as in the config).
+const (
+	ModeGateway    = "gateway"
+	ModeUplinkOnly = "uplink_only"
+	ModeMapOnly    = "map_only"
+	ModeMonitor    = "monitor"
+	ModeBridge     = "bridge"
+
+	FormatEncrypted = "encrypted"
+	FormatJSON      = "json"
+	FormatBoth      = "both"
+
+	SelectOverride = "override"
+	SelectCombine  = "combine"
+	SelectIdentity = "identity"
+)
+
+// Options configures a connection.
 type Options struct {
+	Name              string // unique per radio, e.g. "mqtt"
 	Address           string // host:port
 	Username          string
 	Password          string
 	TLS               bool
 	Root              string // "" = msh/<region>
+	Mode              string // "" = gateway
+	Gateway           string // "" or "relay" = relay persona, or a node id
+	Format            string // "" = encrypted (json for monitor)
+	UplinkChannels    []string
+	DownlinkChannels  []string
+	ChannelSelection  string // "" = identity without channel lists, override with them
+	IgnoreConsent     bool   // bridge only
+	RelayMQTT         bool   // broker packets may be rebroadcast on air
+	RelayHops         int    // hops a rebroadcast broker packet may travel (bridge only; otherwise 0)
+	CrossLink         bool
 	DownlinkPerMinute int    // 0 = 30
+	UplinkPerMinute   int    // 0 = 120
 	FirmwareVersion   string // reported in map reports
 
 	MapReport         bool
@@ -52,9 +91,12 @@ type Options struct {
 	Latitude          float64
 	Longitude         float64
 	Altitude          int
+
+	// Origins is shared by a radio's connections to track which one a broker packet came from.
+	Origins *Origins
 }
 
-// Link is one radio's broker connection.
+// Link is one broker connection.
 type Link struct {
 	host *mesh.Host
 	opt  Options
@@ -68,15 +110,37 @@ type Link struct {
 	subMu      sync.Mutex
 	subscribed map[string]bool // channel names with an active downlink subscription
 
-	rateMu sync.Mutex
-	tokens float64
-	last   time.Time
+	down, up bucket
 }
 
-// New prepares a link; Run connects it.
+// New prepares a connection; Run connects it.
 func New(h *mesh.Host, opt Options, log *slog.Logger) *Link {
+	if opt.Name == "" {
+		opt.Name = "mqtt"
+	}
+	if opt.Mode == "" {
+		opt.Mode = ModeGateway
+	}
+	if opt.Format == "" {
+		opt.Format = FormatEncrypted
+		if opt.Mode == ModeMonitor {
+			opt.Format = FormatJSON
+		}
+	}
+	if opt.ChannelSelection == "" {
+		opt.ChannelSelection = SelectIdentity
+		if len(opt.UplinkChannels) > 0 || len(opt.DownlinkChannels) > 0 {
+			opt.ChannelSelection = SelectOverride
+		}
+	}
+	if opt.Mode != ModeBridge {
+		opt.IgnoreConsent, opt.RelayHops = false, 0
+	}
 	if opt.DownlinkPerMinute <= 0 {
 		opt.DownlinkPerMinute = 30
+	}
+	if opt.UplinkPerMinute <= 0 {
+		opt.UplinkPerMinute = 120
 	}
 	if opt.MapInterval <= 0 {
 		opt.MapInterval = time.Hour
@@ -87,15 +151,26 @@ func New(h *mesh.Host, opt Options, log *slog.Logger) *Link {
 	if opt.PositionPrecision <= 0 {
 		opt.PositionPrecision = 14
 	}
+	if opt.Origins == nil {
+		opt.Origins = NewOrigins()
+	}
+	opt.Origins.register(opt.Name, opt.CrossLink)
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Link{host: h, opt: opt, log: log.With("link", "mqtt"), subscribed: map[string]bool{},
-		tokens: float64(opt.DownlinkPerMinute), last: time.Now()}
+	return &Link{host: h, opt: opt, log: log.With("link", "mqtt", "connection", opt.Name), subscribed: map[string]bool{},
+		down: newBucket(opt.DownlinkPerMinute), up: newBucket(opt.UplinkPerMinute)}
 }
 
-func (l *Link) Name() string    { return "mqtt" }
+func (l *Link) Name() string    { return "mqtt:" + l.opt.Name }
 func (l *Link) Connected() bool { return l.connected.Load() }
+
+// Connection is the connection's configured name.
+func (l *Link) Connection() string { return l.opt.Name }
+
+// Mode is the effective mode; Format the effective payload format.
+func (l *Link) Mode() string   { return l.opt.Mode }
+func (l *Link) Format() string { return l.opt.Format }
 
 // Root is the topic prefix in use.
 func (l *Link) Root() string {
@@ -116,18 +191,65 @@ func (l *Link) Subscriptions() []string {
 	for ch := range l.subscribed {
 		out = append(out, ch)
 	}
+	slices.Sort(out)
 	return out
 }
 
+// UplinkChannels lists the host channels this connection currently uplinks.
+func (l *Link) UplinkChannels() []string {
+	var out []string
+	if !l.uplinks() {
+		return out
+	}
+	for _, ch := range l.host.Channels() {
+		if l.selected(ch, true) && !slices.Contains(out, ch.Name) {
+			out = append(out, ch.Name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// GatewayIdentity is the identity this connection speaks as: the configured one, or the
+// relay persona when that is unset or no longer exists.
+func (l *Link) GatewayIdentity() *mesh.Identity {
+	if g := strings.TrimSpace(l.opt.Gateway); g != "" && g != "relay" {
+		if n, err := strconv.ParseUint(strings.TrimPrefix(g, "!"), 16, 32); err == nil {
+			if id := l.host.Identity(uint32(n)); id != nil {
+				return id
+			}
+		}
+	}
+	return l.host.Relay()
+}
+
 func (l *Link) gatewayID() string {
-	if r := l.host.Relay(); r != nil {
-		return r.NodeID()
+	if id := l.GatewayIdentity(); id != nil {
+		return id.NodeID()
 	}
 	return ""
 }
 
-// Run connects, keeps subscriptions in step with the channels' downlink flags and sends map
-// reports until ctx ends.
+func (l *Link) uplinks() bool   { return l.opt.Mode != ModeMapOnly }
+func (l *Link) downlinks() bool { return l.opt.Mode == ModeGateway || l.opt.Mode == ModeBridge }
+
+// selected reports whether a channel is carried in one direction under the selection policy.
+func (l *Link) selected(ch mesh.ChannelRef, uplink bool) bool {
+	listed, flag := slices.Contains(l.opt.DownlinkChannels, ch.Name), ch.Downlink
+	if uplink {
+		listed, flag = slices.Contains(l.opt.UplinkChannels, ch.Name), ch.Uplink
+	}
+	switch l.opt.ChannelSelection {
+	case SelectOverride:
+		return listed
+	case SelectCombine:
+		return listed || flag
+	}
+	return flag
+}
+
+// Run connects, keeps subscriptions in step with the channel selection and sends map reports
+// until ctx ends.
 func (l *Link) Run(ctx context.Context) error {
 	scheme := "tcp"
 	if l.opt.TLS {
@@ -136,7 +258,7 @@ func (l *Link) Run(ctx context.Context) error {
 	gw := strings.TrimPrefix(l.gatewayID(), "!")
 	opts := paho.NewClientOptions().
 		AddBroker(scheme + "://" + l.opt.Address).
-		SetClientID(fmt.Sprintf("repeatertastic-%s-%s", l.host.RadioID(), gw)).
+		SetClientID(fmt.Sprintf("repeatertastic-%s-%s-%s", l.host.RadioID(), gw, l.opt.Name)).
 		SetUsername(l.opt.Username).
 		SetPassword(l.opt.Password).
 		SetCleanSession(true).
@@ -150,7 +272,7 @@ func (l *Link) Run(ctx context.Context) error {
 			l.subMu.Lock()
 			l.subscribed = map[string]bool{} // a clean session drops them all
 			l.subMu.Unlock()
-			l.log.Info("MQTT connected", "broker", l.opt.Address, "root", l.Root(), "gateway", l.gatewayID())
+			l.log.Info("MQTT connected", "broker", l.opt.Address, "root", l.Root(), "gateway", l.gatewayID(), "mode", l.opt.Mode)
 			l.syncSubscriptions()
 		}).
 		SetConnectionLostHandler(func(_ paho.Client, err error) {
@@ -193,52 +315,88 @@ func (l *Link) Run(ctx context.Context) error {
 	}
 }
 
-// ChannelPacketHeard uplinks a packet heard on air (mesh.ChannelLink).
-func (l *Link) ChannelPacketHeard(p *pb.MeshPacket, ch mesh.ChannelRef) {
-	if !ch.Uplink || !ch.OKToMQTT {
+// ChannelPacketHeard uplinks a packet received on a channel we hold (mesh.ChannelLink): heard
+// on air, or injected by another connection when both allow cross_link.
+func (l *Link) ChannelPacketHeard(p *pb.MeshPacket, ch mesh.ChannelRef, data *pb.Data) {
+	if !l.uplinks() || !l.selected(ch, true) {
 		return
 	}
-	l.publish(p, ch.Name)
+	if p.ViaMqtt {
+		hop, ok := l.opt.Origins.crossLink(p.From, p.Id, l.opt.Name)
+		if !ok || !l.opt.CrossLink {
+			return
+		}
+		p = proto.Clone(p).(*pb.MeshPacket)
+		p.ViaMqtt, p.HopLimit, p.TransportMechanism = false, hop, pb.MeshPacket_TRANSPORT_LORA
+	}
+	if !ch.OKToMQTT && !l.opt.IgnoreConsent {
+		return
+	}
+	l.publish(p, ch, data)
 }
 
 // SendPacket uplinks our own identities' channel packets after they go on air (mesh.Link).
 // Relayed packets were already uplinked when they were heard.
-func (l *Link) SendPacket(p *pb.MeshPacket) {
-	if p.GetEncrypted() == nil || p.PkiEncrypted || l.host.Identity(p.From) == nil {
+func (l *Link) SendPacket(p *pb.MeshPacket) { l.SendPacketPlain(p, nil) }
+
+// SendPacketPlain is SendPacket with the decoded payload, for JSON (mesh.PlainLink).
+func (l *Link) SendPacketPlain(p *pb.MeshPacket, data *pb.Data) {
+	if !l.uplinks() || p.GetEncrypted() == nil || p.PkiEncrypted || l.host.Identity(p.From) == nil {
 		return
 	}
 	for _, ch := range l.host.ChannelsByHash(uint8(p.Channel)) {
-		if ch.Uplink {
-			l.publish(p, ch.Name)
+		if l.selected(ch, true) {
+			l.publish(p, ch, data)
 			return
 		}
 	}
 }
 
-func (l *Link) publish(p *pb.MeshPacket, channel string) {
-	if !l.Connected() || p.GetEncrypted() == nil || channel == "" {
+func (l *Link) publish(p *pb.MeshPacket, ch mesh.ChannelRef, data *pb.Data) {
+	if !l.Connected() || ch.Name == "" {
 		return
 	}
-	cp := proto.Clone(p).(*pb.MeshPacket)
-	cp.RxSnr, cp.RxRssi, cp.RxTime = 0, nil, nil
-	b, err := proto.Marshal(&pb.ServiceEnvelope{Packet: cp, ChannelId: channel, GatewayId: l.gatewayID()})
-	if err != nil {
-		return
+	gw := l.gatewayID()
+	sent := false
+	if l.opt.Format != FormatJSON && p.GetEncrypted() != nil {
+		if !l.up.take() {
+			l.Dropped.Add(1)
+			return
+		}
+		sent = true
+		cp := proto.Clone(p).(*pb.MeshPacket)
+		cp.RxSnr, cp.RxRssi, cp.RxTime = 0, nil, nil
+		if b, err := proto.Marshal(&pb.ServiceEnvelope{Packet: cp, ChannelId: ch.Name, GatewayId: gw}); err == nil {
+			l.client.Publish(l.Root()+"/2/e/"+ch.Name+"/"+gw, 0, false, b)
+			l.Tx.Add(1)
+		}
 	}
-	topic := l.Root() + "/2/e/" + channel + "/" + l.gatewayID()
-	l.client.Publish(topic, 0, false, b)
-	l.Tx.Add(1)
+	// JSON is plaintext: only for channels anyone could read, unless this is a bridge.
+	if l.opt.Format != FormatEncrypted && data != nil && (ch.PublicKey || l.opt.Mode == ModeBridge) {
+		b := jsonPacket(p, data, gw)
+		if b == nil {
+			return
+		}
+		if !sent && !l.up.take() {
+			l.Dropped.Add(1)
+			return
+		}
+		l.client.Publish(l.Root()+"/2/json/"+ch.Name+"/"+gw, 0, false, b)
+		l.Tx.Add(1)
+	}
 }
 
-// syncSubscriptions subscribes to every channel with downlink enabled and drops the rest.
+// syncSubscriptions subscribes to every downlink channel and drops the rest.
 func (l *Link) syncSubscriptions() {
 	if l.client == nil || !l.Connected() {
 		return
 	}
 	want := map[string]bool{}
-	for _, ch := range l.host.Channels() {
-		if ch.Downlink && ch.Name != "" && !strings.ContainsAny(ch.Name, "+#/") {
-			want[ch.Name] = true
+	if l.downlinks() {
+		for _, ch := range l.host.Channels() {
+			if l.selected(ch, false) && ch.Name != "" && !strings.ContainsAny(ch.Name, "+#/") {
+				want[ch.Name] = true
+			}
 		}
 	}
 	l.subMu.Lock()
@@ -270,47 +428,46 @@ func (l *Link) onMessage(channel string, payload []byte) {
 		l.Dropped.Add(1)
 		return
 	}
-	if env.GetGatewayId() == l.gatewayID() {
-		return // our own uplink coming back
-	}
 	p := env.Packet
+	if l.ours(env.GetGatewayId()) || l.host.Identity(p.From) != nil {
+		return // our own uplink (from any of our connections) coming back
+	}
 	// Like the firmware, only encrypted packets from a real node are taken from a broker.
 	if p.GetEncrypted() == nil || p.From == 0 || env.GetChannelId() != channel {
 		l.Dropped.Add(1)
 		return
 	}
-	if !l.allow() {
+	if !l.down.take() {
 		l.Dropped.Add(1)
 		return
 	}
+	l.opt.Origins.record(p.From, p.Id, l.opt.Name, p.HopLimit)
 	p.RxSnr, p.RxRssi, p.RxTime = 0, nil, nil
 	p.ViaMqtt = true
 	p.TransportMechanism = pb.MeshPacket_TRANSPORT_MQTT
+	// The relay persona decrements the hop limit and never relays at zero: 0 keeps the packet
+	// off air, relay_hops+1 lets it travel that many hops after the rebroadcast.
+	if !l.opt.RelayMQTT {
+		p.HopLimit = 0
+	} else if max := uint32(l.opt.RelayHops) + 1; p.HopLimit > max {
+		p.HopLimit = max
+	}
 	l.Rx.Add(1)
 	l.host.HandleReceived(p, nil)
 }
 
-// allow is a token bucket of DownlinkPerMinute packets.
-func (l *Link) allow() bool {
-	l.rateMu.Lock()
-	defer l.rateMu.Unlock()
-	now := time.Now()
-	rate := float64(l.opt.DownlinkPerMinute)
-	l.tokens = math.Min(rate, l.tokens+now.Sub(l.last).Minutes()*rate)
-	l.last = now
-	if l.tokens < 1 {
-		return false
-	}
-	l.tokens--
-	return true
+// ours reports whether a gateway id is one of this radio's identities.
+func (l *Link) ours(gatewayID string) bool {
+	n, err := strconv.ParseUint(strings.TrimPrefix(gatewayID, "!"), 16, 32)
+	return err == nil && l.host.Identity(uint32(n)) != nil
 }
 
 func (l *Link) publishMapReport() {
-	relay := l.host.Relay()
-	if relay == nil || !l.Connected() {
+	gw := l.GatewayIdentity()
+	if gw == nil || !l.Connected() {
 		return
 	}
-	u := relay.UserCopy()
+	u := gw.UserCopy()
 	rp := l.host.RadioParams()
 	region := pb.Config_LoRaConfig_RegionCode(pb.Config_LoRaConfig_RegionCode_value[rp.Region.Name])
 	online := 0
@@ -339,15 +496,15 @@ func (l *Link) publishMapReport() {
 	}
 	var id [4]byte
 	_, _ = rand.Read(id[:])
-	pkt := &pb.MeshPacket{From: relay.NodeNum, To: wire.Broadcast, Id: binary.LittleEndian.Uint32(id[:]),
+	pkt := &pb.MeshPacket{From: gw.NodeNum, To: wire.Broadcast, Id: binary.LittleEndian.Uint32(id[:]),
 		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_MAP_REPORT_APP, Payload: payload}}}
-	b, err := proto.Marshal(&pb.ServiceEnvelope{Packet: pkt, ChannelId: rp.PresetName(), GatewayId: relay.NodeID()})
+	b, err := proto.Marshal(&pb.ServiceEnvelope{Packet: pkt, ChannelId: rp.PresetName(), GatewayId: gw.NodeID()})
 	if err != nil {
 		return
 	}
 	l.client.Publish(l.Root()+"/2/map/", 0, false, b)
 	l.Tx.Add(1)
-	l.log.Info("MQTT map report published", "precision_bits", l.opt.PositionPrecision)
+	l.log.Info("MQTT map report published", "gateway", gw.NodeID(), "precision_bits", l.opt.PositionPrecision)
 }
 
 // truncate keeps the top `bits` bits of a coordinate and centres it in the dropped range,
@@ -358,4 +515,81 @@ func truncate(v int32, bits int) int32 {
 	}
 	mask := uint32(math.MaxUint32) << (32 - bits)
 	return int32(uint32(v)&mask + (1 << (31 - bits)))
+}
+
+// bucket is a token bucket refilled at perMinute.
+type bucket struct {
+	mu     sync.Mutex
+	rate   float64
+	tokens float64
+	last   time.Time
+}
+
+func newBucket(perMinute int) bucket {
+	return bucket{rate: float64(perMinute), tokens: float64(perMinute), last: time.Now()}
+}
+
+func (b *bucket) take() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	b.tokens = math.Min(b.rate, b.tokens+now.Sub(b.last).Minutes()*b.rate)
+	b.last = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// Origins remembers which connection each broker packet arrived on, so a radio's connections
+// only pass packets between them when both allow it.
+type Origins struct {
+	mu    sync.Mutex
+	cross map[string]bool // connection name → cross_link
+	seen  map[uint64]origin
+}
+
+type origin struct {
+	link     string
+	hopLimit uint32
+	at       time.Time
+}
+
+const originTTL = 10 * time.Minute
+
+func NewOrigins() *Origins {
+	return &Origins{cross: map[string]bool{}, seen: map[uint64]origin{}}
+}
+
+func (o *Origins) register(name string, crossLink bool) {
+	o.mu.Lock()
+	o.cross[name] = crossLink
+	o.mu.Unlock()
+}
+
+func (o *Origins) record(from, id uint32, link string, hopLimit uint32) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	now := time.Now()
+	if len(o.seen) > 4096 {
+		for k, v := range o.seen {
+			if now.Sub(v.at) > originTTL {
+				delete(o.seen, k)
+			}
+		}
+	}
+	o.seen[uint64(from)<<32|uint64(id)] = origin{link: link, hopLimit: hopLimit, at: now}
+}
+
+// crossLink reports whether a broker packet may go out on connection to: it came from another
+// connection of this radio that allows cross_link. It also returns the packet's original hop limit.
+func (o *Origins) crossLink(from, id uint32, to string) (uint32, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	v, ok := o.seen[uint64(from)<<32|uint64(id)]
+	if !ok || v.link == to || time.Since(v.at) > originTTL || !o.cross[v.link] {
+		return 0, false
+	}
+	return v.hopLimit, true
 }

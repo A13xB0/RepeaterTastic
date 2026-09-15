@@ -642,11 +642,15 @@ state.config = {
   web: { bind: '0.0.0.0', port: 8080, session_ttl: '24h' },
   position: { latitude: 55.9533, longitude: -3.1883, altitude: 47, precision_bits: 32, interval: '3h', identities: 'relay' },
   hardware: { hw_model: 'AUTO', effective: 'HELTEC_V3', modem: 'Heltec V3' },
-  mqtt: {
-    enabled: false, address: 'mqtt.meshtastic.org:1883', username: 'meshdev', password: '', password_set: true, tls: false,
-    root: 'msh/EU_868/Scotland', ok_to_mqtt: false, relay_mqtt: false, downlink_per_minute: 30,
-    map_report: { enabled: false, interval: '1h', position_precision: 14, latitude: 0, longitude: 0 },
-  },
+  mqtt: [
+    {
+      key: 'mqtt', name: 'mqtt', enabled: false, address: 'mqtt.meshtastic.org:1883', username: 'meshdev', password: '', password_set: true,
+      clear_password: false, tls: false, root: 'msh/EU_868/Scotland', mode: 'gateway', gateway: 'relay', format: 'encrypted',
+      uplink_channels: [], downlink_channels: [], channel_selection: 'identity', ignore_consent: false, ok_to_mqtt: false,
+      relay_mqtt: false, relay_hops: 0, cross_link: false, bridge_acknowledged: false, downlink_per_minute: 30, uplink_per_minute: 120,
+      map_report: { enabled: false, interval: '1h', position_precision: 14, latitude: 0, longitude: 0 },
+    },
+  ],
   radio_id: 'main',
   main: true,
 }
@@ -659,7 +663,9 @@ state.tokens = [
 state.links = [
   { name: 'udp', type: 'udp_multicast', enabled: true, connected: true, rx: 5821, tx: 1377, detail: '239.0.0.69:4403 on eth0' },
   { name: 'glasgow-site', type: 'host_link', enabled: true, connected: false, rx: 0, tx: 0, detail: '81.2.69.160:4410 (WireGuard)' },
-  { name: 'mqtt', type: 'mqtt', enabled: false, connected: false, rx: 0, tx: 0, detail: 'mqtt.meshtastic.org · msh/EU_868/2/e' },
+  { name: 'mqtt:mqtt', connection: 'mqtt', type: 'mqtt', enabled: true, connected: true, rx: 214, tx: 1630, dropped: 3, detail: 'mqtt.meshtastic.org:1883 · msh/EU_868/Scotland',
+    root: 'msh/EU_868/Scotland', mode: 'gateway', format: 'encrypted', gateway: 'relay', gateway_id: '!be77562b', uplink: ['LongFast'], downlink: [],
+    ok_to_mqtt: true, relay_mqtt: false, cross_link: false, map_report: true },
 ]
 
 export function newToken() {

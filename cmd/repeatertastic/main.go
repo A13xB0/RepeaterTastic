@@ -174,7 +174,7 @@ type radioRuntime struct {
 	host  *mesh.Host
 	api   *phoneapi.Manager
 	udp   *udp.Link
-	mqtt  *mqtt.Link
+	mqtt  []*mqtt.Link
 }
 
 // startRadio opens a radio's modem, builds its host and identities and starts its client
@@ -223,14 +223,23 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (*
 			}
 		}()
 	}
-	if mc := rc.Links.MQTT; mc.Enabled {
-		rt.mqtt = mqtt.New(host, mqtt.Options{Address: mc.Address, Username: mc.Username, Password: mc.Password, TLS: mc.TLS,
-			Root: mc.Root, DownlinkPerMinute: mc.DownlinkPerMinute, FirmwareVersion: phoneapi.FirmwareVersion,
+	origins := mqtt.NewOrigins()
+	for _, mc := range rc.Links.MQTT {
+		if !mc.Enabled {
+			continue
+		}
+		l := mqtt.New(host, mqtt.Options{Name: mc.Name, Address: mc.Address, Username: mc.Username, Password: mc.Password,
+			TLS: mc.TLS, Root: mc.Root, Mode: mc.Mode, Gateway: mc.Gateway, Format: mc.Format,
+			UplinkChannels: mc.UplinkChannels, DownlinkChannels: mc.DownlinkChannels, ChannelSelection: mc.ChannelSelection,
+			IgnoreConsent: mc.IgnoreConsent, RelayMQTT: mc.RelayMQTT, RelayHops: mc.RelayHops, CrossLink: mc.CrossLink,
+			DownlinkPerMinute: mc.DownlinkPerMinute, UplinkPerMinute: mc.UplinkPerMinute, FirmwareVersion: phoneapi.FirmwareVersion,
 			MapReport: mc.MapReport.Enabled, MapInterval: mc.MapReport.Interval, PositionPrecision: mc.MapReport.PositionPrecision,
-			Latitude: mc.MapReport.Latitude, Longitude: mc.MapReport.Longitude, Altitude: mc.MapReport.Altitude}, log)
+			Latitude: mc.MapReport.Latitude, Longitude: mc.MapReport.Longitude, Altitude: mc.MapReport.Altitude,
+			Origins: origins}, log)
+		rt.mqtt = append(rt.mqtt, l)
 		go func() {
-			if err := rt.mqtt.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("MQTT link stopped", "err", err)
+			if err := l.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("MQTT link stopped", "connection", mc.Name, "err", err)
 			}
 		}()
 	}

@@ -116,7 +116,8 @@ func TestConfigPositionHardwareMQTTPerRadio(t *testing.T) {
 	code, res, _ := call(t, srv, "PUT", "/api/v1/config?radio=mf", tok, map[string]any{
 		"position": map[string]any{"latitude": 56.2, "longitude": -3.16, "altitude": 90, "precision_bits": 16, "interval": "6h", "identities": "all"},
 		"hardware": map[string]any{"hw_model": "HELTEC_V3"},
-		"mqtt": map[string]any{"enabled": true, "address": "mqtt.example:1883", "username": "u", "password": "secret", "root": "msh/EU_868/Scotland",
+		// the single-connection shape still works
+		"mqtt": map[string]any{"name": "public", "enabled": true, "address": "mqtt.example:1883", "username": "u", "password": "secret", "root": "msh/EU_868/Scotland",
 			"ok_to_mqtt": true, "downlink_per_minute": 10, "map_report": map[string]any{"enabled": true, "interval": "1h", "position_precision": 14}},
 	})
 	if code != 200 || res["restart_required"] != true {
@@ -126,12 +127,38 @@ func TestConfigPositionHardwareMQTTPerRadio(t *testing.T) {
 	if out["hardware"].(map[string]any)["effective"] != "HELTEC_V3" || out["position"].(map[string]any)["precision_bits"] != float64(16) {
 		t.Fatalf("mf config after put = %v", out)
 	}
-	m := out["mqtt"].(map[string]any)
-	if m["password"] != "" || m["password_set"] != true || m["root"] != "msh/EU_868/Scotland" {
+	m := out["mqtt"].([]any)[0].(map[string]any)
+	if m["password"] != "" || m["password_set"] != true || m["root"] != "msh/EU_868/Scotland" || m["key"] != "public" || m["mode"] != "gateway" {
 		t.Fatalf("mqtt dto leaked or lost the password: %v", m)
 	}
+
+	// a second connection; the first keeps its password when the field comes back empty
+	code, res, _ = call(t, srv, "PUT", "/api/v1/config?radio=mf", tok, map[string]any{"mqtt": []any{
+		map[string]any{"key": "public", "name": "public", "enabled": true, "address": "mqtt.example:1883", "password": "",
+			"map_report": map[string]any{"interval": "1h"}},
+		map[string]any{"name": "logger", "enabled": true, "address": "127.0.0.1:1883", "mode": "monitor",
+			"uplink_channels": []string{"MediumFast"}, "map_report": map[string]any{"interval": "1h"}},
+	}})
+	if code != 200 {
+		t.Fatalf("put two connections %d %v", code, res)
+	}
+	list := res["config"].(map[string]any)["mqtt"].([]any)
+	if len(list) != 2 || list[0].(map[string]any)["password_set"] != true || list[1].(map[string]any)["format"] != "json" ||
+		list[1].(map[string]any)["channel_selection"] != "override" {
+		t.Fatalf("two connections = %v", list)
+	}
+	// a bridge needs the acknowledgement
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/config?radio=mf", tok, map[string]any{"mqtt": []any{
+		map[string]any{"name": "sites", "enabled": true, "address": "b:1883", "mode": "bridge", "map_report": map[string]any{"interval": "1h"}},
+	}}); code != 400 {
+		t.Fatalf("unacknowledged bridge accepted: %d", code)
+	}
+	if code, _, links := call(t, srv, "GET", "/api/v1/links?radio=mf", tok, nil); code != 200 || len(links) != 3 ||
+		links[2].(map[string]any)["name"] != "mqtt:logger" || links[2].(map[string]any)["mode"] != "monitor" {
+		t.Fatalf("links = %d %v", code, links)
+	}
 	// the main radio is untouched
-	if _, main, _ := call(t, srv, "GET", "/api/v1/config", tok, nil); main["mqtt"].(map[string]any)["enabled"] != false ||
+	if _, main, _ := call(t, srv, "GET", "/api/v1/config", tok, nil); len(main["mqtt"].([]any)) != 0 ||
 		main["position"].(map[string]any)["latitude"] != float64(0) {
 		t.Fatalf("main radio changed: %v", main)
 	}

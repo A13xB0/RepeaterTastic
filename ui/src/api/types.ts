@@ -306,9 +306,50 @@ export interface Link {
   root?: string
   tls?: boolean
   downlink?: string[] | null
+  uplink?: string[] | null
+  connection?: string
+  mode?: MqttMode
+  format?: string
+  gateway?: string
+  gateway_id?: string
+  cross_link?: boolean
   ok_to_mqtt?: boolean
   relay_mqtt?: boolean
   map_report?: boolean
+}
+
+export type MqttMode = 'gateway' | 'uplink_only' | 'map_only' | 'monitor' | 'bridge'
+
+/** One MQTT broker connection of a radio. */
+export interface MqttConnection {
+  /** The saved name (read-only); empty for a new connection. */
+  key: string
+  name: string
+  enabled: boolean
+  address: string
+  username: string
+  /** Write-only: empty keeps the saved password. */
+  password: string
+  password_set: boolean
+  clear_password: boolean
+  tls: boolean
+  root: string
+  mode: MqttMode
+  /** "relay" or an identity's node id. */
+  gateway: string
+  format: 'encrypted' | 'json' | 'both'
+  uplink_channels: string[]
+  downlink_channels: string[]
+  channel_selection: 'identity' | 'override' | 'combine'
+  ignore_consent: boolean
+  ok_to_mqtt: boolean
+  relay_mqtt: boolean
+  relay_hops: number
+  cross_link: boolean
+  bridge_acknowledged: boolean
+  downlink_per_minute: number
+  uplink_per_minute: number
+  map_report: { enabled: boolean; interval: string; position_precision: number; latitude: number; longitude: number }
 }
 
 /** Proposed: effective config shape for GET/PUT /config (mirrors the YAML file). */
@@ -335,19 +376,7 @@ export interface Config {
   web: { bind: string; port: number; session_ttl: string }
   position: { latitude: number; longitude: number; altitude: number; precision_bits: number; interval: string; identities: 'relay' | 'all' }
   hardware: { hw_model: string; effective: string; modem: string }
-  mqtt: {
-    enabled: boolean
-    address: string
-    username: string
-    password: string
-    password_set: boolean
-    tls: boolean
-    root: string
-    ok_to_mqtt: boolean
-    relay_mqtt: boolean
-    downlink_per_minute: number
-    map_report: { enabled: boolean; interval: string; position_precision: number; latitude: number; longitude: number }
-  }
+  mqtt: MqttConnection[]
   radio_id: string
   main: boolean
 }

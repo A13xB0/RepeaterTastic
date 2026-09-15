@@ -211,12 +211,75 @@ type Airtime struct {
 type Links struct {
 	LocalDMOverRF bool         `yaml:"local_dm_over_rf" json:"local_dm_over_rf"`
 	UDPMulticast  UDPMulticast `yaml:"udp_multicast" json:"udp_multicast"`
-	MQTT          MQTT         `yaml:"mqtt" json:"mqtt"`
+	MQTT          MQTTLinks    `yaml:"mqtt" json:"mqtt"`
 }
 
-// MQTT is the gateway link to a Meshtastic MQTT broker. Which channels go up and
-// down is set per identity channel (uplink/downlink), as in the firmware.
+// MQTT modes.
+const (
+	MQTTGateway    = "gateway"     // uplink and downlink, consent respected, zero-hop rebroadcast
+	MQTTUplinkOnly = "uplink_only" // uplink only, never subscribes
+	MQTTMapOnly    = "map_only"    // map reports only
+	MQTTMonitor    = "monitor"     // decoded JSON of chosen channels, no downlink
+	MQTTBridge     = "bridge"      // both ways, private channels allowed: joins sites or private meshes
+)
+
+// Channel selection policies: which channels a connection carries.
+const (
+	ChannelsOverride = "override" // only the connection's own uplink/downlink lists
+	ChannelsCombine  = "combine"  // the lists plus identity channels with uplink/downlink on
+	ChannelsIdentity = "identity" // only identity channel flags (as the firmware and apps set them)
+)
+
+// MQTTLinks is a radio's broker connections. A single mapping (the old one-connection form)
+// loads as a one-item list.
+type MQTTLinks []MQTT
+
+func (l *MQTTLinks) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.MappingNode:
+		var one MQTT
+		if err := n.Decode(&one); err != nil {
+			return err
+		}
+		*l = MQTTLinks{one}
+		return nil
+	case yaml.SequenceNode:
+		var many []MQTT
+		if err := n.Decode(&many); err != nil {
+			return err
+		}
+		*l = many
+		return nil
+	case 0:
+		return nil
+	}
+	return fmt.Errorf("links.mqtt must be a connection or a list of connections")
+}
+
+// OKToMQTT reports whether any connection gives consent for our packets. Consent is for other
+// gateways, so it applies with the connection switched off too.
+func (l MQTTLinks) OKToMQTT() bool {
+	for _, m := range l {
+		if m.OKToMQTT {
+			return true
+		}
+	}
+	return false
+}
+
+// RelayMQTT reports whether any enabled connection lets broker packets be rebroadcast on air.
+func (l MQTTLinks) RelayMQTT() bool {
+	for _, m := range l {
+		if m.Enabled && m.RelayMQTT {
+			return true
+		}
+	}
+	return false
+}
+
+// MQTT is one broker connection.
 type MQTT struct {
+	Name     string `yaml:"name" json:"name"`
 	Enabled  bool   `yaml:"enabled" json:"enabled"`
 	Address  string `yaml:"address" json:"address"` // host:port
 	Username string `yaml:"username" json:"username"`
@@ -224,16 +287,109 @@ type MQTT struct {
 	TLS      bool   `yaml:"tls" json:"tls"`
 	// Root is the topic prefix; "" = msh/<region>, as the apps default it.
 	Root string `yaml:"root" json:"root"`
-	// OKToMQTT sets OK_TO_MQTT on our identities' packets: consent for other gateways to
-	// uplink them (the firmware's lora.config_ok_to_mqtt). Applies with the link off too.
+	// Mode is gateway (default), uplink_only, map_only, monitor or bridge.
+	Mode string `yaml:"mode,omitempty" json:"mode"`
+	// Gateway is the identity the connection speaks as: "" or "relay" = the relay persona, or a node id.
+	Gateway string `yaml:"gateway,omitempty" json:"gateway"`
+	// Format is encrypted (default; monitor defaults to json), json or both.
+	Format string `yaml:"format,omitempty" json:"format"`
+	// UplinkChannels / DownlinkChannels name the channels this connection carries.
+	UplinkChannels   []string `yaml:"uplink_channels,omitempty" json:"uplink_channels"`
+	DownlinkChannels []string `yaml:"downlink_channels,omitempty" json:"downlink_channels"`
+	// ChannelSelection is override, combine or identity; "" = identity without lists, override with them.
+	ChannelSelection string `yaml:"channel_selection,omitempty" json:"channel_selection"`
+	// IgnoreConsent uplinks other nodes' packets even without OK_TO_MQTT (bridge only).
+	IgnoreConsent bool `yaml:"ignore_consent,omitempty" json:"ignore_consent"`
+	// OKToMQTT sets OK_TO_MQTT on our identities' packets: consent for other gateways to uplink
+	// them (the firmware's lora.config_ok_to_mqtt). Any connection with it on sets it.
 	OKToMQTT bool `yaml:"ok_to_mqtt" json:"ok_to_mqtt"`
-	// RelayMQTT lets the relay persona rebroadcast packets that came from MQTT. Off by
-	// default (the firmware's lora.ignore_mqtt): broker traffic never costs airtime.
+	// RelayMQTT lets packets from this connection be rebroadcast on air (off = the firmware's
+	// ignore_mqtt): broker traffic never costs airtime unless a connection opts in.
 	RelayMQTT bool `yaml:"relay_mqtt" json:"relay_mqtt"`
-	// DownlinkPerMinute caps packets accepted from the broker (0 = 30).
+	// RelayHops is how far a rebroadcast broker packet may travel on air: 0 = zero-hop.
+	RelayHops int `yaml:"relay_hops,omitempty" json:"relay_hops"`
+	// CrossLink lets packets from this connection go out on other connections that also allow it.
+	CrossLink bool `yaml:"cross_link,omitempty" json:"cross_link"`
+	// BridgeAcknowledged must be true for mode bridge: it can carry private channels off the mesh.
+	BridgeAcknowledged bool `yaml:"bridge_acknowledged,omitempty" json:"bridge_acknowledged"`
+	// DownlinkPerMinute / UplinkPerMinute cap packets in each direction (0 = 30 / 120).
 	DownlinkPerMinute int       `yaml:"downlink_per_minute" json:"downlink_per_minute"`
+	UplinkPerMinute   int       `yaml:"uplink_per_minute,omitempty" json:"uplink_per_minute"`
 	MapReport         MapReport `yaml:"map_report" json:"map_report"`
 }
+
+// ModeOrDefault is the effective mode.
+func (m MQTT) ModeOrDefault() string {
+	if m.Mode == "" {
+		return MQTTGateway
+	}
+	return m.Mode
+}
+
+// FormatOrDefault is the effective payload format.
+func (m MQTT) FormatOrDefault() string {
+	switch {
+	case m.Format != "":
+		return m.Format
+	case m.ModeOrDefault() == MQTTMonitor:
+		return "json"
+	}
+	return "encrypted"
+}
+
+// SelectionOrDefault is the effective channel selection policy.
+func (m MQTT) SelectionOrDefault() string {
+	switch {
+	case m.ChannelSelection != "":
+		return m.ChannelSelection
+	case len(m.UplinkChannels) > 0 || len(m.DownlinkChannels) > 0:
+		return ChannelsOverride
+	}
+	return ChannelsIdentity
+}
+
+func (m MQTT) validate() error {
+	switch m.ModeOrDefault() {
+	case MQTTGateway, MQTTUplinkOnly, MQTTMapOnly, MQTTMonitor:
+	case MQTTBridge:
+		if !m.BridgeAcknowledged {
+			return errors.New("mode bridge can carry private channels off the mesh: set bridge_acknowledged to confirm")
+		}
+	default:
+		return fmt.Errorf("mode must be gateway, uplink_only, map_only, monitor or bridge, not %q", m.Mode)
+	}
+	switch m.FormatOrDefault() {
+	case "encrypted", "json", "both":
+	default:
+		return fmt.Errorf("format must be encrypted, json or both, not %q", m.Format)
+	}
+	switch m.SelectionOrDefault() {
+	case ChannelsOverride, ChannelsCombine, ChannelsIdentity:
+	default:
+		return fmt.Errorf("channel_selection must be override, combine or identity, not %q", m.ChannelSelection)
+	}
+	if m.IgnoreConsent && m.ModeOrDefault() != MQTTBridge {
+		return errors.New("ignore_consent is only allowed on a bridge")
+	}
+	if g := strings.TrimSpace(m.Gateway); g != "" && g != "relay" && !gatewayIDPattern.MatchString(g) {
+		return fmt.Errorf("gateway must be relay or a node id like !a1c40e07, not %q", m.Gateway)
+	}
+	if m.RelayHops < 0 || m.RelayHops > 7 {
+		return errors.New("relay_hops must be 0-7")
+	}
+	if m.RelayHops > 0 && m.ModeOrDefault() != MQTTBridge {
+		return errors.New("relay_hops above 0 is only allowed on a bridge; other connections rebroadcast zero-hop")
+	}
+	if m.Enabled && m.Address == "" {
+		return errors.New("address is required when the connection is enabled")
+	}
+	if p := m.MapReport.PositionPrecision; p < 0 || p > 32 {
+		return errors.New("map_report.position_precision must be 0-32")
+	}
+	return nil
+}
+
+var gatewayIDPattern = regexp.MustCompile(`^![0-9a-fA-F]{8}$`)
 
 // MapReport periodically publishes the relay persona to the broker's map topic.
 type MapReport struct {
@@ -314,6 +470,10 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	c.fillRadioDefaults()
+	c.Links.MQTT.fillNames()
+	for i := range c.Radios {
+		c.Radios[i].Links.MQTT.fillNames()
+	}
 	c.path = path
 	return c, c.Validate()
 }
@@ -388,16 +548,22 @@ func (c *Config) validateOne() error {
 	default:
 		return errors.New(`position.identities must be "relay" or "all"`)
 	}
-	if m := c.Links.MQTT; m.Enabled {
-		if m.Address == "" {
-			return errors.New("links.mqtt.address is required when the MQTT link is enabled")
+	names := map[string]bool{}
+	for i, m := range c.Links.MQTT {
+		label := m.Name
+		if label == "" {
+			label = fmt.Sprintf("#%d", i+1)
 		}
-		if m.MapReport.Enabled && m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0 &&
+		if m.Name != "" && names[m.Name] {
+			return fmt.Errorf("links.mqtt: two connections are named %q", m.Name)
+		}
+		names[m.Name] = true
+		if err := m.validate(); err != nil {
+			return fmt.Errorf("links.mqtt %s: %w", label, err)
+		}
+		if m.Enabled && m.MapReport.Enabled && m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0 &&
 			c.Position.Latitude == 0 && c.Position.Longitude == 0 {
-			return errors.New("links.mqtt.map_report needs a position (its own latitude/longitude or the radio's position:)")
-		}
-		if p := m.MapReport.PositionPrecision; p < 0 || p > 32 {
-			return errors.New("links.mqtt.map_report.position_precision must be 0-32")
+			return fmt.Errorf("links.mqtt %s: map_report needs a position (its own latitude/longitude or the radio's position:)", label)
 		}
 	}
 	return nil
@@ -412,7 +578,7 @@ func (c *Config) MeshConfig() mesh.Config {
 		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: c.Relay.Role,
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
-		OKToMQTT: c.Links.MQTT.OKToMQTT, IgnoreMQTT: !c.Links.MQTT.RelayMQTT,
+		OKToMQTT: c.Links.MQTT.OKToMQTT(), IgnoreMQTT: !c.Links.MQTT.RelayMQTT(),
 		HwModel: c.hwModel(),
 		Position: mesh.FixedPosition{Latitude: c.Position.Latitude, Longitude: c.Position.Longitude,
 			Altitude: int32(c.Position.Altitude), PrecisionBits: uint32(c.Position.PrecisionBits),
@@ -434,4 +600,29 @@ func (rc RadioConfig) MeshConfig() mesh.Config {
 	m := rc.Config.MeshConfig()
 	m.RadioID = rc.ID
 	return m
+}
+
+// fillNames names unnamed connections mqtt, mqtt-2, ...
+func (l MQTTLinks) fillNames() {
+	used := map[string]bool{}
+	for _, m := range l {
+		used[m.Name] = true
+	}
+	n := 1
+	for i := range l {
+		if l[i].Name != "" {
+			continue
+		}
+		for {
+			name := "mqtt"
+			if n > 1 {
+				name = fmt.Sprintf("mqtt-%d", n)
+			}
+			n++
+			if !used[name] {
+				l[i].Name, used[name] = name, true
+				break
+			}
+		}
+	}
 }

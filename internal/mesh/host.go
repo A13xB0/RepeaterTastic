@@ -89,11 +89,18 @@ type Link interface {
 	SendPacket(p *pb.MeshPacket)
 }
 
-// ChannelLink is a Link that also wants the channel packets heard on air, first sighting
-// only, with the channel they decoded on (the MQTT uplink).
+// ChannelLink is a Link that also wants the channel packets received, first sighting only,
+// with the channel they decoded on and their decoded payload (the MQTT uplink). Packets
+// injected by a link arrive too, marked via_mqtt; the link decides whether to pass them on.
 type ChannelLink interface {
 	Link
-	ChannelPacketHeard(p *pb.MeshPacket, ch ChannelRef)
+	ChannelPacketHeard(p *pb.MeshPacket, ch ChannelRef, data *pb.Data)
+}
+
+// PlainLink is a Link that also wants our own packets' decoded payload when it is known.
+type PlainLink interface {
+	Link
+	SendPacketPlain(p *pb.MeshPacket, data *pb.Data)
 }
 
 // ChannelRef describes a channel shared by one or more identities on this host.
@@ -103,6 +110,8 @@ type ChannelRef struct {
 	Uplink   bool // some identity holding this channel has uplink enabled
 	Downlink bool // some identity holding this channel has downlink enabled
 	OKToMQTT bool // the packet's sender allowed MQTT uplink (only set for heard packets)
+	// PublicKey: the channel has no key or a well-known default key, so anyone can read it.
+	PublicKey bool
 }
 
 type pendingTx struct {
@@ -402,7 +411,7 @@ func (h *Host) ChannelsByHash(hash uint8) []ChannelRef {
 }
 
 func (g *chanGroup) ref() ChannelRef {
-	r := ChannelRef{Name: g.name, Hash: g.hash}
+	r := ChannelRef{Name: g.name, Hash: g.hash, PublicKey: wire.IsPublicKey(g.key)}
 	for _, m := range g.members {
 		if ch := m.id.ChannelCopy(m.index); ch != nil && ch.GetSettings() != nil {
 			r.Uplink = r.Uplink || ch.GetSettings().GetUplinkEnabled()
@@ -638,7 +647,11 @@ func (h *Host) txLoop(ctx context.Context) {
 		h.publishPacket(rec)
 		h.linkMu.RLock()
 		for _, l := range h.links {
-			l.SendPacket(it.pkt)
+			if pl, ok := l.(PlainLink); ok {
+				pl.SendPacketPlain(it.pkt, it.plain)
+			} else {
+				l.SendPacket(it.pkt)
+			}
 		}
 		h.linkMu.RUnlock()
 	}

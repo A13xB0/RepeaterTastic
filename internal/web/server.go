@@ -32,7 +32,7 @@ type Options struct {
 	API     *phoneapi.Manager
 	Logs    *logbuf.Buffer
 	UDP     *udp.Link
-	MQTT    *mqtt.Link
+	MQTT    []*mqtt.Link
 	Radios  []Radio    // additional radios on the same site
 	Site    *site.Site // nil with a single radio and no site budget
 	Version string
@@ -48,7 +48,7 @@ type Radio struct {
 	Host     *mesh.Host
 	API      *phoneapi.Manager
 	UDP      *udp.Link
-	MQTT     *mqtt.Link
+	MQTT     []*mqtt.Link
 }
 
 // radioCtx is everything the web server keeps per radio.
@@ -58,7 +58,7 @@ type radioCtx struct {
 	host     *mesh.Host
 	api      *phoneapi.Manager
 	udp      *udp.Link
-	mqtt     *mqtt.Link
+	mqtt     []*mqtt.Link
 
 	// Modem stats cost serial round trips; share one poll between all viewers.
 	statsMu   sync.Mutex

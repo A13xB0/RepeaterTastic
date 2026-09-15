@@ -119,13 +119,13 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	decoded.PayloadVariant = &pb.MeshPacket_Decoded{Decoded: dec.data}
 	decoded.PkiEncrypted = dec.pki
 
-	if !dec.pki && dec.group != nil && !p.ViaMqtt {
+	if !dec.pki && dec.group != nil {
 		ref := dec.group.ref()
 		ref.OKToMQTT = dec.data.Bitfield != nil && *dec.data.Bitfield&1 != 0
 		h.linkMu.RLock()
 		for _, l := range h.links {
 			if cl, ok := l.(ChannelLink); ok {
-				cl.ChannelPacketHeard(p, ref)
+				cl.ChannelPacketHeard(p, ref, dec.data)
 			}
 		}
 		h.linkMu.RUnlock()

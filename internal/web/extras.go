@@ -1,10 +1,13 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +19,134 @@ import (
 )
 
 // ------------------------------------------------------------------------------ config (GUI shape)
+
+// mqttDTO is one broker connection as the GUI edits it.
+type mqttDTO struct {
+	Key                string   `json:"key"` // read-only: the saved name, to match edits (and the kept password) to it
+	Name               string   `json:"name"`
+	Enabled            bool     `json:"enabled"`
+	Address            string   `json:"address"`
+	Username           string   `json:"username"`
+	Password           string   `json:"password"`     // write-only: empty keeps the saved one
+	PasswordSet        bool     `json:"password_set"` // read-only
+	ClearPassword      bool     `json:"clear_password"`
+	TLS                bool     `json:"tls"`
+	Root               string   `json:"root"`
+	Mode               string   `json:"mode"`
+	Gateway            string   `json:"gateway"`
+	Format             string   `json:"format"`
+	UplinkChannels     []string `json:"uplink_channels"`
+	DownlinkChannels   []string `json:"downlink_channels"`
+	ChannelSelection   string   `json:"channel_selection"`
+	IgnoreConsent      bool     `json:"ignore_consent"`
+	OKToMQTT           bool     `json:"ok_to_mqtt"`
+	RelayMQTT          bool     `json:"relay_mqtt"`
+	RelayHops          int      `json:"relay_hops"`
+	CrossLink          bool     `json:"cross_link"`
+	BridgeAcknowledged bool     `json:"bridge_acknowledged"`
+	DownlinkPerMinute  int      `json:"downlink_per_minute"`
+	UplinkPerMinute    int      `json:"uplink_per_minute"`
+	MapReport          struct {
+		Enabled           bool    `json:"enabled"`
+		Interval          string  `json:"interval"`
+		PositionPrecision int     `json:"position_precision"`
+		Latitude          float64 `json:"latitude"`
+		Longitude         float64 `json:"longitude"`
+	} `json:"map_report"`
+}
+
+func toMQTTDTO(m config.MQTT) mqttDTO {
+	d := mqttDTO{Key: m.Name, Name: m.Name, Enabled: m.Enabled, Address: m.Address, Username: m.Username,
+		PasswordSet: m.Password != "", TLS: m.TLS, Root: m.Root, Mode: m.ModeOrDefault(), Gateway: m.Gateway,
+		Format: m.FormatOrDefault(), UplinkChannels: m.UplinkChannels, DownlinkChannels: m.DownlinkChannels,
+		ChannelSelection: m.SelectionOrDefault(), IgnoreConsent: m.IgnoreConsent, OKToMQTT: m.OKToMQTT,
+		RelayMQTT: m.RelayMQTT, RelayHops: m.RelayHops, CrossLink: m.CrossLink, BridgeAcknowledged: m.BridgeAcknowledged,
+		DownlinkPerMinute: m.DownlinkPerMinute, UplinkPerMinute: m.UplinkPerMinute}
+	if d.Gateway == "" {
+		d.Gateway = "relay"
+	}
+	if d.UplinkChannels == nil {
+		d.UplinkChannels = []string{}
+	}
+	if d.DownlinkChannels == nil {
+		d.DownlinkChannels = []string{}
+	}
+	if d.DownlinkPerMinute == 0 {
+		d.DownlinkPerMinute = 30
+	}
+	if d.UplinkPerMinute == 0 {
+		d.UplinkPerMinute = 120
+	}
+	mr := m.MapReport
+	d.MapReport.Enabled, d.MapReport.PositionPrecision = mr.Enabled, mr.PositionPrecision
+	d.MapReport.Latitude, d.MapReport.Longitude = mr.Latitude, mr.Longitude
+	if d.MapReport.PositionPrecision == 0 {
+		d.MapReport.PositionPrecision = 14
+	}
+	d.MapReport.Interval = "1h"
+	if mr.Interval > 0 {
+		d.MapReport.Interval = shortDuration(mr.Interval)
+	}
+	return d
+}
+
+// fromMQTTDTOs turns the GUI's connection list back into config, keeping saved passwords
+// for connections whose password field was left empty.
+func fromMQTTDTOs(ds []mqttDTO, saved config.MQTTLinks) (config.MQTTLinks, error) {
+	out := config.MQTTLinks{}
+	for i, d := range ds {
+		m := config.MQTT{Name: strings.TrimSpace(d.Name), Enabled: d.Enabled, Address: strings.TrimSpace(d.Address),
+			Username: d.Username, TLS: d.TLS, Root: strings.Trim(strings.TrimSpace(d.Root), "/"), Mode: d.Mode,
+			Gateway: strings.TrimSpace(d.Gateway), Format: d.Format, UplinkChannels: d.UplinkChannels,
+			DownlinkChannels: d.DownlinkChannels, ChannelSelection: d.ChannelSelection, IgnoreConsent: d.IgnoreConsent,
+			OKToMQTT: d.OKToMQTT, RelayMQTT: d.RelayMQTT, RelayHops: d.RelayHops, CrossLink: d.CrossLink,
+			BridgeAcknowledged: d.BridgeAcknowledged, DownlinkPerMinute: d.DownlinkPerMinute, UplinkPerMinute: d.UplinkPerMinute}
+		if m.Name == "" {
+			return nil, fmt.Errorf("mqtt connection %d needs a name", i+1)
+		}
+		if m.Gateway == "relay" {
+			m.Gateway = ""
+		}
+		if m.Mode == config.MQTTGateway {
+			m.Mode = ""
+		}
+		if m.Format == "encrypted" || (m.Format == "json" && m.Mode == config.MQTTMonitor) {
+			m.Format = ""
+		}
+		if m.Mode != config.MQTTBridge {
+			m.BridgeAcknowledged = false
+		}
+		if len(m.UplinkChannels) == 0 {
+			m.UplinkChannels = nil
+		}
+		if len(m.DownlinkChannels) == 0 {
+			m.DownlinkChannels = nil
+		}
+		key := d.Key
+		if key == "" {
+			key = m.Name
+		}
+		switch {
+		case d.Password != "":
+			m.Password = d.Password
+		case !d.ClearPassword:
+			for _, old := range saved {
+				if old.Name == key {
+					m.Password = old.Password
+				}
+			}
+		}
+		m.MapReport.Enabled, m.MapReport.PositionPrecision = d.MapReport.Enabled, d.MapReport.PositionPrecision
+		m.MapReport.Latitude, m.MapReport.Longitude = d.MapReport.Latitude, d.MapReport.Longitude
+		iv, err := time.ParseDuration(d.MapReport.Interval)
+		if err != nil || iv < 15*time.Minute {
+			return nil, fmt.Errorf("mqtt %s: map_report.interval must be a duration of at least 15m, e.g. 1h", m.Name)
+		}
+		m.MapReport.Interval = iv
+		out = append(out, m)
+	}
+	return out, nil
+}
 
 type configDTO struct {
 	Radio struct {
@@ -60,27 +191,9 @@ type configDTO struct {
 		Effective string `json:"effective"` // what identities advertise right now (read-only)
 		Modem     string `json:"modem"`     // the board name the modem reports (read-only)
 	} `json:"hardware"`
-	MQTT struct {
-		Enabled           bool   `json:"enabled"`
-		Address           string `json:"address"`
-		Username          string `json:"username"`
-		Password          string `json:"password"`     // write-only: empty keeps the saved one
-		PasswordSet       bool   `json:"password_set"` // read-only
-		TLS               bool   `json:"tls"`
-		Root              string `json:"root"`
-		OKToMQTT          bool   `json:"ok_to_mqtt"`
-		RelayMQTT         bool   `json:"relay_mqtt"`
-		DownlinkPerMinute int    `json:"downlink_per_minute"`
-		MapReport         struct {
-			Enabled           bool    `json:"enabled"`
-			Interval          string  `json:"interval"`
-			PositionPrecision int     `json:"position_precision"`
-			Latitude          float64 `json:"latitude"`
-			Longitude         float64 `json:"longitude"`
-		} `json:"map_report"`
-	} `json:"mqtt"`
-	RadioID string `json:"radio_id"` // read-only: which radio this is
-	Main    bool   `json:"main"`     // read-only: web settings only exist on the main radio
+	MQTT    []mqttDTO `json:"mqtt"`
+	RadioID string    `json:"radio_id"` // read-only: which radio this is
+	Main    bool      `json:"main"`     // read-only: web settings only exist on the main radio
 }
 
 func toDTO(c *config.Config, h *mesh.Host) configDTO {
@@ -123,22 +236,9 @@ func toDTO(c *config.Config, h *mesh.Host) configDTO {
 		d.Hardware.HwModel = "AUTO"
 	}
 	d.Hardware.Effective, d.Hardware.Modem = h.Hardware().String(), h.Radio().Info().Name
-	m := c.Links.MQTT
-	d.MQTT.Enabled, d.MQTT.Address, d.MQTT.Username, d.MQTT.PasswordSet = m.Enabled, m.Address, m.Username, m.Password != ""
-	d.MQTT.TLS, d.MQTT.Root, d.MQTT.OKToMQTT, d.MQTT.RelayMQTT = m.TLS, m.Root, m.OKToMQTT, m.RelayMQTT
-	d.MQTT.DownlinkPerMinute = m.DownlinkPerMinute
-	if d.MQTT.DownlinkPerMinute == 0 {
-		d.MQTT.DownlinkPerMinute = 30
-	}
-	mr := m.MapReport
-	d.MQTT.MapReport.Enabled, d.MQTT.MapReport.PositionPrecision = mr.Enabled, mr.PositionPrecision
-	d.MQTT.MapReport.Latitude, d.MQTT.MapReport.Longitude = mr.Latitude, mr.Longitude
-	if d.MQTT.MapReport.PositionPrecision == 0 {
-		d.MQTT.MapReport.PositionPrecision = 14
-	}
-	d.MQTT.MapReport.Interval = "1h"
-	if mr.Interval > 0 {
-		d.MQTT.MapReport.Interval = shortDuration(mr.Interval)
+	d.MQTT = []mqttDTO{}
+	for _, m := range c.Links.MQTT {
+		d.MQTT = append(d.MQTT, toMQTTDTO(m))
 	}
 	return d
 }
@@ -197,6 +297,10 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		case "hardware":
 			target = &d.Hardware
 		case "mqtt":
+			if t := bytes.TrimSpace(body); len(t) > 0 && t[0] == '{' { // one connection, as before multi-MQTT
+				body = append(append([]byte{'['}, t...), ']')
+			}
+			d.MQTT = nil
 			target = &d.MQTT
 		default:
 			writeError(w, http.StatusBadRequest, "unknown config section "+section)
@@ -240,24 +344,13 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		next.Mesh.HwModel = "auto"
 	}
 
-	mq := next.Links.MQTT
-	mq.Enabled, mq.Address, mq.Username, mq.TLS = d.MQTT.Enabled, strings.TrimSpace(d.MQTT.Address), d.MQTT.Username, d.MQTT.TLS
-	if d.MQTT.Password != "" {
-		mq.Password = d.MQTT.Password
-	}
-	mq.Root, mq.OKToMQTT, mq.RelayMQTT = strings.Trim(strings.TrimSpace(d.MQTT.Root), "/"), d.MQTT.OKToMQTT, d.MQTT.RelayMQTT
-	mq.DownlinkPerMinute = d.MQTT.DownlinkPerMinute
-	mq.MapReport.Enabled, mq.MapReport.PositionPrecision = d.MQTT.MapReport.Enabled, d.MQTT.MapReport.PositionPrecision
-	mq.MapReport.Latitude, mq.MapReport.Longitude = d.MQTT.MapReport.Latitude, d.MQTT.MapReport.Longitude
-	if iv, err := time.ParseDuration(d.MQTT.MapReport.Interval); err == nil && iv >= 15*time.Minute {
-		mq.MapReport.Interval = iv
-	} else {
-		writeError(w, http.StatusBadRequest, "mqtt.map_report.interval must be a duration of at least 15m, e.g. 1h")
+	mq, err := fromMQTTDTOs(d.MQTT, old.Links.MQTT)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	next.Links.MQTT = mq
 
-	var err error
 	if main {
 		err = s.applyConfig(r, &next)
 	} else {
@@ -272,7 +365,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		s.saveIdentities()
 	}
 	restart := old.Radio != next.Radio || old.Web.Bind != next.Web.Bind || old.Web.Port != next.Web.Port ||
-		old.Links.MQTT != next.Links.MQTT
+		!reflect.DeepEqual(old.Links.MQTT, next.Links.MQTT)
 	s.cfgMu.Lock()
 	out := toDTO(s.radioConfig(rc), rc.host)
 	s.cfgMu.Unlock()
@@ -628,22 +721,37 @@ func (s *Server) udpLinkJSON(rc *radioCtx) map[string]any {
 	return u
 }
 
-func (s *Server) mqttLinkJSON(rc *radioCtx) map[string]any {
-	mc := s.radioConfig(rc).Links.MQTT
-	m := map[string]any{"name": "mqtt", "type": "mqtt", "enabled": mc.Enabled, "connected": false, "rx": 0, "tx": 0,
-		"dropped": 0, "detail": mc.Address, "broker": mc.Address, "tls": mc.TLS, "ok_to_mqtt": mc.OKToMQTT,
-		"relay_mqtt": mc.RelayMQTT, "map_report": mc.MapReport.Enabled, "downlink": []string{}}
-	if l := rc.mqtt; l != nil {
-		m["connected"], m["rx"], m["tx"], m["dropped"] = l.Connected(), l.Rx.Load(), l.Tx.Load(), l.Dropped.Load()
-		m["root"], m["downlink"] = l.Root(), l.Subscriptions()
-		m["detail"] = l.Broker() + " · " + l.Root()
+func (s *Server) mqttLinksJSON(rc *radioCtx) []any {
+	out := []any{}
+	for _, mc := range s.radioConfig(rc).Links.MQTT {
+		gw := mc.Gateway
+		if gw == "" {
+			gw = "relay"
+		}
+		m := map[string]any{"name": "mqtt:" + mc.Name, "connection": mc.Name, "type": "mqtt", "enabled": mc.Enabled,
+			"connected": false, "rx": 0, "tx": 0, "dropped": 0, "detail": mc.Address, "broker": mc.Address, "tls": mc.TLS,
+			"mode": mc.ModeOrDefault(), "format": mc.FormatOrDefault(), "gateway": gw, "ok_to_mqtt": mc.OKToMQTT,
+			"relay_mqtt": mc.RelayMQTT, "cross_link": mc.CrossLink, "map_report": mc.MapReport.Enabled,
+			"root": mc.Root, "downlink": []string{}, "uplink": []string{}}
+		for _, l := range rc.mqtt {
+			if l.Connection() != mc.Name {
+				continue
+			}
+			m["connected"], m["rx"], m["tx"], m["dropped"] = l.Connected(), l.Rx.Load(), l.Tx.Load(), l.Dropped.Load()
+			m["root"], m["downlink"], m["uplink"] = l.Root(), l.Subscriptions(), l.UplinkChannels()
+			m["detail"] = l.Broker() + " · " + l.Root()
+			if id := l.GatewayIdentity(); id != nil {
+				m["gateway_id"] = id.NodeID()
+			}
+		}
+		out = append(out, m)
 	}
-	return m
+	return out
 }
 
 func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 	rc := s.radioFor(r)
-	writeJSON(w, http.StatusOK, []any{s.udpLinkJSON(rc), s.mqttLinkJSON(rc)})
+	writeJSON(w, http.StatusOK, append([]any{s.udpLinkJSON(rc)}, s.mqttLinksJSON(rc)...))
 }
 
 func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {

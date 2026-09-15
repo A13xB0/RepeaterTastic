@@ -8,6 +8,7 @@ import { live, refreshStatus } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import MqttConnections from '@/components/config/MqttConnections.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
@@ -422,61 +423,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
         </div>
 
         <!-- MQTT -->
-        <div v-else-if="tab === 'mqtt'" class="grid max-w-3xl gap-4 sm:grid-cols-2">
-          <div class="flex items-center justify-between gap-3 rounded-xl border border-line-soft bg-raised px-3.5 py-3 sm:col-span-2">
-            <div>
-              <div class="text-[13px] font-medium">MQTT gateway</div>
-              <div class="text-xs text-ink-3">The relay persona is the gateway. Which channels go up or down is set per identity channel.</div>
-            </div>
-            <input id="m-en" v-model="form.mqtt.enabled" type="checkbox" class="size-4 accent-[var(--brand)]" aria-label="Enable the MQTT gateway" />
-          </div>
-          <div>
-            <label class="label" for="m-addr">Broker (host:port)</label>
-            <input id="m-addr" v-model="form.mqtt.address" class="input mono" placeholder="mqtt.meshtastic.org:1883" />
-          </div>
-          <div>
-            <label class="label" for="m-root">Root topic</label>
-            <input id="m-root" v-model="form.mqtt.root" class="input mono" placeholder="msh/EU_868/Scotland" />
-            <p class="hint">Empty uses <span class="mono">msh/&lt;region&gt;</span>.</p>
-          </div>
-          <div>
-            <label class="label" for="m-user">Username</label>
-            <input id="m-user" v-model="form.mqtt.username" class="input" autocomplete="off" />
-          </div>
-          <div>
-            <label class="label" for="m-pass">Password</label>
-            <input id="m-pass" v-model="form.mqtt.password" type="password" class="input" autocomplete="new-password" :placeholder="form.mqtt.password_set ? 'saved · leave empty to keep' : ''" />
-          </div>
-          <label class="flex items-center gap-2 text-[13px]"><input v-model="form.mqtt.tls" type="checkbox" class="size-4 accent-[var(--brand)]" /> TLS</label>
-          <div>
-            <label class="label" for="m-rate">Downlink limit · {{ form.mqtt.downlink_per_minute }}/min</label>
-            <input id="m-rate" v-model.number="form.mqtt.downlink_per_minute" type="range" min="1" max="120" step="1" class="w-full accent-[var(--brand)]" />
-          </div>
-          <label class="flex items-start gap-2 text-[13px] sm:col-span-2">
-            <input v-model="form.mqtt.ok_to_mqtt" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" />
-            <span>OK to MQTT<span class="block text-xs text-ink-3">Other gateways may uplink the packets our identities send.</span></span>
-          </label>
-          <label class="flex items-start gap-2 text-[13px] sm:col-span-2">
-            <input v-model="form.mqtt.relay_mqtt" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" />
-            <span :class="form.mqtt.relay_mqtt ? 'text-warn' : ''">Relay MQTT traffic on air<span class="block text-xs text-ink-3">Off keeps broker traffic off the radio entirely (the firmware's “Ignore MQTT”). Leave off on a busy site.</span></span>
-          </label>
-          <div class="sm:col-span-2">
-            <h4 class="eyebrow mb-1 mt-2">Map report</h4>
-          </div>
-          <label class="flex items-center gap-2 text-[13px]"><input v-model="form.mqtt.map_report.enabled" type="checkbox" class="size-4 accent-[var(--brand)]" /> Publish to the map topic</label>
-          <div>
-            <label class="label" for="m-mint">Interval</label>
-            <select id="m-mint" v-model="form.mqtt.map_report.interval" class="input">
-              <option v-for="v in ['15m', '30m', '1h', '3h', '6h']" :key="v" :value="v">every {{ v }}</option>
-            </select>
-          </div>
-          <div class="sm:col-span-2">
-            <label class="label" for="m-mbits">Map precision · {{ form.mqtt.map_report.position_precision === 32 ? 'exact' : `${form.mqtt.map_report.position_precision} bits` }}</label>
-            <input id="m-mbits" v-model.number="form.mqtt.map_report.position_precision" type="range" min="10" max="32" step="1" class="w-full accent-[var(--brand)]" />
-            <p class="hint">Uses the site position from Position &amp; hardware. Public brokers coarsen positions whatever you send.</p>
-          </div>
-          <p class="hint sm:col-span-2">Broker and map report changes take effect after a restart.</p>
-        </div>
+        <MqttConnections v-else-if="tab === 'mqtt'" v-model="form.mqtt" />
 
         <!-- WEB -->
         <div v-else-if="tab === 'web'" class="grid gap-8 xl:grid-cols-2">

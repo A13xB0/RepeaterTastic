@@ -163,7 +163,8 @@ A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": 
 - `GET /api/v1/tokens`, `POST /api/v1/tokens {"name"}` → `{"id","name","token"}` (token shown once), `DELETE /api/v1/tokens/{id}`
 - `GET /api/v1/backup` → JSON file download (config + keys); `POST /api/v1/restore`
 - `GET /api/v1/logs?limit=500` → `[{"time","level","msg"}]`
-- `GET /api/v1/links[?radio=<id>]` → the UDP link and the MQTT link (`{"name": "mqtt", "enabled", "connected", "broker", "root", "tls", "rx", "tx", "dropped", "downlink": ["LongFast"], "ok_to_mqtt", "relay_mqtt", "map_report"}`), then the legacy shape:
+- `GET /api/v1/links[?radio=<id>]` → the UDP link, then one entry per MQTT connection (`{"name": "mqtt:<connection>", "connection", "type": "mqtt", "mode", "format", "gateway", "gateway_id", "enabled", "connected", "broker", "root", "tls", "rx", "tx", "dropped", "uplink": ["LongFast"], "downlink": [], "ok_to_mqtt", "relay_mqtt", "cross_link", "map_report"}`), then the legacy shape:
+- `GET/PUT /api/v1/config` `mqtt` is a list of connections (a single object is accepted on PUT). `password` is write-only (`password_set` says one is saved, `clear_password` removes it); `key` is the saved name, so a renamed connection keeps its password. `mode: "bridge"` needs `bridge_acknowledged: true`.
 - `GET /api/v1/links` (legacy shape) → `[{"name": "udp", "type": "udp_multicast", "enabled": false, "connected": false, "rx": 0, "tx": 0}]`
 
 ## Proposed additions (from the web GUI)

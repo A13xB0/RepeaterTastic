@@ -216,3 +216,9 @@ func RandomPacketID() uint32 {
 		}
 	}
 }
+
+// IsPublicKey reports whether an expanded channel key is none or one of the well-known
+// default keys (psk 0x01-0xff expand to DefaultPSK with a different last byte).
+func IsPublicKey(key []byte) bool {
+	return len(key) == 0 || len(key) == len(DefaultPSK) && string(key[:15]) == string(DefaultPSK[:15])
+}
