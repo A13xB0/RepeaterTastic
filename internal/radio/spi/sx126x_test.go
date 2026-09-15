@@ -1,4 +1,4 @@
-package sx126x
+package spi
 
 import (
 	"bytes"
@@ -80,6 +80,7 @@ func (c *fakeChip) Reset() error {
 
 func (c *fakeChip) Busy() (bool, error) { return false, nil }
 func (c *fakeChip) HasIRQ() bool        { return true }
+func (c *fakeChip) HasBusy() bool       { return true }
 
 func (c *fakeChip) WaitIRQ(timeout time.Duration) (bool, error) {
 	select {
@@ -124,6 +125,9 @@ var longFast = radio.Config{FrequencyHz: 869_525_000, BandwidthHz: 250_000, SF: 
 func openFake(t *testing.T, b Board) (*Radio, *fakeChip) {
 	t.Helper()
 	chip := newFakeChip()
+	if b.Module == "" {
+		b.Module = ModuleSX1262
+	}
 	r, err := newRadio(context.Background(), chip, b, t.Logf)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +139,7 @@ func openFake(t *testing.T, b Board) (*Radio, *fakeChip) {
 func TestOpenChecksTheChipAnswers(t *testing.T) {
 	chip := newFakeChip()
 	chip.answer = false
-	if _, err := newRadio(context.Background(), chip, Board{}, t.Logf); err == nil {
+	if _, err := newRadio(context.Background(), chip, Board{Module: ModuleSX1262}, t.Logf); err == nil {
 		t.Fatal("opened a chip that reads all zeros")
 	}
 }

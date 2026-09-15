@@ -1,6 +1,6 @@
 //go:build linux
 
-package sx126x
+package spi
 
 import (
 	"encoding/binary"
@@ -91,8 +91,10 @@ func openHAL(b Board, logf func(string, ...any)) (hal, error) {
 	if h.rxen, err = out(b.RXen, "rxen", false); err != nil {
 		return fail(err)
 	}
-	if h.busy, err = requestLine(b.Busy, gpioFlagInput, "repeatertastic-busy", false); err != nil {
-		return fail(fmt.Errorf("busy (%s): %w", b.Busy, err))
+	if b.Busy.Set {
+		if h.busy, err = requestLine(b.Busy, gpioFlagInput, "repeatertastic-busy", false); err != nil {
+			return fail(fmt.Errorf("busy (%s): %w", b.Busy, err))
+		}
 	}
 	if b.IRQ.Set {
 		if h.irq, err = requestLine(b.IRQ, gpioFlagInput|gpioFlagEdgeRising, "repeatertastic-irq", false); err != nil {
@@ -141,6 +143,8 @@ func (h *linuxHAL) Reset() error {
 	time.Sleep(10 * time.Millisecond)
 	return nil
 }
+
+func (h *linuxHAL) HasBusy() bool { return h.busy != nil }
 
 func (h *linuxHAL) Busy() (bool, error) { return h.busy.Get() }
 

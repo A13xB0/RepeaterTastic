@@ -57,10 +57,14 @@ radio:
 
 See [Hardware and modems](hardware.md) for device paths and permissions.
 
-`driver: spi` (experimental) drives an SX1262/SX1268/LLCC68 chip on a Pi HAT directly over SPI,
-with `device` set to the meshtasticd board file for the HAT, e.g.
-`/etc/meshtasticd/config.d/lora-MeshAdv-900M30S.yaml`. See
-[Testing the SPI radio driver](spi-radio-testing.md).
+`driver: spi` (experimental) drives the LoRa chip on meshtasticd hardware directly, with no
+meshtasticd. It covers SX1262/SX1268/LLCC68, SX1276 (RF95), SX1280 and LR1110/LR1120/LR1121, on
+a Linux SPI bus or a CH341 USB stick. `device` is the board:
+- a built-in meshtasticd board name, e.g. `MeshAdv-900M30S` (`kisstool boards` lists them);
+- a board file path, e.g. `/etc/meshtasticd/config.d/lora-MeshAdv-900M30S.yaml`;
+- `auto`, to detect a CH341 stick, a Pi HAT+ or a RAK board EEPROM.
+
+See [Testing the SPI radio driver](spi-radio-testing.md).
 
 ### `mesh`: how the radio joins the mesh
 

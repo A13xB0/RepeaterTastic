@@ -3,24 +3,29 @@
 [← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Bench test](bench-test.md)
 
 RepeaterTastic normally drives a LoRa board flashed as a USB KISS modem. The `spi` driver instead
-talks directly to an **SX1262, SX1268 or LLCC68** chip wired to a Linux board's SPI bus. These are
-the Pi HATs that `meshtasticd` runs on: MeshAdv Pi Hat, Waveshare SX126x, RAK6421, Nebra and
-Zebra hats, PiMesh, Femtofox and others. It reads the same board files as meshtasticd, so any
-`/etc/meshtasticd/config.d/lora-*.yaml` for one of those chips should work.
+talks directly to the LoRa chip on the hardware `meshtasticd` runs on, with no meshtasticd:
 
-**This is a draft that hasn't been run on hardware yet.** It follows the SX126x datasheet and the
-commands RadioLib sends. Please work through the steps in order and send back the output of each
-one. A failure at one step tells us which layer is wrong.
+| Chip | Examples |
+|---|---|
+| SX1262, SX1268, LLCC68 | MeshAdv Pi Hat and Mini, Waveshare SX126x, RAK6421 (RAK13300/13302), Nebra and Zebra hats, PiMesh, PiTastic, Femtofox, Luckfox, Station G3 |
+| SX1262/SX1268 on a CH341 USB stick | MeshStick, Meshtoad, RAK19714, uMesh 30 dBm, FrameTastic, PiNedio USB |
+| LR1121 | Femtofox E80, PiggyStick (USB) |
+| SX1276/SX1278 (RF95) | Adafruit RFM9x |
+| SX1280 (2.4 GHz) | any SX1280 wired like meshtasticd's `Module: sx1280` |
 
-Not supported yet: LR1121, RF95/SX127x, and USB-to-SPI adapters (`spidev: ch341`, i.e. MeshStick,
-PiNedio USB, uMesh).
+It reads meshtasticd's own board files, and has a copy of all 61 of them built in, so you don't
+need meshtasticd installed.
+
+**This is a draft that hasn't been run on hardware yet.** It follows the Semtech datasheets and
+the commands RadioLib sends. Please work through the steps in order and send back the output of
+each one. A failure at one step tells us which layer is wrong.
 
 ## What you need
 
-- A Pi (or similar) with the radio HAT, **antenna fitted**.
-- The meshtasticd board file for your HAT. If meshtasticd is installed, look in
-  `/etc/meshtasticd/available.d/` or `config.d/`. Otherwise the files are in the firmware repo
-  under `bin/config.d/`.
+- A Pi (or similar) with the radio HAT, or a CH341 USB radio, **antenna fitted**.
+- Your board's name. `./kisstool-linux-arm64 boards` lists the built-in ones (use the file name,
+  e.g. `MeshAdv-900M30S`). A board file path works too, and so does `auto` for boards meshtasticd
+  can detect: CH341 sticks, Pi HAT+ boards and RAK boards with an ID EEPROM.
 - A second Meshtastic node (any stock node plus the phone app) on the same region and preset. The
   steps below use **EU_868 LongFast**; pass `--region`/`--preset` if yours differs.
 - The two binaries from the draft release: `kisstool-linux-<arch>` and
@@ -44,19 +49,28 @@ again). Or run the tools with `sudo` for these tests.
 **Pi 5:** the header pins are `gpiochip0` on current kernels (`gpiochip4` on some older ones). Check
 with `gpioinfo | head`. If your board file doesn't say, add `gpiochip: 4` under `Lora:` if needed.
 
+**CH341 USB sticks:** no SPI setup is needed, but the tools need write access to the USB device.
+For these tests run them with `sudo`, or add a udev rule:
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="5512", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules/99-ch341-lora.rules
+sudo udevadm control --reload && sudo udevadm trigger   # then unplug and replug the stick
+```
+
 ## 2. Does the chip answer?
 
 ```bash
 chmod +x kisstool-linux-*
-./kisstool-linux-arm64 info --board /etc/meshtasticd/config.d/lora-MeshAdv-900M30S.yaml
+./kisstool-linux-arm64 info --board MeshAdv-900M30S     # or a board file path, or auto
 ```
 
-Good output looks like this:
+Good output for an SX1262 HAT looks like this; other chips show their own version and error lines:
 
 ```
 board:      MeshAdv-Pi E22-900M30S (sx1262 on spidev0.0, CS gpiochip0 line 21, IRQ gpiochip0 line 16, …)
+            from built-in lora-MeshAdv-900M30S.yaml
 device:     /dev/spidev0.0
-chip:       sx1262 (answered on SPI: sync word register 0x1424 after reset)
+chip:       sx1262 (answered: its ID check passed)
 status:     0x2c (standby RC)
 dev errors: 0x0000 (none)
 configured EU_868 LONG_FAST: 869.5250 MHz, BW 250 kHz, SF11, CR4/5, sync 0x2b, preamble 16, 27 dBm
@@ -70,14 +84,17 @@ What the errors mean:
 | `open /dev/spidev0.0: permission denied` | not in the `spi` group, or use `sudo` |
 | `busy (gpiochip0 line 20): device or resource busy` | meshtasticd (or another program) still holds the pins |
 | `after reset: the chip stayed BUSY` | wrong Busy or Reset pin, or the HAT has no power (check `Enable_Pins`) |
-| `didn't answer as an SX126x (sync word register 0000…)` | wrong `spidev`, wrong CS pin, or bad wiring |
+| `didn't answer as an SX126x` / `SX127x` / `SX1280` / `LR11x0` | wrong `spidev`, wrong CS pin, wrong `Module`, or bad wiring |
+| `no CH341 USB radio 1a86:5512 found` | the stick isn't plugged in, or has a different USB ID (`lsusb`) |
+| `claim CH341 interface: device or resource busy` | meshtasticd still has the stick open |
+| `the LR11x0 is in its bootloader` | the LR1121 has no radio firmware yet: run meshtasticd once, which flashes it |
 | `dev errors: … XOSC start` | the TCXO voltage (`DIO3_TCXO_VOLTAGE`) is wrong for this module |
 | noise around 0 dBm or stuck at one value | RX isn't really running: send the full output |
 
 ## 3. Hear Meshtastic traffic
 
 ```bash
-./kisstool-linux-arm64 listen --board /etc/meshtasticd/config.d/lora-….yaml
+./kisstool-linux-arm64 listen --board MeshAdv-900M30S    # your board
 ```
 
 Send a message from the phone app on the other node. Within a few seconds you should see:
@@ -91,13 +108,14 @@ Send a message from the phone app on the other node. Within a few seconds you sh
 
 Leave it running for 10 to 15 minutes so it also catches NodeInfo and telemetry from nearby nodes.
 Ctrl-C to stop. **If you see nothing:** confirm the other node is on the same region and preset,
-check the antenna, then re-run with the IRQ pin removed from a copy of the board file (the driver
+check the antenna, then re-run with the IRQ pin removed from a copy of the board file (take it
+from `/etc/meshtasticd/available.d` or the firmware repo's `bin/config.d`, and pass its path; the driver
 then polls the chip). If that works, the IRQ pin is wrong.
 
 ## 4. Transmit
 
 ```bash
-./kisstool-linux-arm64 send-text --board /etc/meshtasticd/config.d/lora-….yaml --power 10 "spi test 1"
+./kisstool-linux-arm64 send-text --board MeshAdv-900M30S --power 10 "spi test 1"
 ```
 
 Expect `TxDone after …ms` (about 1 to 2 s on LongFast) and the message on the other node's phone.
@@ -115,7 +133,7 @@ cat > config.yaml <<'EOF'
 state_dir: state
 radio:
     driver: spi
-    device: /etc/meshtasticd/config.d/lora-MeshAdv-900M30S.yaml   # your board file
+    device: MeshAdv-900M30S   # your board: a built-in name, a board file path, or auto
 mesh:
     region: EU_868
     preset: LONG_FAST
@@ -130,7 +148,7 @@ Open `http://<pi>:8080` and go through setup. The first step asks for a serial p
 skip "Test modem" (it only knows USB modems). An `spi` radio keeps the board file from
 `config.yaml`. Then check:
 
-- the top bar shows `spi · /etc/meshtasticd/…yaml`;
+- the top bar shows `spi · MeshAdv-900M30S` (your board);
 - nodes appear on the Nodes page within about 15 minutes;
 - a DM or channel message from your phone arrives, and a reply from the GUI reaches the phone;
 - the noise floor on the dashboard looks sensible.

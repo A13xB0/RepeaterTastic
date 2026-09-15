@@ -28,7 +28,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/lazy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
-	"github.com/ScotMesh/RepeaterTastic/internal/radio/sx126x"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
 	"github.com/ScotMesh/RepeaterTastic/internal/site"
 	"github.com/ScotMesh/RepeaterTastic/internal/web"
 )
@@ -260,19 +260,20 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 		},
 			radio.Info{Driver: "kiss", Device: rc.Radio.Device}, 5*time.Second, logf)
 	case "spi":
-		// Experimental: an SX126x on the Pi's SPI bus, described by a meshtasticd board file.
+		// Experimental: a LoRa chip on SPI or a CH341 USB adapter, described by a meshtasticd board
+		// file (a path, a built-in board name, or "auto").
 		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "spi") }
-		var logged string // the board file last described, so retries don't repeat it
+		var logged string // the board last described, so retries don't repeat it
 		r = lazy.New(func(ctx context.Context, device string) (radio.Radio, error) {
-			b, err := sx126x.LoadBoard(device)
+			b, src, err := spi.Resolve(device)
 			if err != nil {
 				return nil, err
 			}
-			if logged != device {
-				logf("board %s", b.Summary())
-				logged = device
+			if logged != src {
+				logf("board %s from %s", b.Summary(), src)
+				logged = src
 			}
-			return sx126x.Open(ctx, b, logf)
+			return spi.Open(ctx, b, logf)
 		},
 			radio.Info{Driver: "spi", Device: rc.Radio.Device}, 5*time.Second, logf)
 	default:

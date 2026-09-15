@@ -21,7 +21,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
-	"github.com/ScotMesh/RepeaterTastic/internal/radio/sx126x"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
@@ -32,9 +32,11 @@ commands:
   info                     modem version, name, radio, phy extra, noise floor, stats
   listen                   configure Meshtastic PHY and print received frames
   send-text [flags] TEXT   broadcast a text message on the preset's default channel
+  boards                   list the built-in meshtasticd board files for --board
 
 common flags: --dev /dev/ttyUSB0 --baud 115200
-  or --board /etc/meshtasticd/config.d/lora-….yaml for an SX126x on SPI (experimental)
+  or --board BOARD for a LoRa chip on SPI or a CH341 USB adapter (experimental): a meshtasticd
+     board file path, a built-in board name (kisstool boards), or auto to detect
 PHY flags (listen, send-text): --region EU_868 --preset LONG_FAST --power 10
 send-text flags: --from !xxxxxxxx (default random)
 `
@@ -49,7 +51,7 @@ func main() {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	dev := fs.String("dev", "/dev/ttyUSB0", "serial device")
 	baud := fs.Int("baud", 115200, "baud rate")
-	board := fs.String("board", "", "meshtasticd board file: use an SX126x on SPI instead of a KISS modem")
+	board := fs.String("board", "", "meshtasticd board (file, built-in name or auto): use a LoRa chip on SPI/CH341 instead of a KISS modem")
 	region := fs.String("region", "EU_868", "Meshtastic region")
 	preset := fs.String("preset", "LONG_FAST", "Meshtastic modem preset")
 	power := fs.Int("power", 10, "TX power dBm (0 = region limit)")
@@ -70,8 +72,16 @@ func main() {
 
 	var run func(context.Context, radio.Radio) error
 	switch cmd {
+	case "boards":
+		listBoards()
+		return
 	case "info":
-		run = info
+		run = func(ctx context.Context, m radio.Radio) error {
+			if s, ok := m.(*spi.Radio); ok {
+				return spiInfo(ctx, s, *region, *preset)
+			}
+			return info(ctx, m)
+		}
 	case "listen", "send-text":
 		rp, err := resolve(*region, *preset, *power)
 		if err != nil {
@@ -118,15 +128,15 @@ func open(ctx context.Context, dev string, baud int, board string) (radio.Radio,
 		}
 		return m, nil
 	}
-	b, err := sx126x.LoadBoard(board)
+	b, src, err := spi.Resolve(board)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("board:      %s\n", b.Summary())
+	fmt.Printf("board:      %s\n            from %s\n", b.Summary(), src)
 	logf := func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) }
-	r, err := sx126x.Open(ctx, b, logf)
+	r, err := spi.Open(ctx, b, logf)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", b.SPIDev, err)
+		return nil, fmt.Errorf("open %s: %w", b.Module, err)
 	}
 	return r, nil
 }
@@ -160,8 +170,8 @@ func configure(ctx context.Context, m radio.Radio, rp phy.RadioParams) error {
 }
 
 func info(ctx context.Context, r radio.Radio) error {
-	if s, ok := r.(*sx126x.Radio); ok {
-		return spiInfo(ctx, s)
+	if s, ok := r.(*spi.Radio); ok {
+		return spiInfo(ctx, s, "EU_868", "LONG_FAST")
 	}
 	m := r.(*kiss.Modem)
 	in := m.Info()
@@ -185,22 +195,14 @@ func info(ctx context.Context, r radio.Radio) error {
 
 // spiInfo reports what an SX126x on SPI says about itself. Open has already proven SPI works (the
 // sync word register read back as 0x1424).
-func spiInfo(ctx context.Context, r *sx126x.Radio) error {
+func spiInfo(ctx context.Context, r *spi.Radio, region, preset string) error {
 	in := r.Info()
-	fmt.Printf("device:     %s\nchip:       %s (answered on SPI: sync word register 0x1424 after reset)\n", in.Device, in.Firmware)
-	status, errs, err := r.Diagnostics()
-	if err != nil {
-		return err
+	fmt.Printf("device:     %s\nchip:       %s (answered: its ID check passed)\n", in.Device, in.Firmware)
+	for _, line := range r.Diagnostics() {
+		fmt.Println(line)
 	}
-	modes := map[byte]string{2: "standby RC", 3: "standby XOSC", 4: "FS", 5: "RX", 6: "TX"}
-	mode, ok := modes[status>>4&7]
-	if !ok {
-		mode = fmt.Sprintf("unexpected mode %d", status>>4&7)
-	}
-	fmt.Printf("status:     0x%02x (%s)\n", status, mode)
-	fmt.Printf("dev errors: 0x%04x%s\n", errs, deviceErrorNames(errs))
-	// A noise floor needs the chip in RX on a real channel: configure EU_868 LongFast for a moment.
-	rp, err := resolve("EU_868", "LONG_FAST", 0)
+	// A noise floor needs the chip in RX on a real channel: configure the region/preset for a moment.
+	rp, err := resolve(region, preset, 0)
 	if err != nil {
 		return err
 	}
@@ -214,19 +216,16 @@ func spiInfo(ctx context.Context, r *sx126x.Radio) error {
 	return nil
 }
 
-func deviceErrorNames(e uint16) string {
-	names := []string{"RC64K calibration", "RC13M calibration", "PLL calibration", "ADC calibration",
-		"image calibration", "XOSC start (check the TCXO voltage)", "PLL lock", "", "PA ramp"}
-	var out []string
-	for i, n := range names {
-		if e&(1<<i) != 0 && n != "" {
-			out = append(out, n)
+// listBoards prints the built-in meshtasticd board files and whether this driver takes them.
+func listBoards() {
+	for _, k := range spi.KnownBoards() {
+		if k.Err != nil {
+			fmt.Printf("  %-52s not supported: %v\n", k.File, k.Err)
+			continue
 		}
+		fmt.Printf("  %-52s %s\n", k.File, k.Board.Summary())
 	}
-	if len(out) == 0 {
-		return " (none)"
-	}
-	return " (" + strings.Join(out, ", ") + ")"
+	fmt.Println("\nUse the file name (with or without lora- and .yaml) as --board or radio.device, or \"auto\" to detect.")
 }
 
 func listen(ctx context.Context, m radio.Radio, rp phy.RadioParams) error {

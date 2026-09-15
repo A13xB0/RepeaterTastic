@@ -233,8 +233,8 @@ func (c *Config) validateRadios() error {
 
 type Radio struct {
 	Driver string `yaml:"driver" json:"driver"` // kiss | spi | sim | none
-	// Device is the serial port for kiss, or the meshtasticd board file for spi
-	// (/etc/meshtasticd/config.d/lora-….yaml).
+	// Device is the serial port for kiss. For spi it is a meshtasticd board file
+	// (/etc/meshtasticd/config.d/lora-….yaml), a built-in board name, or auto.
 	Device string `yaml:"device" json:"device"`
 	Baud   int    `yaml:"baud" json:"baud"`
 }
@@ -615,7 +615,7 @@ func (c *Config) validateOne() error {
 	case "kiss", "sim", "none":
 	case "spi":
 		if strings.TrimSpace(c.Radio.Device) == "" {
-			return errors.New("radio.driver spi needs radio.device: the meshtasticd board file, e.g. /etc/meshtasticd/config.d/lora-meshadv-pi-hat-sx1262.yaml")
+			return errors.New("radio.driver spi needs radio.device: a meshtasticd board file, a built-in board name such as MeshAdv-900M30S, or auto")
 		}
 	default:
 		return fmt.Errorf("radio.driver must be kiss, spi or none, not %q", c.Radio.Driver)
