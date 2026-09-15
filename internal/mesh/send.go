@@ -125,6 +125,9 @@ func (h *Host) transmit(from *Identity, p *pb.MeshPacket, reliable bool) error {
 		onAir.Channel = uint32(rc.hash)
 	}
 	onAir.PayloadVariant = &pb.MeshPacket_Encrypted{Encrypted: enc}
+	if limit := from.MaxHops(); limit > 0 && onAir.HopLimit > limit {
+		onAir.HopLimit = limit
+	}
 	onAir.HopStart = onAir.HopLimit
 	relayByte := wire.LastByte(from.NodeNum)
 	onAir.RelayNode = uint32(relayByte)

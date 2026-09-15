@@ -11,7 +11,7 @@ import { toast } from '@/composables/toast'
 const props = defineProps<{ identity: Identity | null }>()
 const emit = defineEmits<{ close: [] }>()
 
-const form = ref({ long_name: '', short_name: '', role: 'CLIENT', api_port: 0, enabled: true, share_limit_pct: 25 })
+const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, share_limit_pct: 25, hop_limit: 0 })
 const saving = ref(false)
 const error = ref('')
 const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR', 'ROUTER', 'ROUTER_LATE']
@@ -21,7 +21,7 @@ watch(
   (i) => {
     if (!i) return
     error.value = ''
-    form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25 }
+    form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0 }
   },
 )
 
@@ -40,6 +40,7 @@ async function save() {
   if (f.enabled !== i.enabled) patch.enabled = f.enabled
   if (i.api && f.api_port !== i.api.port) patch.api_port = f.api_port
   if (f.share_limit_pct !== (i.share_limit_pct ?? 25)) patch.share_limit_pct = f.share_limit_pct
+  if (f.hop_limit !== (i.hop_limit ?? 0)) patch.hop_limit = f.hop_limit
   if (!Object.keys(patch).length) return emit('close')
   saving.value = true
   error.value = ''
@@ -75,6 +76,14 @@ async function save() {
       <div v-if="identity.api">
         <label class="label" for="e-port">API port</label>
         <input id="e-port" v-model.number="form.api_port" type="number" min="1024" max="65535" class="input tabular-nums" />
+      </div>
+      <div class="sm:col-span-2">
+        <label class="label" for="e-hops">Hop limit cap</label>
+        <select id="e-hops" v-model.number="form.hop_limit" class="input">
+          <option :value="0">Radio default</option>
+          <option v-for="n in 7" :key="n" :value="n">{{ n }} hop{{ n === 1 ? '' : 's' }}</option>
+        </select>
+        <p class="hint">Every packet this identity sends is capped at this many hops, whatever its app or client asks for.</p>
       </div>
       <div v-if="!identity.is_relay" class="sm:col-span-2">
         <label class="label" for="e-share">Airtime share limit · {{ form.share_limit_pct }}% of the hourly duty budget</label>

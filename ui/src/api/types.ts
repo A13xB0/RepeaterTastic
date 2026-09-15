@@ -116,6 +116,8 @@ export interface Identity {
   share_pct: number
   /** Proposed: configured slice of the hourly duty budget (percent of the budget). */
   share_limit_pct?: number
+  /** Cap on the hop limit of packets this identity sends; 0 = the radio's hop limit. */
+  hop_limit?: number
   /** Proposed: unread browser-chat messages across all conversations. */
   unread?: number
   created_at: number

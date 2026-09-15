@@ -40,6 +40,10 @@ type Identity struct {
 	CreatedAt  time.Time
 	// ShareLimitPct is this identity's slice of the hourly duty budget (0 = host default).
 	ShareLimitPct float64
+	// HopLimit caps the hop limit of every packet this identity originates, whatever its
+	// client asks for (0 = the radio's hop_limit). Keeps a chatty client, such as rnsd's
+	// RNS tunnel, from flooding the whole mesh.
+	HopLimit uint32
 	MACAddr       []byte
 
 	sinks           map[ClientSink]struct{}
@@ -251,6 +255,7 @@ type IdentityRecord struct {
 	APIPort    int      `json:"api_port,omitempty"`
 	CreatedAt  int64    `json:"created_at"`
 	ShareLimit float64  `json:"share_limit_pct,omitempty"`
+	HopLimit   uint32   `json:"hop_limit,omitempty"`
 	Channels   []string `json:"channels"` // base64 protobuf Channel
 }
 
@@ -261,7 +266,7 @@ func (id *Identity) Record() IdentityRecord {
 		PrivateKey: base64.StdEncoding.EncodeToString(id.PrivateKey),
 		LongName:   id.User.LongName, ShortName: id.User.ShortName, Role: id.User.Role.String(),
 		IsRelay: id.IsRelay, Enabled: id.Enabled, APIBind: id.APIBind, APIPort: id.APIPort,
-		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct,
+		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct, HopLimit: id.HopLimit,
 	}
 	for _, ch := range id.Channels {
 		b, _ := proto.Marshal(ch)
@@ -281,6 +286,7 @@ func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
 	}
 	id.IsRelay, id.Enabled, id.APIBind, id.APIPort = r.IsRelay, r.Enabled, r.APIBind, r.APIPort
 	id.ShareLimitPct = r.ShareLimit
+	id.HopLimit = r.HopLimit
 	if v, ok := pb.Config_DeviceConfig_Role_value[r.Role]; ok {
 		id.User.Role = pb.Config_DeviceConfig_Role(v)
 	}
@@ -348,6 +354,24 @@ func (id *Identity) SetRole(role string) error {
 	}
 	id.mu.Lock()
 	id.User.Role = pb.Config_DeviceConfig_Role(v)
+	id.mu.Unlock()
+	return nil
+}
+
+// MaxHops is the identity's hop-limit cap (0 = none).
+func (id *Identity) MaxHops() uint32 {
+	id.mu.RLock()
+	defer id.mu.RUnlock()
+	return id.HopLimit
+}
+
+// SetMaxHops sets the hop-limit cap; 0 removes it.
+func (id *Identity) SetMaxHops(n uint32) error {
+	if n > wire.HopMax {
+		return fmt.Errorf("hop_limit must be 0-%d", wire.HopMax)
+	}
+	id.mu.Lock()
+	id.HopLimit = n
 	id.mu.Unlock()
 	return nil
 }

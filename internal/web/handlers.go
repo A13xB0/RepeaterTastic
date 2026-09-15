@@ -229,7 +229,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		"role": u.Role.String(), "hw_model": rc.host.Hardware().String(), "public_key": base64.StdEncoding.EncodeToString(id.PublicKey),
 		"is_relay": id.IsRelay, "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
-		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id),
+		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id), "hop_limit": id.MaxHops(),
 		"unread": rc.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
 	}
 }
@@ -332,6 +332,7 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 		Role       string  `json:"role"`
 		ShareLimit float64 `json:"share_limit_pct"`
 		RadioID    string  `json:"radio_id"` // "" = ?radio= or the main radio
+		HopLimit   uint32  `json:"hop_limit"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -379,6 +380,10 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	id.APIPort, id.APIBind, id.ShareLimitPct = req.APIPort, req.APIBind, req.ShareLimit
+	if err := id.SetMaxHops(req.HopLimit); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// Only the relay persona repeats, so a new identity says so unless asked otherwise.
 	if req.Role == "" {
 		req.Role = pb.Config_DeviceConfig_CLIENT_MUTE.String()
@@ -418,12 +423,19 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		APIBind   *string  `json:"api_bind"`
 		Role      *string  `json:"role"`
 		Share     *float64 `json:"share_limit_pct"`
+		HopLimit  *uint32  `json:"hop_limit"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	if req.Role != nil && !id.IsRelay {
 		if err := id.SetRole(*req.Role); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.HopLimit != nil {
+		if err := id.SetMaxHops(*req.HopLimit); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

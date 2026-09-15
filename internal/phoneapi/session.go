@@ -251,7 +251,7 @@ func (s *Session) configByType(t pb.AdminMessage_ConfigType) *pb.Config {
 		return &pb.Config{PayloadVariant: &pb.Config_Display{Display: &pb.Config_DisplayConfig{}}}
 	case pb.AdminMessage_LORA_CONFIG:
 		return &pb.Config{PayloadVariant: &pb.Config_Lora{Lora: &pb.Config_LoRaConfig{
-			UsePreset: true, ModemPreset: rp.Preset, Region: rp.Region.Code, HopLimit: hc.HopLimit, TxEnabled: true,
+			UsePreset: true, ModemPreset: rp.Preset, Region: rp.Region.Code, HopLimit: s.hopLimit(hc.HopLimit), TxEnabled: true,
 			TxPower: int32(rp.TxPowerDBm), ChannelNum: uint32(rp.Slot + 1), OverrideDutyCycle: hc.OverrideDutyCycle,
 			Bandwidth: uint32(rp.BwKHz), SpreadFactor: uint32(rp.SF), CodingRate: uint32(rp.CR),
 			OverrideFrequency: float32(hc.OverrideFreqMHz), FrequencyOffset: float32(hc.FreqOffsetMHz)}}}
@@ -412,4 +412,12 @@ func randomU32() uint32 {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return binary.LittleEndian.Uint32(b[:])
+}
+
+// hopLimit is what the client sees as the node's hop limit: the identity's cap when it has one.
+func (s *Session) hopLimit(radio uint32) uint32 {
+	if limit := s.id.MaxHops(); limit > 0 && limit < radio {
+		return limit
+	}
+	return radio
 }
