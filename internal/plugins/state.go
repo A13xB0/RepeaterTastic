@@ -127,8 +127,9 @@ func maskSettings(schema []Setting, values map[string]any) (map[string]any, []st
 }
 
 // mergeSettings checks new values against the schema and applies them over the saved ones.
-// A secret sent as SecretMask (or left out) keeps its saved value.
-func mergeSettings(schema []Setting, saved, in map[string]any) (map[string]any, error) {
+// A secret sent as SecretMask (or left out) keeps its saved value. radioIDs are the site's radios
+// for "radios" settings (nil = don't check, as in the CLI).
+func mergeSettings(schema []Setting, saved, in map[string]any, radioIDs []string) (map[string]any, error) {
 	out := maps.Clone(saved)
 	if out == nil {
 		out = map[string]any{}
@@ -149,11 +150,15 @@ func mergeSettings(schema []Setting, saved, in map[string]any) (map[string]any, 
 		if s.Type == "secret" && v == SecretMask {
 			continue
 		}
-		cv, err := coerce(s, v)
+		cv, err := coerce(s, v, radioIDs)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", s.Label, err)
 		}
 		if str, ok := cv.(string); ok && str == "" {
+			delete(out, k)
+			continue
+		}
+		if list, ok := cv.([]string); ok && len(list) == 0 {
 			delete(out, k)
 			continue
 		}
@@ -162,8 +167,37 @@ func mergeSettings(schema []Setting, saved, in map[string]any) (map[string]any, 
 	return out, nil
 }
 
-func coerce(s Setting, v any) (any, error) {
+func coerce(s Setting, v any, radioIDs []string) (any, error) {
 	switch s.Type {
+	case "multiselect", "radios":
+		items, ok := v.([]any)
+		if !ok {
+			if list, isList := v.([]string); isList {
+				for _, x := range list {
+					items = append(items, x)
+				}
+				ok = true
+			}
+		}
+		if !ok {
+			return nil, errors.New("must be a list")
+		}
+		out := []string{}
+		for _, it := range items {
+			str, isStr := it.(string)
+			switch {
+			case !isStr:
+				return nil, errors.New("must be a list of names")
+			case s.Type == "multiselect" && !slices.Contains(s.Options, str):
+				return nil, fmt.Errorf("%q isn't one of %s", str, strings.Join(s.Options, ", "))
+			case s.Type == "radios" && radioIDs != nil && !slices.Contains(radioIDs, str):
+				return nil, fmt.Errorf("there's no radio %q", str)
+			}
+			if !slices.Contains(out, str) {
+				out = append(out, str)
+			}
+		}
+		return out, nil
 	case "bool":
 		b, ok := v.(bool)
 		if !ok {
@@ -220,7 +254,8 @@ func missingSettings(schema []Setting, values map[string]any) []string {
 			continue
 		}
 		v, ok := values[s.Key]
-		if str, isStr := v.(string); !ok || v == nil || (isStr && str == "") {
+		list, isList := v.([]any)
+		if str, isStr := v.(string); !ok || v == nil || (isStr && str == "") || (isList && len(list) == 0) {
 			out = append(out, s.Label)
 		}
 	}

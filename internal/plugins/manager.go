@@ -556,7 +556,11 @@ func (m *Manager) SetSettings(id string, values map[string]any) error {
 		m.mu.Unlock()
 		return fmt.Errorf("%w: the plugin hasn't described its settings yet", ErrConflict)
 	}
-	merged, err := mergeSettings(p.manifest.Settings, p.rec.Settings, values)
+	var radioIDs []string
+	for _, r := range m.opt.Radios {
+		radioIDs = append(radioIDs, r.ID)
+	}
+	merged, err := mergeSettings(p.manifest.Settings, p.rec.Settings, values, radioIDs)
 	if err != nil {
 		m.mu.Unlock()
 		return err

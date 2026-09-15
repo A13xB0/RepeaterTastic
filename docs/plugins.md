@@ -168,13 +168,20 @@ network: [api.example.org] # services it talks to, shown before enabling
 settings:
   - key: api_key           # lowercase, digits, underscores
     label: API key
-    type: secret           # string, secret, url, bool, int, number, select
+    type: secret           # string, secret, url, bool, int, number, select, multiselect, radios
     required: true
     help: From your account page.
   - key: region
     type: select
     options: [scotland, england]
     default: scotland
+  - key: radios
+    label: Radios
+    type: radios           # tick boxes of the site's radios; the value is a list of radio IDs
+    placeholder: All radios  # what an empty list shows as
+  - key: ports
+    type: multiselect      # tick boxes of options; the value is a list
+    options: [TEXT_MESSAGE_APP, POSITION_APP]
 run:
   managed:
     exec: bin/hello-{os}-{arch}   # {os} and {arch} are Go's GOOS and GOARCH (arm for 32-bit Pis)

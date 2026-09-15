@@ -156,7 +156,7 @@ func TestSettingsMaskAndMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, err := mergeSettings(m.Settings, nil, map[string]any{"greeting": "hi", "api_key": "s3cret"})
+	saved, err := mergeSettings(m.Settings, nil, map[string]any{"greeting": "hi", "api_key": "s3cret"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,12 +165,28 @@ func TestSettingsMaskAndMerge(t *testing.T) {
 		t.Fatalf("masked = %v %v", masked, set)
 	}
 	// Sending the mask back keeps the secret; an unknown key is refused.
-	saved, err = mergeSettings(m.Settings, saved, map[string]any{"api_key": SecretMask, "greeting": "yo"})
+	saved, err = mergeSettings(m.Settings, saved, map[string]any{"api_key": SecretMask, "greeting": "yo"}, nil)
 	if err != nil || saved["api_key"] != "s3cret" || saved["greeting"] != "yo" {
 		t.Fatalf("merge = %v %v", saved, err)
 	}
-	if _, err := mergeSettings(m.Settings, saved, map[string]any{"nope": 1}); err == nil {
+	if _, err := mergeSettings(m.Settings, saved, map[string]any{"nope": 1}, nil); err == nil {
 		t.Fatal("unknown setting accepted")
+	}
+	// Lists: radios are checked against the site's radios; an empty list clears the setting.
+	radios := Setting{Key: "radios", Label: "Radios", Type: "radios"}
+	multi := Setting{Key: "ports", Label: "Ports", Type: "multiselect", Options: []string{"a", "b"}}
+	got, err := mergeSettings([]Setting{radios, multi}, nil, map[string]any{"radios": []any{"main", "mf", "main"}, "ports": []any{"b"}}, []string{"main", "mf"})
+	if err != nil || len(got["radios"].([]string)) != 2 || got["ports"].([]string)[0] != "b" {
+		t.Fatalf("lists = %v %v", got, err)
+	}
+	if _, err := mergeSettings([]Setting{radios}, nil, map[string]any{"radios": []any{"nope"}}, []string{"main"}); err == nil {
+		t.Fatal("unknown radio accepted")
+	}
+	if _, err := mergeSettings([]Setting{multi}, nil, map[string]any{"ports": []any{"c"}}, nil); err == nil {
+		t.Fatal("unknown option accepted")
+	}
+	if got, _ := mergeSettings([]Setting{radios}, got, map[string]any{"radios": []any{}}, nil); got["radios"] != nil {
+		t.Fatal("an empty list didn't clear the setting")
 	}
 	t.Setenv("RT_TEST_KEY", "from-env")
 	if got := resolveSettings(m.Settings, map[string]any{"api_key": "${RT_TEST_KEY}"}, true)["api_key"]; got != "from-env" {

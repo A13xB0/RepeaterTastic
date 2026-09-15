@@ -69,20 +69,22 @@ type UI struct {
 
 // Setting is one field of the plugin's settings form.
 type Setting struct {
-	Key         string   `yaml:"key" json:"key"`
-	Label       string   `yaml:"label" json:"label"`
-	Type        string   `yaml:"type" json:"type"` // string, secret, url, bool, int, number, select
+	Key   string `yaml:"key" json:"key"`
+	Label string `yaml:"label" json:"label"`
+	// string, secret, url, bool, int, number, select, multiselect (a list from options) or radios
+	// (a list of the site's radio IDs; empty usually means every radio)
+	Type        string   `yaml:"type" json:"type"`
 	Help        string   `yaml:"help" json:"help,omitempty"`
 	Required    bool     `yaml:"required" json:"required,omitempty"`
 	Default     any      `yaml:"default" json:"default,omitempty"`
-	Options     []string `yaml:"options" json:"options,omitempty"` // select
+	Options     []string `yaml:"options" json:"options,omitempty"` // select, multiselect
 	Placeholder string   `yaml:"placeholder" json:"placeholder,omitempty"`
 }
 
 var (
 	idPattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
 	settingPattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
-	settingTypes    = []string{"string", "secret", "url", "bool", "int", "number", "select"}
+	settingTypes    = []string{"string", "secret", "url", "bool", "int", "number", "select", "multiselect", "radios"}
 	logoExtensions  = []string{".png", ".svg", ".webp"}
 	errNoManagedRun = errors.New("plugin has no run.managed.exec")
 )
@@ -123,8 +125,8 @@ func (m *Manifest) Validate() error {
 		} else if !slices.Contains(settingTypes, s.Type) {
 			return fmt.Errorf("setting %s: type %q must be one of %s", s.Key, s.Type, strings.Join(settingTypes, ", "))
 		}
-		if s.Type == "select" && len(s.Options) == 0 {
-			return fmt.Errorf("setting %s: a select needs options", s.Key)
+		if (s.Type == "select" || s.Type == "multiselect") && len(s.Options) == 0 {
+			return fmt.Errorf("setting %s: a %s needs options", s.Key, s.Type)
 		}
 		if s.Label == "" {
 			m.Settings[i].Label = s.Key

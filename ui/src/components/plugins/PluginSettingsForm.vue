@@ -4,10 +4,19 @@ import { computed, ref, watch } from 'vue'
 import { api, enc } from '@/api/client'
 import type { Plugin } from '@/api/types'
 import Toggle from '@/components/ui/Toggle.vue'
+import CheckDropdown from '@/components/ui/CheckDropdown.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { toast } from '@/composables/toast'
+import { live } from '@/store/live'
 
 const MASK = '••••••••'
+const isList = (t: string) => t === 'multiselect' || t === 'radios'
+
+function listOptions(s: Plugin['settings'][number]) {
+  if (s.type === 'radios') return live.radios.map((r) => ({ value: r.id, label: r.name || r.id, hint: `${r.phy.preset_name} · ${r.relay.node_id}` }))
+  return (s.options ?? []).map((o) => ({ value: o, label: o }))
+}
+
 const props = defineProps<{ plugin: Plugin }>()
 const emit = defineEmits<{ saved: [plugin: Plugin] }>()
 
@@ -19,6 +28,7 @@ function reset() {
   const out: Record<string, unknown> = {}
   for (const s of props.plugin.settings) {
     if (s.type === 'secret') out[s.key] = props.plugin.secrets_set.includes(s.key) ? MASK : ''
+    else if (isList(s.type)) out[s.key] = Array.isArray(props.plugin.values[s.key]) ? [...(props.plugin.values[s.key] as string[])] : []
     else out[s.key] = props.plugin.values[s.key] ?? (s.type === 'bool' ? false : '')
   }
   form.value = out
@@ -28,6 +38,12 @@ watch(() => props.plugin.id, reset, { immediate: true })
 
 const dirty = computed(() => {
   for (const s of props.plugin.settings) {
+    if (isList(s.type)) {
+      const saved = Array.isArray(props.plugin.values[s.key]) ? (props.plugin.values[s.key] as string[]) : []
+      const now = form.value[s.key] as string[]
+      if (saved.length !== now.length || saved.some((v) => !now.includes(v))) return true
+      continue
+    }
     const saved = s.type === 'secret' ? (props.plugin.secrets_set.includes(s.key) ? MASK : '') : (props.plugin.values[s.key] ?? (s.type === 'bool' ? false : ''))
     if (form.value[s.key] !== saved) return true
   }
@@ -41,7 +57,7 @@ async function save() {
   for (const s of props.plugin.settings) {
     let v = form.value[s.key]
     if ((s.type === 'int' || s.type === 'number') && v !== '' && v !== null) v = Number(v)
-    if (v === '' && s.type !== 'secret' && s.type !== 'string' && s.type !== 'url' && s.type !== 'select') v = null
+    if (v === '' && s.type !== 'secret' && s.type !== 'string' && s.type !== 'url' && s.type !== 'select' && !isList(s.type)) v = null
     body[s.key] = v
   }
   try {
@@ -75,7 +91,15 @@ async function save() {
         </div>
         <template v-else>
           <label class="label" :for="`ps-${s.key}`">{{ s.label }}<span v-if="s.required" class="text-bad"> *</span></label>
-          <select v-if="s.type === 'select'" :id="`ps-${s.key}`" v-model="form[s.key]" class="input" :disabled="plugin.pinned">
+          <CheckDropdown
+            v-if="isList(s.type)"
+            :id="`ps-${s.key}`"
+            v-model="form[s.key] as string[]"
+            :options="listOptions(s)"
+            :disabled="plugin.pinned"
+            :empty-label="s.placeholder || (s.type === 'radios' ? 'All radios' : 'None')"
+          />
+          <select v-else-if="s.type === 'select'" :id="`ps-${s.key}`" v-model="form[s.key]" class="input" :disabled="plugin.pinned">
             <option v-if="!s.required" value="">—</option>
             <option v-for="o in s.options" :key="o" :value="o">{{ o }}</option>
           </select>
