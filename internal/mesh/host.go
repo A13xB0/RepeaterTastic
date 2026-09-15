@@ -352,6 +352,9 @@ func (h *Host) Run(ctx context.Context) error {
 		if err := h.DB.Load(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
 			h.log.Warn("node DB not loaded", "err", err)
 		}
+		if err := h.Messages.Load(filepath.Join(h.stateDir, "messages.json")); err != nil {
+			h.log.Warn("messages not loaded", "err", err)
+		}
 		for _, id := range h.Identities() { // re-assert local entries over stale saved ones
 			h.DB.Update(id.NodeNum, func(e *NodeEntry) { e.Local = true; e.User = id.UserCopy(); e.HopsAway = 0 })
 		}
@@ -365,6 +368,7 @@ func (h *Host) Run(ctx context.Context) error {
 	wg.Wait()
 	if h.stateDir != "" {
 		_ = h.DB.Save(filepath.Join(h.stateDir, "nodedb.json"))
+		_ = h.Messages.Save(filepath.Join(h.stateDir, "messages.json"))
 	}
 	return ctx.Err()
 }
@@ -432,6 +436,9 @@ func (h *Host) timerLoop(ctx context.Context) {
 				lastSave = now
 				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
 					h.log.Warn("saving node DB", "err", err)
+				}
+				if err := h.Messages.Save(filepath.Join(h.stateDir, "messages.json")); err != nil {
+					h.log.Warn("saving messages", "err", err)
 				}
 			}
 		}

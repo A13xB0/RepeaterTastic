@@ -1,6 +1,9 @@
 package mesh
 
 import (
+	"encoding/json"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -181,6 +184,8 @@ type MessageStore struct {
 	per  map[uint32][]*Message
 	max  int
 	read map[uint32]map[string]int64 // conversation → last read time
+	// dirty avoids rewriting the file (SD card wear on a Pi) when nothing changed.
+	dirty bool
 }
 
 func NewMessageStore(max int) *MessageStore {
@@ -195,6 +200,7 @@ func (s *MessageStore) Add(identity uint32, m *Message) {
 		l = l[len(l)-s.max:]
 	}
 	s.per[identity] = l
+	s.dirty = true
 }
 
 // SetStatus updates an outgoing message by packet id; returns the updated copy.
@@ -208,6 +214,7 @@ func (s *MessageStore) SetStatus(identity, id uint32, status, errText string) (M
 				return *l[i], false
 			}
 			l[i].Status, l[i].Error = status, errText
+			s.dirty = true
 			return *l[i], true
 		}
 	}
@@ -284,6 +291,7 @@ func (s *MessageStore) MarkRead(identity uint32, conversation string) {
 		s.read[identity] = map[string]int64{}
 	}
 	s.read[identity][conversation] = time.Now().UnixMilli()
+	s.dirty = true
 }
 
 // UnreadTotal counts unread incoming messages across all conversations of an identity.
@@ -306,4 +314,74 @@ func (s *MessageStore) Window(identity uint32, sinceMs int64) []Message {
 		}
 	}
 	return out
+}
+
+type messageFile struct {
+	Messages map[string][]*Message       `json:"messages"`
+	Read     map[string]map[string]int64 `json:"read"`
+}
+
+// Save writes all messages and read markers to path.
+func (s *MessageStore) Save(path string) error {
+	s.mu.Lock()
+	if !s.dirty {
+		s.mu.Unlock()
+		return nil
+	}
+	s.dirty = false
+	f := messageFile{Messages: map[string][]*Message{}, Read: map[string]map[string]int64{}}
+	for id, l := range s.per {
+		cp := make([]*Message, len(l))
+		for i, m := range l {
+			mm := *m
+			cp[i] = &mm
+		}
+		f.Messages[itoa(int(id))] = cp
+	}
+	for id, r := range s.read {
+		m := map[string]int64{}
+		for k, v := range r {
+			m[k] = v
+		}
+		f.Read[itoa(int(id))] = m
+	}
+	s.mu.Unlock()
+	return writeJSONAtomic(path, f)
+}
+
+// Load restores messages saved by Save.
+func (s *MessageStore) Load(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var f messageFile
+	if err := json.Unmarshal(b, &f); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, l := range f.Messages {
+		id, err := strconv.ParseUint(k, 10, 32)
+		if err != nil {
+			continue
+		}
+		for _, m := range l {
+			if m.Direction == "out" && (m.Status == "queued" || m.Status == "sent") {
+				m.Status = "failed"
+				m.Error = "restarted before an acknowledgement arrived"
+			}
+		}
+		s.per[uint32(id)] = l
+	}
+	for k, r := range f.Read {
+		id, err := strconv.ParseUint(k, 10, 32)
+		if err == nil {
+			s.read[uint32(id)] = r
+		}
+	}
+	return nil
 }
