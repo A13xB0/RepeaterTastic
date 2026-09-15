@@ -114,7 +114,16 @@ func (s *Server) listPlugins(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	pc := s.cfg.Plugins
 	s.cfgMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "plugins": list, "permissions": perms,
+	// The choices for "identities" settings.
+	identities := []map[string]any{}
+	for _, rc := range s.radios {
+		for _, id := range rc.host.Identities() {
+			u := id.UserCopy()
+			identities = append(identities, map[string]any{"node_id": id.NodeID(), "long_name": u.GetLongName(), "short_name": u.GetShortName(),
+				"radio_id": rc.id, "radio_name": rc.name, "is_relay": id.IsRelay})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "plugins": list, "permissions": perms, "identities": identities,
 		"attach_address": m.Listening(), "allow_url_install": pc.AllowURLInstall, "folder": m.InboxDir(),
 		"messages_per_hour": pc.MessagesPerHour, "traceroutes_per_hour": pc.TraceroutesPerHour})
 }

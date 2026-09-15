@@ -435,7 +435,7 @@ export type PluginState =
 export interface PluginSetting {
   key: string
   label: string
-  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select' | 'multiselect' | 'radios'
+  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select' | 'multiselect' | 'radios' | 'identities'
   help?: string
   required?: boolean
   default?: unknown
@@ -485,6 +485,16 @@ export interface PluginsResponse {
   folder?: string
   messages_per_hour?: number
   traceroutes_per_hour?: number
+  identities?: PluginIdentityChoice[]
+}
+
+export interface PluginIdentityChoice {
+  node_id: string
+  long_name: string
+  short_name: string
+  radio_id: string
+  radio_name: string
+  is_relay: boolean
 }
 
 export interface PluginLogLine {

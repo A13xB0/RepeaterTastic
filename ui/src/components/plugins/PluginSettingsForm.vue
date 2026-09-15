@@ -2,7 +2,7 @@
 // The settings form a plugin describes in its plugin.yaml.
 import { computed, ref, watch } from 'vue'
 import { api, enc } from '@/api/client'
-import type { Plugin } from '@/api/types'
+import type { Plugin, PluginIdentityChoice } from '@/api/types'
 import Toggle from '@/components/ui/Toggle.vue'
 import CheckDropdown from '@/components/ui/CheckDropdown.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -10,14 +10,22 @@ import { toast } from '@/composables/toast'
 import { live } from '@/store/live'
 
 const MASK = '••••••••'
-const isList = (t: string) => t === 'multiselect' || t === 'radios'
+const isList = (t: string) => t === 'multiselect' || t === 'radios' || t === 'identities'
 
 function listOptions(s: Plugin['settings'][number]) {
   if (s.type === 'radios') return live.radios.map((r) => ({ value: r.id, label: r.name || r.id, hint: `${r.phy.preset_name} · ${r.relay.node_id}` }))
+  if (s.type === 'identities') {
+    const several = new Set((props.identities ?? []).map((i) => i.radio_id)).size > 1
+    return (props.identities ?? []).map((i) => ({
+      value: i.node_id,
+      label: `${i.long_name || i.node_id}${i.is_relay ? ' (relay persona)' : ''}`,
+      hint: several ? `${i.node_id} · ${i.radio_name}` : i.node_id,
+    }))
+  }
   return (s.options ?? []).map((o) => ({ value: o, label: o }))
 }
 
-const props = defineProps<{ plugin: Plugin }>()
+const props = defineProps<{ plugin: Plugin; identities?: PluginIdentityChoice[] }>()
 const emit = defineEmits<{ saved: [plugin: Plugin] }>()
 
 const form = ref<Record<string, unknown>>({})
@@ -97,7 +105,7 @@ async function save() {
             v-model="form[s.key] as string[]"
             :options="listOptions(s)"
             :disabled="plugin.pinned"
-            :empty-label="s.placeholder || (s.type === 'radios' ? 'All radios' : 'None')"
+            :empty-label="s.placeholder || (s.type === 'radios' ? 'All radios' : s.type === 'identities' ? 'None chosen' : 'None')"
           />
           <select v-else-if="s.type === 'select'" :id="`ps-${s.key}`" v-model="form[s.key]" class="input" :disabled="plugin.pinned">
             <option v-if="!s.required" value="">—</option>

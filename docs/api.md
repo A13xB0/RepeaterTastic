@@ -189,7 +189,7 @@ A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": 
 See [Plugins](plugins.md). A Plugin is `{"id", "name", "version", "description", "author", "homepage", "license", "kind": "managed|attached", "enabled", "pinned", "state", "detail", "permissions": [{"key", "text", "granted"}], "network", "settings": [schema], "values" (secrets as "••••••••"), "secrets_set", "status": {"summary", "state", "fields"}, "has_logo", "has_panel", "logo_url", "panel_url", "connected", "connected_at", "started_at", "restarts", "dropped_events", "installed_at", "source"}`.
 `state` is one of `disabled`, `needs_review`, `needs_settings`, `starting`, `running`, `restarting`, `crashed`, `stopped`, `waiting` or `unsupported`.
 
-- `GET /api/v1/plugins` → `{"enabled", "plugins": [Plugin], "permissions": {key: text}, "attach_address", "allow_url_install", "folder", "messages_per_hour", "traceroutes_per_hour"}`
+- `GET /api/v1/plugins` → `{"enabled", "plugins": [Plugin], "permissions": {key: text}, "attach_address", "allow_url_install", "folder", "messages_per_hour", "traceroutes_per_hour", "identities": [{"node_id", "long_name", "short_name", "radio_id", "radio_name", "is_relay"}]}` (`identities` are the choices for `identities` settings)
 - `POST /api/v1/plugins`: a multipart upload (field `bundle`) or JSON `{"url"}` → 201 Plugin (installed off, or upgraded)
 - `POST /api/v1/plugins/attach` `{"id", "name", "permissions"}` → `{"plugin", "token", "address"}` (the token is shown once)
 - `GET /api/v1/plugins/{id}` → Plugin; `DELETE /api/v1/plugins/{id}[?keep_data=1]` → 204

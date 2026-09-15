@@ -556,11 +556,7 @@ func (m *Manager) SetSettings(id string, values map[string]any) error {
 		m.mu.Unlock()
 		return fmt.Errorf("%w: the plugin hasn't described its settings yet", ErrConflict)
 	}
-	var radioIDs []string
-	for _, r := range m.opt.Radios {
-		radioIDs = append(radioIDs, r.ID)
-	}
-	merged, err := mergeSettings(p.manifest.Settings, p.rec.Settings, values, radioIDs)
+	merged, err := mergeSettings(p.manifest.Settings, p.rec.Settings, values, m.choices())
 	if err != nil {
 		m.mu.Unlock()
 		return err
@@ -670,6 +666,22 @@ func (m *Manager) notify(id string) {
 	if m.opt.Notify != nil {
 		m.opt.Notify(id)
 	}
+}
+
+// choices lists the site's radios and identities for list settings.
+func (m *Manager) choices() siteChoices {
+	var c siteChoices
+	if len(m.opt.Radios) == 0 {
+		return c // the CLI: nothing to check against
+	}
+	c.radios, c.identities = []string{}, []string{}
+	for _, r := range m.opt.Radios {
+		c.radios = append(c.radios, r.ID)
+		for _, id := range r.Host.Identities() {
+			c.identities = append(c.identities, id.NodeID())
+		}
+	}
+	return c
 }
 
 func (m *Manager) radio(id string) *Radio {

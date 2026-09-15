@@ -83,10 +83,17 @@ type PacketRecord struct {
 	// decoded payload when one of this radio's channels or keys could read it. Never logged.
 	Mesh *pb.MeshPacket `json:"-"`
 	Data *pb.Data       `json:"-"`
-	// RelayChannel is the channel's index on this radio's relay persona when RelayHolds: the
-	// relay persona holds the channel, or the packet is a PKI DM to it (index 0).
-	RelayChannel int  `json:"-"`
-	RelayHolds   bool `json:"-"`
+	// Holders are the identities that would hear this packet as a node does: those holding the
+	// channel it decoded on (with the channel's index on each), or the recipient of a PKI DM
+	// (index 0).
+	Holders []ChannelHolder `json:"-"`
+}
+
+// ChannelHolder is an identity that holds a packet's channel, and the channel's index on it.
+type ChannelHolder struct {
+	NodeNum uint32
+	Index   int
+	Relay   bool
 }
 
 // PacketLog is a fixed-size ring of recent packets.

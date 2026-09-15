@@ -49,7 +49,7 @@ for a permission it wasn't granted gets a "permission denied" error.
 | `nodes.read` | See the node database (and traceroute results) |
 | `messages.read` | Read text messages to and from each radio's relay persona |
 | `messages.send` | Send text messages from each radio's relay persona |
-| `traceroute.send` | Send traceroutes from each radio's relay persona |
+| `traceroute.send` | Send traceroutes from a radio's relay persona or its other identities |
 
 Plugins act as the **relay persona** of each radio: the node the site already is on the mesh.
 Transmissions go through the normal transmit queue and duty cycle. Each plugin also has a budget,
@@ -197,6 +197,8 @@ settings:
   - key: ports
     type: multiselect      # tick boxes of options; the value is a list
     options: [TEXT_MESSAGE_APP, POSITION_APP]
+  - key: report_as
+    type: identities       # tick boxes of the site's identities; the value is a list of node IDs
 run:
   managed:
     exec: bin/hello-{os}-{arch}   # {os} and {arch} are Go's GOOS and GOARCH (arm for 32-bit Pis)
@@ -255,11 +257,14 @@ A `PacketEvent` is one packet a radio heard or sent.
 | `decoded` | Whether the payload is decoded |
 | `channel_hash`, `channel_name` | The on-air channel hash (0 for DMs); the channel it decoded on, `PKI` for a DM, empty when undecoded |
 | `relay_channel_index` | The channel's index (0–7) on the radio's relay persona, or `-1`. Set when the relay persona holds the channel, or for a DM addressed to the relay persona. When set, `mesh_packet.channel` is that index; otherwise it's the on-air hash |
+| `holders` | Every identity on the radio that would hear the packet as a node does, with the channel's index on it: those holding the channel, or the recipient of a DM. Use it to report as an identity other than the relay persona |
 | `reporter_node_num` | The radio's relay persona |
 
 Decoding uses every identity's channels and keys, not just the relay persona's. A plugin that
-reports **as the relay persona** should keep only what that node would hear itself:
-`relay_channel_index >= 0`, and `to` either broadcast or the relay persona.
+reports **as an identity** should keep only what that node would hear itself: the identity is
+in `holders` (use its `channel_index` as the channel), and `to` is either broadcast or that
+identity. For the relay persona, `relay_channel_index >= 0` says the same thing. `ListRadios`
+lists each radio's identities, and `Traceroute` takes `from` to send from one of them.
 
 The node database (`ListNodes`, `NodeEvent`) is shared by all of a radio's identities. It can hold
 names, positions and metrics learned on channels or in DMs the relay persona can't read.

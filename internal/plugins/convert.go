@@ -18,13 +18,22 @@ func (m *Manager) radiosProto() []*pluginv1.Radio {
 		pr := &pluginv1.Radio{Id: r.ID, Name: r.Name, Region: rp.Region.Name, Preset: rp.Preset.String(),
 			PresetName: rp.PresetName(), FrequencyMhz: rp.FrequencyMHz, Connected: r.Host.RadioConfigured()}
 		if relay := r.Host.Relay(); relay != nil {
-			u := relay.UserCopy()
-			pr.Relay = &pluginv1.Identity{NodeId: relay.NodeID(), NodeNum: relay.NodeNum, LongName: u.GetLongName(),
-				ShortName: u.GetShortName(), RadioId: r.ID}
+			pr.Relay = identityProto(r.ID, relay)
+			pr.Identities = append(pr.Identities, pr.Relay)
+		}
+		for _, id := range r.Host.Identities() {
+			if !id.IsRelay {
+				pr.Identities = append(pr.Identities, identityProto(r.ID, id))
+			}
 		}
 		out = append(out, pr)
 	}
 	return out
+}
+
+func identityProto(radioID string, id *mesh.Identity) *pluginv1.Identity {
+	u := id.UserCopy()
+	return &pluginv1.Identity{NodeId: id.NodeID(), NodeNum: id.NodeNum, LongName: u.GetLongName(), ShortName: u.GetShortName(), RadioId: radioID}
 }
 
 func packetEvent(r Radio, rec mesh.PacketRecord) *pluginv1.HostMessage {
@@ -38,10 +47,14 @@ func packetEvent(r Radio, rec mesh.PacketRecord) *pluginv1.HostMessage {
 		p.RxTime = &t
 	}
 	relayIndex := int32(-1)
+	var holders []*pluginv1.ChannelHolder
 	if rec.Data != nil {
 		p.PayloadVariant = &pb.MeshPacket_Decoded{Decoded: rec.Data}
-		if rec.RelayHolds {
-			p.Channel, relayIndex = uint32(rec.RelayChannel), int32(rec.RelayChannel)
+		for _, h := range rec.Holders {
+			holders = append(holders, &pluginv1.ChannelHolder{NodeNum: h.NodeNum, ChannelIndex: uint32(h.Index)})
+			if h.Relay && relayIndex < 0 {
+				p.Channel, relayIndex = uint32(h.Index), int32(h.Index)
+			}
 		}
 	}
 	b, err := proto.Marshal(p)
@@ -49,7 +62,7 @@ func packetEvent(r Radio, rec mesh.PacketRecord) *pluginv1.HostMessage {
 		return nil
 	}
 	ev := &pluginv1.PacketEvent{RadioId: r.ID, Direction: rec.Direction, Kind: rec.Kind, MeshPacket: b, Decoded: rec.Data != nil,
-		ChannelHash: uint32(rec.ChannelHash), ChannelName: rec.Channel, TimeMs: rec.Time, RelayChannelIndex: relayIndex}
+		ChannelHash: uint32(rec.ChannelHash), ChannelName: rec.Channel, TimeMs: rec.Time, RelayChannelIndex: relayIndex, Holders: holders}
 	if relay := r.Host.Relay(); relay != nil {
 		ev.ReporterNodeNum = relay.NodeNum
 	}

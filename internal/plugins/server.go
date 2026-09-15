@@ -422,13 +422,23 @@ func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteReq
 	if err != nil || target == wire.Broadcast {
 		return nil, status.Error(codes.InvalidArgument, "target must be a node id like !a1c40e07")
 	}
+	from := r.Host.Relay()
+	if req.From != "" {
+		num, err := wire.ParseNodeID(req.From)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, "from must be a node id like !a1c40e07")
+		}
+		if from = r.Host.Identity(num); from == nil {
+			return nil, status.Errorf(codes.NotFound, "%s isn't an identity on %s", req.From, r.ID)
+		}
+	}
 	if ok, wait := p.trBudget.take(); !ok {
 		return nil, budgetError("traceroutes", h.m.opt.Config.TraceroutesPerHour, wait)
 	}
-	if err := r.Host.Traceroute(r.Host.Relay(), target); err != nil {
+	if err := r.Host.Traceroute(from, target); err != nil {
 		return nil, status.Error(codes.ResourceExhausted, err.Error())
 	}
-	p.logs.add("info", "host", fmt.Sprintf("sent a traceroute to %s on %s", req.Target, r.ID))
+	p.logs.add("info", "host", fmt.Sprintf("sent a traceroute from %s to %s on %s", from.NodeID(), req.Target, r.ID))
 	return &pluginv1.SendResponse{}, nil
 }
 

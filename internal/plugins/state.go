@@ -127,9 +127,9 @@ func maskSettings(schema []Setting, values map[string]any) (map[string]any, []st
 }
 
 // mergeSettings checks new values against the schema and applies them over the saved ones.
-// A secret sent as SecretMask (or left out) keeps its saved value. radioIDs are the site's radios
-// for "radios" settings (nil = don't check, as in the CLI).
-func mergeSettings(schema []Setting, saved, in map[string]any, radioIDs []string) (map[string]any, error) {
+// A secret sent as SecretMask (or left out) keeps its saved value. choices are the site's radios
+// and identities for list settings (nil lists = don't check, as in the CLI).
+func mergeSettings(schema []Setting, saved, in map[string]any, choices siteChoices) (map[string]any, error) {
 	out := maps.Clone(saved)
 	if out == nil {
 		out = map[string]any{}
@@ -150,7 +150,7 @@ func mergeSettings(schema []Setting, saved, in map[string]any, radioIDs []string
 		if s.Type == "secret" && v == SecretMask {
 			continue
 		}
-		cv, err := coerce(s, v, radioIDs)
+		cv, err := coerce(s, v, choices)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", s.Label, err)
 		}
@@ -167,9 +167,14 @@ func mergeSettings(schema []Setting, saved, in map[string]any, radioIDs []string
 	return out, nil
 }
 
-func coerce(s Setting, v any, radioIDs []string) (any, error) {
+// siteChoices are what "radios" and "identities" settings may name.
+type siteChoices struct {
+	radios, identities []string
+}
+
+func coerce(s Setting, v any, choices siteChoices) (any, error) {
 	switch s.Type {
-	case "multiselect", "radios":
+	case "multiselect", "radios", "identities":
 		items, ok := v.([]any)
 		if !ok {
 			if list, isList := v.([]string); isList {
@@ -190,8 +195,10 @@ func coerce(s Setting, v any, radioIDs []string) (any, error) {
 				return nil, errors.New("must be a list of names")
 			case s.Type == "multiselect" && !slices.Contains(s.Options, str):
 				return nil, fmt.Errorf("%q isn't one of %s", str, strings.Join(s.Options, ", "))
-			case s.Type == "radios" && radioIDs != nil && !slices.Contains(radioIDs, str):
+			case s.Type == "radios" && choices.radios != nil && !slices.Contains(choices.radios, str):
 				return nil, fmt.Errorf("there's no radio %q", str)
+			case s.Type == "identities" && choices.identities != nil && !slices.Contains(choices.identities, str):
+				return nil, fmt.Errorf("there's no identity %s", str)
 			}
 			if !slices.Contains(out, str) {
 				out = append(out, str)

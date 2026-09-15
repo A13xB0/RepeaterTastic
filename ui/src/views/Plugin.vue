@@ -248,7 +248,7 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
           </div>
 
           <!-- SETTINGS -->
-          <PluginSettingsForm v-else-if="tab === 'settings'" :plugin="plugin" @saved="(p) => (plugin = p)" />
+          <PluginSettingsForm v-else-if="tab === 'settings'" :plugin="plugin" :identities="meta?.identities" @saved="(p) => (plugin = p)" />
 
           <!-- LOG -->
           <div v-else-if="tab === 'logs'">
