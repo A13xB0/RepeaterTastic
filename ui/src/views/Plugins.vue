@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Link2, Plus, Puzzle, RefreshCw } from '@lucide/vue'
+import { Gauge, Link2, Plus, Puzzle, RefreshCw } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Plugin, PluginsResponse } from '@/api/types'
 import Toggle from '@/components/ui/Toggle.vue'
@@ -10,6 +10,7 @@ import PluginStateChip from '@/components/plugins/PluginStateChip.vue'
 import InstallPluginModal from '@/components/plugins/InstallPluginModal.vue'
 import EnablePluginModal from '@/components/plugins/EnablePluginModal.vue'
 import AttachPluginModal from '@/components/plugins/AttachPluginModal.vue'
+import SendLimitsModal from '@/components/plugins/SendLimitsModal.vue'
 import { toast, toastError } from '@/composables/toast'
 import { on } from '@/store/live'
 
@@ -18,6 +19,7 @@ const data = ref<PluginsResponse | null>(null)
 const loading = ref(false)
 const installOpen = ref(false)
 const attachOpen = ref(false)
+const limitsOpen = ref(false)
 const enabling = ref<Plugin | null>(null)
 
 async function load() {
@@ -74,6 +76,14 @@ onBeforeUnmount(off)
       </div>
       <div class="flex flex-wrap gap-2">
         <button class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
+        <button
+          v-if="data?.enabled"
+          class="btn btn-sm"
+          :title="`Each plugin may send ${data.messages_per_hour} messages and ${data.traceroutes_per_hour} traceroutes an hour`"
+          @click="limitsOpen = true"
+        >
+          <Gauge class="size-3.5" />Send limits
+        </button>
         <button v-if="data?.enabled" class="btn btn-sm" @click="attachOpen = true"><Link2 class="size-3.5" />Attach</button>
         <button v-if="data?.enabled" class="btn btn-sm btn-primary" @click="installOpen = true"><Plus class="size-3.5" />Install plugin</button>
       </div>
@@ -138,6 +148,13 @@ onBeforeUnmount(off)
     </div>
 
     <InstallPluginModal :open="installOpen" :allow-url="!!data?.allow_url_install" :folder="data?.folder" @close="installOpen = false" @installed="installed" />
+    <SendLimitsModal
+      :open="limitsOpen"
+      :messages-per-hour="data?.messages_per_hour"
+      :traceroutes-per-hour="data?.traceroutes_per_hour"
+      @close="limitsOpen = false"
+      @saved="(l) => { if (data) Object.assign(data, l); limitsOpen = false }"
+    />
     <AttachPluginModal
       :open="attachOpen"
       :permissions="data?.permissions ?? {}"

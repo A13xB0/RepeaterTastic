@@ -582,8 +582,8 @@ func (c *Config) Validate() error {
 	if c.Site.DutyCyclePct < 0 || c.Site.DutyCyclePct > 100 {
 		return fmt.Errorf("site.duty_cycle_percent must be between 0 and 100")
 	}
-	if c.Plugins.MessagesPerHour < 0 || c.Plugins.TraceroutesPerHour < 0 {
-		return errors.New("plugins.messages_per_hour and traceroutes_per_hour can't be negative")
+	if c.Plugins.MessagesPerHour < 0 || c.Plugins.MessagesPerHour > 600 || c.Plugins.TraceroutesPerHour < 0 || c.Plugins.TraceroutesPerHour > 120 {
+		return errors.New("plugins.messages_per_hour must be 0-600 and traceroutes_per_hour 0-120")
 	}
 	seen := map[string]bool{}
 	for _, e := range c.Plugins.Entries {

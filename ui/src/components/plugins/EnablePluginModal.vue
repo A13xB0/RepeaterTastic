@@ -73,8 +73,8 @@ async function enable() {
         <Radio v-if="transmits(p.key)" class="mt-0.5 size-4 shrink-0 text-warn" aria-label="Transmits" />
       </label>
       <p v-if="sends" class="mt-2 text-xs text-ink-3">
-        Transmissions use the relay persona's airtime and are capped at {{ messagesPerHour ?? 0 }} messages and {{ traceroutesPerHour ?? 0 }} traceroutes an hour
-        (plugins.messages_per_hour and traceroutes_per_hour).
+        Transmissions use the radio's airtime and are capped at {{ messagesPerHour ?? 0 }} messages and {{ traceroutesPerHour ?? 0 }} traceroutes an hour
+        (change them under Plugins → Send limits).
       </p>
 
       <div v-if="plugin.network?.length" class="mt-4 flex items-start gap-2.5 rounded-xl bg-raised px-3 py-2.5 text-[13px]">

@@ -55,8 +55,10 @@ Plugins act as the **relay persona** of each radio: the node the site already is
 Transmissions go through the normal transmit queue and duty cycle. Each plugin also has a budget,
 30 messages and 12 traceroutes an hour by default. A plugin may send a sixth of its hourly budget
 at once (at least one), then the budget refills evenly: with 12 traceroutes an hour, that's 2
-straight away and then one every 5 minutes. `plugins.messages_per_hour` and
-`traceroutes_per_hour` set the budgets (restart to apply); `0` stops plugins sending at all.
+straight away and then one every 5 minutes. Change them under **Plugins → Send limits**, which
+applies at once and saves them to the config file as `plugins.messages_per_hour` and
+`traceroutes_per_hour`. The limits are 0-600 messages and 0-120 traceroutes an hour; `0` stops
+plugins sending at all.
 Every send is written to the plugin's log. The radio's own limits still apply too, such as one
 traceroute per identity every 30 seconds.
 
@@ -113,8 +115,8 @@ plugins:
     dir: ""                       # "" = <state_dir>/plugins
     listen: ""                    # TCP address for attached plugins, e.g. 127.0.0.1:4450 ("" = off)
     allow_url_install: true       # the GUI may download bundles from a URL
-    messages_per_hour: 30         # per plugin; 0 = plugins may not send messages
-    traceroutes_per_hour: 12      # per plugin; 0 = plugins may not send traceroutes
+    messages_per_hour: 30         # per plugin, 0-600; 0 = plugins may not send messages (also Plugins → Send limits)
+    traceroutes_per_hour: 12      # per plugin, 0-120; 0 = plugins may not send traceroutes
     entries:                      # pin plugins: the GUI shows these as "config file" and won't change them
         - id: my-plugin
           enabled: true

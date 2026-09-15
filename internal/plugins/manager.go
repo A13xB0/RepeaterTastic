@@ -655,6 +655,38 @@ func (m *Manager) NewToken(id string) (string, error) {
 	return tok, err
 }
 
+// Limits caps what one plugin may send each hour; 0 means it may not send at all.
+type Limits struct {
+	MessagesPerHour    int `json:"messages_per_hour"`
+	TraceroutesPerHour int `json:"traceroutes_per_hour"`
+}
+
+// MaxPerHour bounds the limits: a traceroute every 30 s is the firmware's own ceiling, and a
+// message a minute already means a busy plugin.
+const (
+	MaxMessagesPerHour    = 600
+	MaxTraceroutesPerHour = 120
+)
+
+// SetLimits changes every plugin's send limits at once, live.
+func (m *Manager) SetLimits(l Limits) error {
+	if l.MessagesPerHour < 0 || l.MessagesPerHour > MaxMessagesPerHour {
+		return fmt.Errorf("messages per hour must be between 0 and %d", MaxMessagesPerHour)
+	}
+	if l.TraceroutesPerHour < 0 || l.TraceroutesPerHour > MaxTraceroutesPerHour {
+		return fmt.Errorf("traceroutes per hour must be between 0 and %d", MaxTraceroutesPerHour)
+	}
+	m.mu.Lock()
+	m.opt.Config.MessagesPerHour, m.opt.Config.TraceroutesPerHour = l.MessagesPerHour, l.TraceroutesPerHour
+	for _, p := range m.plugins {
+		p.msgBudget.setPerHour(l.MessagesPerHour)
+		p.trBudget.setPerHour(l.TraceroutesPerHour)
+	}
+	m.mu.Unlock()
+	m.log.Info("plugin send limits changed", "messages_per_hour", l.MessagesPerHour, "traceroutes_per_hour", l.TraceroutesPerHour)
+	return nil
+}
+
 // Listening is the TCP address for attached plugins ("" = attaching is off).
 func (m *Manager) Listening() string {
 	m.mu.Lock()

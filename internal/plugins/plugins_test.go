@@ -365,3 +365,25 @@ func TestChosenIdentities(t *testing.T) {
 		t.Fatalf("chosen = %v", got)
 	}
 }
+
+func TestSetLimitsLive(t *testing.T) {
+	b := newBucket(12)
+	b.setPerHour(0)
+	if ok, _ := b.take(); ok {
+		t.Fatal("a zero limit still allowed a send")
+	}
+	b.setPerHour(120)
+	if b.rate() != 120 {
+		t.Fatalf("rate = %d", b.rate())
+	}
+	m := &Manager{plugins: map[string]*plugin{"x": {msgBudget: newBucket(30), trBudget: newBucket(12)}}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := m.SetLimits(Limits{MessagesPerHour: 60, TraceroutesPerHour: 121}); err == nil {
+		t.Fatal("a limit over the maximum was accepted")
+	}
+	if err := m.SetLimits(Limits{MessagesPerHour: 60, TraceroutesPerHour: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if p := m.plugins["x"]; p.msgBudget.rate() != 60 || p.trBudget.rate() != 60 {
+		t.Fatal("limits didn't reach the plugin")
+	}
+}

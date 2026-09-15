@@ -191,6 +191,7 @@ See [Plugins](plugins.md). A Plugin is `{"id", "name", "version", "description",
 
 - `GET /api/v1/plugins` → `{"enabled", "plugins": [Plugin], "permissions": {key: text}, "attach_address", "allow_url_install", "folder", "messages_per_hour", "traceroutes_per_hour", "identities": [{"node_id", "long_name", "short_name", "radio_id", "radio_name", "is_relay"}]}` (`identities` are the choices for `identities` settings)
 - `POST /api/v1/plugins`: a multipart upload (field `bundle`) or JSON `{"url"}` → 201 Plugin (installed off, or upgraded)
+- `PUT /api/v1/plugins/limits` `{"messages_per_hour": 0-600, "traceroutes_per_hour": 0-120}` → the limits; applies to every plugin at once and saves the config
 - `POST /api/v1/plugins/attach` `{"id", "name", "permissions"}` → `{"plugin", "token", "address"}` (the token is shown once)
 - `GET /api/v1/plugins/{id}` → Plugin; `DELETE /api/v1/plugins/{id}[?keep_data=1]` → 204
 - `POST /api/v1/plugins/{id}/enable` `{"permissions": [...]}`, `POST …/disable`, `POST …/restart` → Plugin

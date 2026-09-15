@@ -398,7 +398,7 @@ func (h *hostServer) SendText(ctx context.Context, req *pluginv1.SendTextRequest
 		}
 	}
 	if ok, wait := p.msgBudget.take(); !ok {
-		return nil, budgetError("messages", h.m.opt.Config.MessagesPerHour, wait)
+		return nil, budgetError("messages", p.msgBudget.rate(), wait)
 	}
 	relay := r.Host.Relay()
 	pid, err := r.Host.SendText(relay, to, int(req.Channel), req.Text, req.WantAck)
@@ -447,7 +447,7 @@ func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteReq
 		from = r.Host.Identity(num)
 	}
 	if ok, wait := p.trBudget.take(); !ok {
-		return nil, budgetError("traceroutes", h.m.opt.Config.TraceroutesPerHour, wait)
+		return nil, budgetError("traceroutes", p.trBudget.rate(), wait)
 	}
 	if err := r.Host.Traceroute(from, target); err != nil {
 		return nil, status.Error(codes.ResourceExhausted, err.Error())

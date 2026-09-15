@@ -51,6 +51,7 @@ func (s *Server) pluginRoutes(priv func(string, http.HandlerFunc)) {
 	priv("GET /api/v1/plugins", s.listPlugins)
 	priv("POST /api/v1/plugins", s.installPlugin)
 	priv("POST /api/v1/plugins/attach", s.attachPlugin)
+	priv("PUT /api/v1/plugins/limits", s.putPluginLimits)
 	priv("GET /api/v1/plugins/{id}", s.getPlugin)
 	priv("DELETE /api/v1/plugins/{id}", s.removePlugin)
 	priv("POST /api/v1/plugins/{id}/enable", s.enablePlugin)
@@ -126,6 +127,34 @@ func (s *Server) listPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "plugins": list, "permissions": perms, "identities": identities,
 		"attach_address": m.Listening(), "allow_url_install": pc.AllowURLInstall, "folder": m.InboxDir(),
 		"messages_per_hour": pc.MessagesPerHour, "traceroutes_per_hour": pc.TraceroutesPerHour})
+}
+
+// putPluginLimits is PUT /plugins/limits {"messages_per_hour", "traceroutes_per_hour"}: every
+// plugin's send limits, applied at once and saved to the config file.
+func (s *Server) putPluginLimits(w http.ResponseWriter, r *http.Request) {
+	m := s.pluginManager(w)
+	if m == nil {
+		return
+	}
+	var req plugins.Limits
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := m.SetLimits(req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.cfgMu.Lock()
+	s.cfg.Plugins.MessagesPerHour, s.cfg.Plugins.TraceroutesPerHour = req.MessagesPerHour, req.TraceroutesPerHour
+	if s.booted != nil { // applied live: not a reason to restart
+		s.booted.Plugins.MessagesPerHour, s.booted.Plugins.TraceroutesPerHour = req.MessagesPerHour, req.TraceroutesPerHour
+	}
+	s.cfgMu.Unlock()
+	if err := s.saveIfPath(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, req)
 }
 
 func (s *Server) getPlugin(w http.ResponseWriter, r *http.Request) {

@@ -231,7 +231,8 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
               </ul>
               <button v-if="plugin.enabled && !plugin.pinned" class="btn btn-sm mt-3" @click="enabling = plugin">Change permissions</button>
               <p v-if="granted.some((p) => transmits(p.key))" class="hint mt-3">
-                Sends are capped at {{ meta?.messages_per_hour }} messages and {{ meta?.traceroutes_per_hour }} traceroutes an hour.
+                Sends are capped at {{ meta?.messages_per_hour }} messages and {{ meta?.traceroutes_per_hour }} traceroutes an hour
+                (<RouterLink :to="{ name: 'plugins' }" class="underline underline-offset-2">Plugins → Send limits</RouterLink>).
               </p>
               <template v-if="plugin.network?.length">
                 <div class="eyebrow mb-2 mt-6">Talks to</div>

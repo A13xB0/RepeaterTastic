@@ -217,6 +217,20 @@ func newBucket(perHour int) *bucket {
 
 func burst(perHour int) int { return max(1, perHour/6) }
 
+// setPerHour changes the budget, keeping what's been spent.
+func (b *bucket) setPerHour(perHour int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.perHour = perHour
+	b.tokens = min(b.tokens, float64(burst(perHour)))
+}
+
+func (b *bucket) rate() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.perHour
+}
+
 // take spends one send, or says how long until one is available.
 func (b *bucket) take() (bool, time.Duration) {
 	b.mu.Lock()
