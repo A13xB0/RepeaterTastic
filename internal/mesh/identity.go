@@ -300,6 +300,7 @@ func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
 	id.HopLimit = r.HopLimit
 	id.OwnPosition, id.PositionSecs = r.Position, r.PositionSecs
 	id.multiRadio = r.MultiRadio.clone()
+	defer id.convertLegacy() // after the channels below are loaded
 	if v, ok := pb.Config_DeviceConfig_Role_value[r.Role]; ok {
 		id.User.Role = pb.Config_DeviceConfig_Role(v)
 	}
@@ -356,8 +357,7 @@ func (h *Host) SetChannel(id *Identity, ch *pb.Channel) error {
 	id.Channels[nc.Index] = nc
 	// Routing across radios is kept per slot: a different channel in the slot starts from the defaults.
 	if mr := id.multiRadio; mr != nil && nc.Index > 0 && !sameChannel(old, nc) {
-		delete(mr.Listen, int(nc.Index))
-		delete(mr.Send, int(nc.Index))
+		delete(mr.Channels, int(nc.Index)) // back on the default radio
 	}
 	id.mu.Unlock()
 	if h.fed != nil {
@@ -453,32 +453,4 @@ func sameChannel(a, b *pb.Channel) bool {
 	}
 	return a.Role == b.Role && a.GetSettings().GetName() == b.GetSettings().GetName() &&
 		string(a.GetSettings().GetPsk()) == string(b.GetSettings().GetPsk())
-}
-
-// SetChannelRoute sets which radios a channel slot listens on and the radio it sends on (nil
-// leaves that part unchanged). The identity must already have multi-radio routing.
-func (id *Identity) SetChannelRoute(index int, listen []string, send *string) {
-	id.mu.Lock()
-	defer id.mu.Unlock()
-	mr := id.multiRadio
-	if mr == nil {
-		mr = &MultiRadio{}
-		id.multiRadio = mr
-	}
-	if listen != nil {
-		if mr.Listen == nil {
-			mr.Listen = map[int][]string{}
-		}
-		mr.Listen[index] = append([]string(nil), listen...)
-	}
-	if send != nil {
-		if mr.Send == nil {
-			mr.Send = map[int]string{}
-		}
-		if *send == "" {
-			delete(mr.Send, index)
-		} else {
-			mr.Send[index] = *send
-		}
-	}
 }

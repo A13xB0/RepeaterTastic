@@ -16,17 +16,18 @@ import (
 
 // Experimental: identities on several radios.
 //
-// A Federation joins a site's hosts. An identity lives on its home host (key, app port, chats)
-// and can be attached to other radios. Those radios treat it as a guest: they decode the channels
-// it listens to there and DMs addressed to it, deliver into the home host's message store, and
-// transmit for it. Routing is chosen per identity in the web GUI (MultiRadio); the Meshtastic app
-// never changes it. With the federation disabled, guests vanish and every radio behaves as before.
+// A Federation joins a site's hosts. An identity lives on its home host (key, app port, chats).
+// Each of its channel slots is on exactly one radio, and it has a default radio: slot 0 is that
+// radio's primary channel and new slots start on it. Other radios an identity's slots use treat it
+// as a guest: they decode those slots and DMs addressed to it, deliver into the home host's message
+// store, and transmit for it. Routing is set in the web GUI; the Meshtastic app never changes it.
+// With the federation disabled, guests vanish and every radio behaves as before.
 
-// Routing values.
+// DM routing values (MultiRadio.DM). Anything else names a radio.
 const (
-	SendAll = "all"  // MultiRadio.Send: every attached radio
-	DMAuto  = "auto" // MultiRadio.DM: the radio where the destination was last heard best
-	DMHome  = "home" // MultiRadio.DM: always the home radio
+	DMAuto    = "auto"    // the radio where the destination was last heard best, else the default radio
+	DMDefault = "default" // always the default radio
+	dmHome    = "home"    // phase 3 name for the default radio
 )
 
 const (
@@ -36,23 +37,32 @@ const (
 	guestFirstAnnDly = 90 * time.Second
 )
 
-// MultiRadio is an identity's routing across radios. Radios lists the extra radios (the home
-// radio is implied). Listen and Send are keyed by channel index; missing entries use defaults:
-// the primary channel listens on every attached radio, other channels on the home radio only,
-// and every channel sends on the home radio.
+// MultiRadio is an identity's routing across radios.
 type MultiRadio struct {
-	Radios   []string         `json:"radios"`
-	Listen   map[int][]string `json:"listen,omitempty"`
-	Send     map[int]string   `json:"send,omitempty"`
-	DM       string           `json:"dm,omitempty"`
-	Fallback bool             `json:"fallback,omitempty"`
+	// DefaultRadio is where slot 0 lives, new slots start, and DMs fall back ("" = home).
+	DefaultRadio string `json:"default_radio,omitempty"`
+	// Channels maps slot index (1-7) to the one radio that slot is on; missing = the default radio.
+	Channels map[int]string `json:"channels,omitempty"`
+	DM       string         `json:"dm,omitempty"`
+	Fallback bool           `json:"fallback,omitempty"`
+
+	// Phase 3 routing, converted by convertLegacy and never written back.
+	Radios []string         `json:"radios,omitempty"`
+	Listen map[int][]string `json:"listen,omitempty"`
+	Send   map[int]string   `json:"send,omitempty"`
 }
 
 func (m *MultiRadio) clone() *MultiRadio {
 	if m == nil {
 		return nil
 	}
-	c := &MultiRadio{Radios: slices.Clone(m.Radios), DM: m.DM, Fallback: m.Fallback}
+	c := &MultiRadio{DefaultRadio: m.DefaultRadio, DM: m.DM, Fallback: m.Fallback, Radios: slices.Clone(m.Radios)}
+	if m.Channels != nil {
+		c.Channels = map[int]string{}
+		for k, v := range m.Channels {
+			c.Channels[k] = v
+		}
+	}
 	if m.Listen != nil {
 		c.Listen = map[int][]string{}
 		for k, v := range m.Listen {
@@ -68,28 +78,79 @@ func (m *MultiRadio) clone() *MultiRadio {
 	return c
 }
 
-// Attached reports whether the identity is on radio (home is always attached).
-func (m *MultiRadio) Attached(radio, home string) bool {
-	return radio == home || slices.Contains(m.Radios, radio)
-}
-
-// Listens reports whether channel index is received on radio.
-func (m *MultiRadio) Listens(index int, radio, home string) bool {
-	if !m.Attached(radio, home) {
-		return false
-	}
-	if l, ok := m.Listen[index]; ok {
-		return slices.Contains(l, radio)
-	}
-	return index == 0 || radio == home
-}
-
-// SendRadio is the radio (or SendAll) a channel's messages go out on.
-func (m *MultiRadio) SendRadio(index int, home string) string {
-	if s := m.Send[index]; s != "" {
-		return s
+// Default is the default radio's id.
+func (m *MultiRadio) Default(home string) string {
+	if m.DefaultRadio != "" {
+		return m.DefaultRadio
 	}
 	return home
+}
+
+// SlotRadio is the radio a slot is configured on (slot 0 follows the default radio).
+func (m *MultiRadio) SlotRadio(index int, home string) string {
+	if index > 0 {
+		if r := m.Channels[index]; r != "" {
+			return r
+		}
+	}
+	return m.Default(home)
+}
+
+// convertLegacy turns phase 3 listen/send routing into one radio per slot: a slot keeps the radio it
+// sent on (or the first it listened on), and each further listening radio gets a copy of the
+// channel in a free slot when there is one. It reports how many listening radios had no room.
+func (id *Identity) convertLegacy() int {
+	mr := id.multiRadio
+	if mr == nil || (mr.Radios == nil && mr.Listen == nil && mr.Send == nil) {
+		return 0
+	}
+	if mr.Channels == nil {
+		mr.Channels = map[int]string{}
+	}
+	lost := 0
+	for idx := 1; idx < MaxChannels; idx++ {
+		ch := id.Channels[idx]
+		if ch == nil || ch.Role == pb.Channel_DISABLED {
+			continue
+		}
+		send := mr.Send[idx]
+		listen := mr.Listen[idx]
+		chosen := ""
+		switch {
+		case send != "" && send != "all":
+			chosen = send
+		case len(listen) > 0:
+			chosen = listen[0]
+		}
+		if chosen != "" {
+			mr.Channels[idx] = chosen
+		}
+		for _, r := range listen {
+			if r == chosen || chosen == "" {
+				continue
+			}
+			free := -1
+			for k := 1; k < MaxChannels; k++ {
+				if c := id.Channels[k]; c == nil || c.Role == pb.Channel_DISABLED {
+					free = k
+					break
+				}
+			}
+			if free < 0 {
+				lost++
+				continue
+			}
+			cp := proto.Clone(ch).(*pb.Channel)
+			cp.Index = int32(free)
+			id.Channels[free] = cp
+			mr.Channels[free] = r
+		}
+	}
+	if mr.DM == dmHome {
+		mr.DM = DMDefault
+	}
+	mr.Radios, mr.Listen, mr.Send = nil, nil, nil
+	return lost
 }
 
 // MultiRadio returns a copy of the identity's multi-radio routing, or nil.
@@ -99,12 +160,30 @@ func (id *Identity) MultiRadio() *MultiRadio {
 	return id.multiRadio.clone()
 }
 
-// SetMultiRadio replaces the identity's routing (nil detaches it from extra radios). Call
+// SetMultiRadio replaces the identity's routing (nil = everything on the home radio). Call
 // Federation.Changed afterwards so every radio rebuilds its channel tables.
 func (id *Identity) SetMultiRadio(m *MultiRadio) {
 	id.mu.Lock()
 	id.multiRadio = m.clone()
 	id.mu.Unlock()
+}
+
+// SetSlotRadio puts a slot on a radio ("" = the default radio).
+func (id *Identity) SetSlotRadio(index int, radio string) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if id.multiRadio == nil {
+		id.multiRadio = &MultiRadio{}
+	}
+	mr := id.multiRadio
+	if radio == "" {
+		delete(mr.Channels, index)
+		return
+	}
+	if mr.Channels == nil {
+		mr.Channels = map[int]string{}
+	}
+	mr.Channels[index] = radio
 }
 
 type fedKey struct{ identity, from, id uint32 }
@@ -183,7 +262,7 @@ func (h *Host) multiRadioOf(id *Identity) *MultiRadio {
 	return id.MultiRadio()
 }
 
-// guests are identities from other radios attached to this one.
+// guests are identities from other radios that have their default radio or a slot on this one.
 func (h *Host) guests() []*Identity {
 	if !h.fedOn() {
 		return nil
@@ -194,12 +273,91 @@ func (h *Host) guests() []*Identity {
 			continue
 		}
 		for _, id := range o.Identities() {
-			if mr := h.multiRadioOf(id); mr != nil && mr.Attached(h.RadioID(), o.RadioID()) {
-				out = append(out, id)
+			if h.multiRadioOf(id) == nil {
+				continue
+			}
+			for _, r := range o.radiosOf(id) {
+				if r == h {
+					out = append(out, id)
+					break
+				}
 			}
 		}
 	}
 	return out
+}
+
+// hostOr is the host for a radio id, or fallback when that radio isn't on the site.
+func (h *Host) hostOr(radio string, fallback *Host) *Host {
+	if o := h.fed.Host(radio); o != nil {
+		return o
+	}
+	return fallback
+}
+
+// defaultHost is an identity's default radio (home if unset or gone).
+func (h *Host) defaultHost(id *Identity, mr *MultiRadio) *Host {
+	home := h.homeHost(id)
+	return h.hostOr(mr.Default(home.RadioID()), home)
+}
+
+// slotHost is the radio a slot actually runs on: its radio, else the default radio, else home.
+func (h *Host) slotHost(id *Identity, mr *MultiRadio, index int) *Host {
+	def := h.defaultHost(id, mr)
+	if index == 0 {
+		return def
+	}
+	return h.hostOr(mr.SlotRadio(index, def.RadioID()), def)
+}
+
+// radiosOf lists the radios an identity is on: home, default, then each radio an enabled slot uses.
+func (h *Host) radiosOf(id *Identity) []*Host {
+	home := h.homeHost(id)
+	mr := h.multiRadioOf(id)
+	if mr == nil {
+		return []*Host{home}
+	}
+	out := []*Host{home}
+	add := func(o *Host) {
+		if !slices.Contains(out, o) {
+			out = append(out, o)
+		}
+	}
+	add(h.defaultHost(id, mr))
+	for idx := 1; idx < MaxChannels; idx++ {
+		if ch := id.ChannelCopy(idx); ch != nil && ch.Role != pb.Channel_DISABLED {
+			add(h.slotHost(id, mr, idx))
+		}
+	}
+	return out
+}
+
+// RadiosOf is radiosOf as radio ids, for the API.
+func (h *Host) RadiosOf(id *Identity) []string {
+	var out []string
+	for _, o := range h.radiosOf(id) {
+		out = append(out, o.RadioID())
+	}
+	return out
+}
+
+// SlotRadio is the radio id a slot actually runs on ("" when the identity has no routing or the
+// federation is off, meaning its home radio).
+func (h *Host) SlotRadio(id *Identity, index int) string {
+	mr := h.multiRadioOf(id)
+	if mr == nil {
+		return ""
+	}
+	return h.slotHost(id, mr, index).RadioID()
+}
+
+// slotOnThisRadio reports whether a slot of a (local or guest) identity is decoded on this host.
+func (h *Host) slotOnThisRadio(id *Identity, index int) bool {
+	mr := h.multiRadioOf(id)
+	if mr == nil {
+		return h.Identity(id.NodeNum) == id
+	}
+	return h.slotHost(id, mr, index) == h
 }
 
 // identityAny finds one of this radio's identities or a guest.
@@ -269,18 +427,6 @@ func (h *Host) firstDelivery(id *Identity, p *pb.MeshPacket) bool {
 	return true
 }
 
-// attachedHosts lists the hosts a multi-radio identity is on, home first.
-func (h *Host) attachedHosts(id *Identity, mr *MultiRadio) []*Host {
-	home := h.homeHost(id)
-	out := []*Host{home}
-	for _, r := range mr.Radios {
-		if o := h.fed.Host(r); o != nil && o != home {
-			out = append(out, o)
-		}
-	}
-	return out
-}
-
 // Sighting is what one radio knows about a node.
 type Sighting struct {
 	Radio     string
@@ -328,47 +474,36 @@ func bestSighting(hosts []*Host, dest uint32, now time.Time) (*Host, *NodeEntry)
 	return cs[0].h, &cs[0].e
 }
 
-// sendHosts decides which radios a packet an identity originates goes out on (nil = this host
-// only) and why.
+// sendHosts decides which radio a packet an identity originates goes out on (nil = this host)
+// and why.
 func (h *Host) sendHosts(from *Identity, to uint32, channel int) ([]*Host, string) {
 	mr := h.multiRadioOf(from)
 	if mr == nil {
 		return nil, ""
 	}
-	home := h.homeHost(from)
-	attached := h.attachedHosts(from, mr)
-	byID := func(radio string) *Host {
-		for _, o := range attached {
-			if o.RadioID() == radio {
-				return o
-			}
-		}
-		return nil
-	}
+	def := h.defaultHost(from, mr)
 	if to == wire.Broadcast || to == wire.BroadcastNoLoRa {
-		switch s := mr.SendRadio(channel, home.RadioID()); {
-		case s == SendAll:
-			return attached, "channel sends on every attached radio"
-		case byID(s) != nil:
-			return []*Host{byID(s)}, "channel routed to " + s
+		if channel < 0 || channel >= MaxChannels {
+			channel = 0
 		}
-		return []*Host{home}, "channel routed to the home radio"
+		o := h.slotHost(from, mr, channel)
+		return []*Host{o}, "channel is on " + o.RadioID()
 	}
 	switch mr.DM {
-	case DMHome:
-		return []*Host{home}, "DMs always use the home radio"
+	case DMDefault, dmHome:
+		return []*Host{def}, "DMs always use the default radio"
 	case "", DMAuto:
 		now := time.Now()
-		if best, e := bestSighting(attached, to, now); best != nil {
+		if best, e := bestSighting(h.radiosOf(from), to, now); best != nil {
 			return []*Host{best}, fmt.Sprintf("heard %s ago on %s, %s, SNR %.1f", roundAgo(now.Sub(e.LastHeard)),
 				best.RadioID(), hopsText(e.HopsAway), e.SNR)
 		}
-		return []*Host{home}, "not heard on any attached radio in the last 24 h: home radio"
+		return []*Host{def}, "not heard on any of its radios in the last 24 h: default radio"
 	default:
-		if o := byID(mr.DM); o != nil {
+		if o := h.fed.Host(mr.DM); o != nil {
 			return []*Host{o}, "DMs always use " + mr.DM
 		}
-		return []*Host{home}, "DM radio " + mr.DM + " isn't attached: home radio"
+		return []*Host{def}, "DM radio " + mr.DM + " isn't on the site: default radio"
 	}
 }
 
@@ -409,7 +544,7 @@ func (h *Host) NodesFor(id *Identity) []NodeEntry {
 		return h.DB.Snapshot()
 	}
 	best := map[uint32]NodeEntry{}
-	for _, o := range h.attachedHosts(id, mr) {
+	for _, o := range h.radiosOf(id) {
 		for _, e := range o.DB.Snapshot() {
 			if cur, ok := best[e.Num]; !ok || e.LastHeard.After(cur.LastHeard) {
 				best[e.Num] = e
@@ -448,7 +583,7 @@ func (h *Host) tryFallback(pd *pendingTx, k pktKey) bool {
 	}
 	now := time.Now()
 	var alts []*Host
-	for _, o := range h.attachedHosts(from, mr) {
+	for _, o := range h.radiosOf(from) {
 		if o == h || !o.radioOK.Load() {
 			continue
 		}

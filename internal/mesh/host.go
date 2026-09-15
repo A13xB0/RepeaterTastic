@@ -435,13 +435,9 @@ func (h *Host) channelGroups(hash uint8) []*chanGroup {
 		h.chanCache = map[uint8][]*chanGroup{}
 		display := h.presetDisplay()
 		for _, id := range append(h.Identities(), h.guests()...) {
-			mr, home := h.multiRadioOf(id), ""
-			if mr != nil {
-				home = h.homeHost(id).RadioID()
-			}
 			for _, rc := range id.resolvedChannels(display) {
-				if mr != nil && !mr.Listens(rc.index, h.RadioID(), home) {
-					continue
+				if !h.slotOnThisRadio(id, rc.index) {
+					continue // that slot is on another radio
 				}
 				var g *chanGroup
 				for _, x := range h.chanCache[rc.hash] {

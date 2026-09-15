@@ -368,79 +368,82 @@ func TestMultiRadioIdentityAPI(t *testing.T) {
 
 	_, desk, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk", "api_port": 4470})
 	path := "/api/v1/identities/" + desk["node_id"].(string)
-	for name, bad := range map[string]map[string]any{
-		"unknown radio":          {"radios": []string{"nope"}},
-		"listen off-radio":       {"radios": []string{}, "listen": map[string][]string{"0": {"mf"}}},
-		"send off-radio":         {"radios": []string{}, "send": map[string]string{"1": "mf"}},
-		"dm to unattached radio": {"radios": []string{}, "dm": "mf"},
+
+	// a slot's radio needs the switch on
+	if code, _, _ := call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Scotland", "psk": "AQ==", "role": "SECONDARY", "radio": "mf"}); code != 400 {
+		t.Fatalf("slot radio with the switch off: %d", code)
+	}
+	call(t, srv, "PUT", "/api/v1/experimental", tok, map[string]any{"multi_radio_identities": true})
+
+	for name, body := range map[string]map[string]any{
+		"slot 0":        {"name": "", "psk": "AQ==", "role": "PRIMARY", "radio": "mf"},
+		"unknown radio": {"name": "Scotland", "psk": "AQ==", "role": "SECONDARY", "radio": "nope"},
 	} {
-		if code, _, _ := call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": bad}); code != 400 {
+		idx := "1"
+		if name == "slot 0" {
+			idx = "0"
+		}
+		if code, _, _ := call(t, srv, "PUT", path+"/channels/"+idx, tok, body); code != 400 {
 			t.Errorf("%s accepted: %d", name, code)
 		}
 	}
-	code, res, _ := call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{
-		"radios": []string{"mf", "main"}, "send": map[string]string{"0": "all"}, "dm": "auto", "fallback": true}})
+
+	// Scotland on LongFast (slot 1, default radio) and on MediumFast (slot 2)
+	call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Scotland", "psk": "AQ==", "role": "SECONDARY"})
+	code, res, _ := call(t, srv, "PUT", path+"/channels/2", tok, map[string]any{"name": "Scotland", "psk": "AQ==", "role": "SECONDARY", "radio": "mf"})
 	if code != 200 {
-		t.Fatalf("patch multi_radio %d %v", code, res)
+		t.Fatalf("slot 2 on mf %d %v", code, res)
 	}
-	mr := res["multi_radio"].(map[string]any)
-	if radios := mr["radios"].([]any); len(radios) != 1 || radios[0] != "mf" || mr["fallback"] != true {
-		t.Fatalf("multi_radio = %v (home should be dropped from radios)", mr)
+	chans := res["channels"].([]any)
+	if c := chans[1].(map[string]any); c["radio"] != "main" {
+		t.Fatalf("slot 1 = %v, want the default (main) radio", c)
 	}
-	if r := res["radios"].([]any); len(r) != 1 {
-		t.Fatalf("with the switch off the identity should be on its home radio only: %v", r)
+	if c := chans[2].(map[string]any); c["radio"] != "mf" || c["radio_name"] != "MediumFast" {
+		t.Fatalf("slot 2 = %v", c)
 	}
-	call(t, srv, "PUT", "/api/v1/experimental", tok, map[string]any{"multi_radio_identities": true})
-	_, res, _ = call(t, srv, "GET", path+"/route?channel=0", tok, nil)
-	if radios := res["radios"].([]any); len(radios) != 2 || res["enabled"] != true {
-		t.Fatalf("channel 0 sends on all: %v", res)
+	if r := res["radios"].([]any); len(r) != 2 || r[1] != "mf" {
+		t.Fatalf("radios = %v", r)
 	}
-	_, list, _ := call(t, srv, "GET", "/api/v1/identities?radio=all", tok, nil)
-	for _, x := range list {
-		if m := x.(map[string]any); m["node_id"] == desk["node_id"] && len(m["radios"].([]any)) != 2 {
-			t.Fatalf("radios with the switch on = %v", m["radios"])
-		}
+
+	// default radio: slot 0 becomes MediumFast's primary, other slots stay
+	code, res, _ = call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{"default_radio": "mf", "dm": "auto", "fallback": true}})
+	if code != 200 {
+		t.Fatalf("default radio %d %v", code, res)
+	}
+	chans = res["channels"].([]any)
+	if c := chans[0].(map[string]any); c["radio"] != "mf" || c["display_name"] != "MediumFast" {
+		t.Fatalf("slot 0 after default mf = %v", c)
+	}
+	if c := chans[2].(map[string]any); c["radio"] != "mf" {
+		t.Fatalf("slot 2 moved: %v", c)
+	}
+	if mr := res["multi_radio"].(map[string]any); mr["fallback"] != true || mr["channels"].(map[string]any)["2"] != "mf" {
+		t.Fatalf("multi_radio = %v", mr)
+	}
+	if code, _, _ := call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{"dm": "somewhere"}}); code != 400 {
+		t.Fatalf("bad dm accepted: %d", code)
+	}
+
+	// a different channel in slot 2 goes back to the default radio (mf here); default back to main
+	call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{"default_radio": ""}})
+	call(t, srv, "PUT", path+"/channels/2", tok, map[string]any{"name": "", "psk": "", "role": "DISABLED"})
+	_, res, _ = call(t, srv, "PUT", path+"/channels/2", tok, map[string]any{"name": "Other", "psk": "AQ==", "role": "SECONDARY"})
+	if c := res["channels"].([]any)[2].(map[string]any); c["radio"] != "main" {
+		t.Fatalf("new channel in slot 2 kept the old slot's radio: %v", c)
+	}
+
+	_, res, _ = call(t, srv, "GET", path+"/route?channel=1", tok, nil)
+	if radios := res["radios"].([]any); len(radios) != 1 || radios[0] != "main" {
+		t.Fatalf("route for slot 1 = %v", res)
 	}
 	if code, _, sightings := call(t, srv, "GET", "/api/v1/nodes/"+desk["node_id"].(string)+"/sightings", tok, nil); code != 200 || sightings == nil {
 		t.Fatalf("sightings %d %v", code, sightings)
 	}
-	if code, res, _ := call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": nil}); code != 200 || res["multi_radio"] != nil {
-		t.Fatalf("clearing multi_radio: %d %v", code, res["multi_radio"])
-	}
-}
 
-func TestChannelsOnSeveralRadios(t *testing.T) {
-	srv := testWebTwoRadios(t)
-	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
-	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
-	tok := obj["token"].(string)
-	call(t, srv, "PUT", "/api/v1/experimental", tok, map[string]any{"multi_radio_identities": true})
-	_, desk, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk", "api_port": 4480})
-	path := "/api/v1/identities/" + desk["node_id"].(string)
-
-	// routing on a slot needs the identity on several radios
-	if code, _, _ := call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Ops", "psk": "AQ==", "role": "SECONDARY", "send": "mf"}); code != 400 {
-		t.Fatalf("slot routing on a single-radio identity: %d", code)
-	}
-	call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{"radios": []string{"mf"}}})
-	code, res, _ := call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Ops", "psk": "AQ==", "role": "SECONDARY",
-		"listen": []string{"main", "mf"}, "send": "mf"})
-	if code != 200 {
-		t.Fatalf("add routed channel %d %v", code, res)
-	}
-	chans := res["channels"].([]any)
-	primary, ops := chans[0].(map[string]any), chans[1].(map[string]any)
-	if names := primary["display_names"].(map[string]any); names["main"] != "LongFast" || names["mf"] != "MediumFast" {
-		t.Fatalf("primary display names = %v", primary["display_names"])
-	}
-	if ops["send"] != "mf" || len(ops["listen"].([]any)) != 2 {
-		t.Fatalf("ops routing = listen %v send %v", ops["listen"], ops["send"])
-	}
-	// a different channel in the slot starts from the defaults (home only)
-	call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "", "psk": "", "role": "DISABLED"})
-	_, res, _ = call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Other", "psk": "AQ==", "role": "SECONDARY"})
-	other := res["channels"].([]any)[1].(map[string]any)
-	if other["send"] != "main" || len(other["listen"].([]any)) != 1 {
-		t.Fatalf("new channel inherited the old slot's routing: listen %v send %v", other["listen"], other["send"])
+	// moving the identity carries slots on its old home to the new one
+	call(t, srv, "PUT", path+"/channels/3", tok, map[string]any{"name": "Pinned", "psk": "AQ==", "role": "SECONDARY", "radio": "main"})
+	_, res, _ = call(t, srv, "POST", path+"/move", tok, map[string]any{"radio_id": "mf"})
+	if c := res["channels"].([]any)[3].(map[string]any); c["radio"] != "mf" {
+		t.Fatalf("slot pinned to the old home after the move = %v", c)
 	}
 }

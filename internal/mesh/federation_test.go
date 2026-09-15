@@ -81,29 +81,41 @@ func TestMultiRadioIdentity(t *testing.T) {
 
 	fed := NewFederation(lf.Host, mf.Host)
 	fed.SetEnabled(true)
-	alex.SetMultiRadio(&MultiRadio{Radios: []string{"mf"}})
-	fed.Changed()
+	onMediumFast(t, lf.Host, alex, 1)
 	time.Sleep(100 * time.Millisecond)
+	if got := lf.RadiosOf(alex); len(got) != 2 || got[1] != "mf" {
+		t.Fatalf("radios of Alex = %v", got)
+	}
 
-	// MediumFast broadcast reaches Alex through the MediumFast radio, once, recorded in lf's store
+	// MediumFast broadcast reaches Alex through its MediumFast slot, once, recorded in lf's store
 	if _, err := remote.SendText(rory, wire.Broadcast, 0, "hello mediumfast", false); err != nil {
 		t.Fatal(err)
 	}
 	alexSink.waitPacket(t, 5*time.Second, func(p *pb.MeshPacket) bool { return text(p) == "hello mediumfast" })
-	msgs := lf.Messages.List(alex.NodeNum, alex.NodeID(), "ch:0", 0, 10)
+	msgs := lf.Messages.List(alex.NodeNum, alex.NodeID(), "ch:1", 0, 10)
 	if len(msgs) != 1 || msgs[0].Radio != "mf" {
 		t.Fatalf("lf store = %+v", msgs)
 	}
-	if n := len(mf.Messages.List(alex.NodeNum, alex.NodeID(), "ch:0", 0, 10)); n != 0 {
+	if n := len(lf.Messages.List(alex.NodeNum, alex.NodeID(), "ch:0", 0, 10)); n != 0 {
+		t.Fatalf("MediumFast traffic landed on Alex's LongFast primary (%d)", n)
+	}
+	if n := len(mf.Messages.List(alex.NodeNum, alex.NodeID(), "ch:1", 0, 10)); n != 0 {
 		t.Fatalf("message landed in the guest radio's store too (%d)", n)
 	}
 
 	// Rory is only heard on mf: a DM goes out there and is ACKed
 	remote.RequestNodeInfo(rory, alex.NodeNum)
 	deadline := time.Now().Add(8 * time.Second)
+	lastAsk := time.Now()
 	for mf.peerKey(rory.NodeNum) == nil || remote.peerKey(alex.NodeNum) == nil {
+		if time.Since(lastAsk) > 2*time.Second { // a single request can be lost on the simulated air
+			remote.broadcastNodeInfo(rory)
+			mf.broadcastNodeInfo(alex)
+			lastAsk = time.Now()
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("keys not exchanged over the MediumFast radio")
+			t.Fatalf("keys not exchanged over the MediumFast radio: mf has rory=%v, remote has alex=%v, mf tx=%d rx=%d undecryptable=%d, lf tx=%d",
+				mf.peerKey(rory.NodeNum) != nil, remote.peerKey(alex.NodeNum) != nil, mf.Counters.Tx.Load(), mf.Counters.Rx.Load(), mf.Counters.RxUndecryptable.Load(), lf.Counters.Tx.Load())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -159,14 +171,46 @@ func waitText(s *sink, want string) <-chan *pb.MeshPacket {
 	return out
 }
 
+// onMediumFast puts the MediumFast primary (by name, default key) in one of an identity's slots on
+// the "mf" radio.
+func onMediumFast(t *testing.T, home *Host, id *Identity, slot int) {
+	t.Helper()
+	if err := home.SetChannel(id, &pb.Channel{Index: int32(slot), Role: pb.Channel_SECONDARY,
+		Settings: &pb.ChannelSettings{Name: "MediumFast", Psk: []byte{1}}}); err != nil {
+		t.Fatal(err)
+	}
+	id.SetSlotRadio(slot, "mf")
+	home.fed.Changed()
+}
+
 func TestMultiRadioDefaultsAndSighting(t *testing.T) {
-	mr := &MultiRadio{Radios: []string{"mf"}, Send: map[int]string{1: SendAll}}
-	if !mr.Listens(0, "mf", "lf") || mr.Listens(1, "mf", "lf") || !mr.Listens(1, "lf", "lf") || mr.Listens(0, "ls", "lf") {
-		t.Fatal("listen defaults: primary everywhere attached, others on the home radio")
+	mr := &MultiRadio{Channels: map[int]string{2: "mf"}}
+	if mr.SlotRadio(0, "lf") != "lf" || mr.SlotRadio(1, "lf") != "lf" || mr.SlotRadio(2, "lf") != "mf" {
+		t.Fatal("slot radios: default for unset slots, slot 0 always the default")
 	}
-	if mr.SendRadio(0, "lf") != "lf" || mr.SendRadio(1, "lf") != SendAll {
-		t.Fatal("send defaults")
+	mr.DefaultRadio = "ls"
+	if mr.SlotRadio(0, "lf") != "ls" || mr.SlotRadio(1, "lf") != "ls" || mr.SlotRadio(2, "lf") != "mf" {
+		t.Fatal("slot 0 and unset slots follow the default radio")
 	}
+
+	// phase 3 listen/send becomes one radio per slot, with extra listening radios as copied slots
+	id, _ := NewIdentity(nil, "legacy", "")
+	id.Channels[1] = &pb.Channel{Index: 1, Role: pb.Channel_SECONDARY, Settings: &pb.ChannelSettings{Name: "Scotland", Psk: []byte{1}}}
+	id.multiRadio = &MultiRadio{Radios: []string{"mf"}, Listen: map[int][]string{1: {"lf", "mf"}}, Send: map[int]string{1: "lf"}, DM: "home"}
+	if lost := id.convertLegacy(); lost != 0 {
+		t.Fatalf("lost %d", lost)
+	}
+	m := id.multiRadio
+	copySlot := -1
+	for k := 2; k < MaxChannels; k++ {
+		if c := id.Channels[k]; c != nil && c.GetSettings().GetName() == "Scotland" {
+			copySlot = k
+		}
+	}
+	if m.Channels[1] != "lf" || copySlot < 0 || m.Channels[copySlot] != "mf" || m.DM != DMDefault || m.Listen != nil {
+		t.Fatalf("converted = %+v, copy in slot %d", m, copySlot)
+	}
+
 	now := time.Now()
 	a, _ := NewHost(Config{Region: "EU_868", Preset: pb.Config_LoRaConfig_LONG_FAST, RadioID: "a"}, sim.NewHub(1).Attach("a", 4), nil)
 	b, _ := NewHost(Config{Region: "EU_868", Preset: pb.Config_LoRaConfig_MEDIUM_FAST, RadioID: "b"}, sim.NewHub(1).Attach("b", 4), nil)
@@ -195,7 +239,10 @@ func TestMultiRadioFallback(t *testing.T) {
 	zed.AddSink(zedSink)
 	fed := NewFederation(lf.Host, mf.Host)
 	fed.SetEnabled(true)
-	alex.SetMultiRadio(&MultiRadio{Radios: []string{"mf"}, DM: DMHome, Fallback: true})
+	onMediumFast(t, lf.Host, alex, 1)
+	mr := alex.MultiRadio()
+	mr.DM, mr.Fallback = DMDefault, true
+	alex.SetMultiRadio(mr)
 	fed.Changed()
 	time.Sleep(100 * time.Millisecond)
 
@@ -209,7 +256,7 @@ func TestMultiRadioFallback(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if radios, _ := lf.RoutePreview(alex, zed.NodeNum, 0); radios[0] != "lf" {
-		t.Fatalf("DM policy home should route to lf, got %v", radios)
+		t.Fatalf("DM policy default should route to lf, got %v", radios)
 	}
 
 	const pid = 0x0badf00d
