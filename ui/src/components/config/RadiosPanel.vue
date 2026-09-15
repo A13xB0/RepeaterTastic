@@ -8,6 +8,7 @@ import type { Phy, RadiosResponse, Region, SerialPort } from '@/api/types'
 import { refreshRadios } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import ModemDeviceField from '@/components/config/ModemDeviceField.vue'
 import RadioSettingsModal from '@/components/config/RadioSettingsModal.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
@@ -271,10 +272,7 @@ function openSettings(id: string) {
           <input id="ar-name" v-model="form.name" class="input" placeholder="MediumFast" maxlength="40" />
         </div>
         <div class="sm:col-span-2">
-          <label class="label" for="ar-dev">Serial device</label>
-          <input id="ar-dev" v-model="form.device" class="input mono" list="ar-ports" placeholder="/dev/serial/by-id/…" required />
-          <datalist id="ar-ports"><option v-for="p in ports.filter((x) => !usedDevices.has(x.path))" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
-          <p class="hint">Use a <span class="mono">/dev/serial/by-id/</span> or udev name so it survives replugging. Flash the Mesh KISS firmware on it first.</p>
+          <ModemDeviceField id="ar-dev" v-model="form.device" :ports="ports.filter((x) => !usedDevices.has(x.path))" />
         </div>
         <div>
           <label class="label" for="ar-pwr">TX power · {{ form.tx_power_dbm }} dBm</label>

@@ -2,7 +2,7 @@
 // Setup wizard: modem → radio → relay → admin password → review.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Check, CircleAlert, CircleCheck, RefreshCw, Usb } from '@lucide/vue'
+import { Check, CircleAlert, CircleCheck, RefreshCw, Server, Usb } from '@lucide/vue'
 import { request, setToken } from '@/api/client'
 import type { Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/types'
 import Logo from '@/components/ui/Logo.vue'
@@ -61,6 +61,15 @@ async function runProbe() {
   }
 }
 watch(device, () => (probe.value = null))
+
+// meshtasticd's radio served as a raw KISS modem over TCP (General: RawModemPort).
+const mtdHost = ref('127.0.0.1')
+const mtdPort = ref(4405)
+const mtdDevice = computed(() => `tcp://${mtdHost.value.trim()}:${mtdPort.value}`)
+const usingMtd = computed(() => device.value.startsWith('tcp://'))
+watch(mtdDevice, (v) => {
+  if (usingMtd.value) device.value = v
+})
 
 let previewSeq = 0
 async function preview() {
@@ -165,7 +174,7 @@ async function finish() {
           <section v-if="step === 0">
             <h2 class="text-base font-semibold tracking-tight">Connect the modem</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch). We'll ping it and check it accepts sync word 0x2B.
+              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch), or meshtasticd's radio served as a raw modem. We'll ping it and check it accepts sync word 0x2B.
             </p>
             <div class="mt-4 space-y-2">
               <label
@@ -183,6 +192,20 @@ async function finish() {
               <div v-if="!ports.length && !loadingPorts" class="rounded-xl border border-dashed border-line px-4 py-6 text-center text-[13px] text-ink-3">
                 No serial ports found. Plug the modem in and refresh.
               </div>
+              <div :class="['rounded-xl border px-3.5 py-3 transition-colors', usingMtd ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
+                <label class="flex cursor-pointer items-center gap-3">
+                  <input type="radio" :checked="usingMtd" class="accent-[var(--brand)]" @change="device = mtdDevice" />
+                  <Server class="size-4 shrink-0 text-ink-3" />
+                  <div class="min-w-0">
+                    <div class="text-[13px] font-medium">meshtasticd raw modem</div>
+                    <div class="text-2xs text-ink-3">A Pi HAT or USB stick run by meshtasticd with <span class="mono">RawModemPort</span> set</div>
+                  </div>
+                </label>
+                <div v-if="usingMtd" class="mt-2.5 grid grid-cols-[1fr_6rem] gap-2 pl-7">
+                  <input v-model="mtdHost" class="input h-8 mono text-xs" aria-label="meshtasticd host" placeholder="127.0.0.1" spellcheck="false" />
+                  <input v-model.number="mtdPort" type="number" min="1" max="65535" class="input h-8 mono text-xs" aria-label="Raw modem port" />
+                </div>
+              </div>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
@@ -197,7 +220,7 @@ async function finish() {
                 <div class="text-ink-2">{{ probe.firmware }} · sync word 0x2B {{ probe.sync_word_ok ? 'accepted' : 'rejected (flash the patched firmware)' }}</div>
               </div>
               <div v-else>
-                <div class="font-medium">No modem on this port</div>
+                <div class="font-medium">{{ usingMtd ? 'meshtasticd didn’t answer as a raw modem' : 'No modem on this port' }}</div>
                 <div class="text-ink-2">{{ probe.error }}</div>
               </div>
             </div>

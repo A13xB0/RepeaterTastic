@@ -5,6 +5,7 @@
 import { computed, ref, watch } from 'vue'
 import { api, enc } from '@/api/client'
 import type { Config, ConfigPutResult, Phy, Region, SerialPort } from '@/api/types'
+import ModemDeviceField from '@/components/config/ModemDeviceField.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { live, refreshRadios, refreshStatus } from '@/store/live'
@@ -97,10 +98,7 @@ async function save() {
           <input id="rs-id" :value="radioId" class="input mono" readonly />
         </div>
         <div class="sm:col-span-2">
-          <label class="label" for="rs-port">Modem serial port</label>
-          <input id="rs-port" v-model="form.port" class="input mono" list="rs-ports" />
-          <datalist id="rs-ports"><option v-for="p in ports" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
-          <p class="hint">Driver <span class="mono">{{ form.type }}</span>. Prefer <span class="mono">/dev/serial/by-id/…</span> so the path survives reboots. Changing it needs a restart.</p>
+          <ModemDeviceField id="rs-port" v-model="form.port" :ports="ports" restart-hint />
         </div>
         <div>
           <label class="label" for="rs-region">Region</label>
