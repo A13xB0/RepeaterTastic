@@ -56,6 +56,12 @@ type Config struct {
 	StateDir          string
 	// RadioID names this radio when a site runs several ("main" for the first).
 	RadioID string
+	// OKToMQTT sets the OK_TO_MQTT bit on packets our identities originate: consent for
+	// other nodes' MQTT gateways to uplink them (LoRaConfig.config_ok_to_mqtt).
+	OKToMQTT bool
+	// IgnoreMQTT stops the relay persona rebroadcasting packets that arrived via MQTT
+	// (LoRaConfig.ignore_mqtt), so broker traffic never costs this radio's airtime.
+	IgnoreMQTT bool
 }
 
 // Counters are cumulative statistics.
@@ -77,6 +83,22 @@ var ErrSiteDutyCycle = errors.New("site duty cycle limit reached")
 type Link interface {
 	Name() string
 	SendPacket(p *pb.MeshPacket)
+}
+
+// ChannelLink is a Link that also wants the channel packets heard on air, first sighting
+// only, with the channel they decoded on (the MQTT uplink).
+type ChannelLink interface {
+	Link
+	ChannelPacketHeard(p *pb.MeshPacket, ch ChannelRef)
+}
+
+// ChannelRef describes a channel shared by one or more identities on this host.
+type ChannelRef struct {
+	Name     string // display name, e.g. "LongFast"
+	Hash     uint8
+	Uplink   bool // some identity holding this channel has uplink enabled
+	Downlink bool // some identity holding this channel has downlink enabled
+	OKToMQTT bool // the packet's sender allowed MQTT uplink (only set for heard packets)
 }
 
 type pendingTx struct {
@@ -349,6 +371,40 @@ func (h *Host) ChannelsChanged() {
 	h.chanMu.Lock()
 	h.chanCache = nil
 	h.chanMu.Unlock()
+}
+
+// Channels lists every distinct channel held by this host's identities.
+func (h *Host) Channels() []ChannelRef {
+	h.channelGroups(0) // build the cache
+	h.chanMu.Lock()
+	defer h.chanMu.Unlock()
+	var out []ChannelRef
+	for _, gs := range h.chanCache {
+		for _, g := range gs {
+			out = append(out, g.ref())
+		}
+	}
+	return out
+}
+
+// ChannelsByHash lists this host's channels with that hash (usually one).
+func (h *Host) ChannelsByHash(hash uint8) []ChannelRef {
+	var out []ChannelRef
+	for _, g := range h.channelGroups(hash) {
+		out = append(out, g.ref())
+	}
+	return out
+}
+
+func (g *chanGroup) ref() ChannelRef {
+	r := ChannelRef{Name: g.name, Hash: g.hash}
+	for _, m := range g.members {
+		if ch := m.id.ChannelCopy(m.index); ch != nil && ch.GetSettings() != nil {
+			r.Uplink = r.Uplink || ch.GetSettings().GetUplinkEnabled()
+			r.Downlink = r.Downlink || ch.GetSettings().GetDownlinkEnabled()
+		}
+	}
+	return r
 }
 
 func (h *Host) channelGroups(hash uint8) []*chanGroup {

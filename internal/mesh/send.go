@@ -69,6 +69,9 @@ func (h *Host) transmit(from *Identity, p *pb.MeshPacket, reliable bool) error {
 	onAir := clonePacket(p)
 	d := proto.Clone(p.GetDecoded()).(*pb.Data)
 	bf := uint32(0)
+	if h.Config().OKToMQTT {
+		bf |= 1
+	}
 	if d.WantResponse {
 		bf |= 2
 	}

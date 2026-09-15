@@ -193,6 +193,40 @@ type Airtime struct {
 type Links struct {
 	LocalDMOverRF bool         `yaml:"local_dm_over_rf" json:"local_dm_over_rf"`
 	UDPMulticast  UDPMulticast `yaml:"udp_multicast" json:"udp_multicast"`
+	MQTT          MQTT         `yaml:"mqtt" json:"mqtt"`
+}
+
+// MQTT is the gateway link to a Meshtastic MQTT broker. Which channels go up and
+// down is set per identity channel (uplink/downlink), as in the firmware.
+type MQTT struct {
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	Address  string `yaml:"address" json:"address"` // host:port
+	Username string `yaml:"username" json:"username"`
+	Password string `yaml:"password" json:"-"`
+	TLS      bool   `yaml:"tls" json:"tls"`
+	// Root is the topic prefix; "" = msh/<region>, as the apps default it.
+	Root string `yaml:"root" json:"root"`
+	// OKToMQTT sets OK_TO_MQTT on our identities' packets: consent for other gateways to
+	// uplink them (the firmware's lora.config_ok_to_mqtt). Applies with the link off too.
+	OKToMQTT bool `yaml:"ok_to_mqtt" json:"ok_to_mqtt"`
+	// RelayMQTT lets the relay persona rebroadcast packets that came from MQTT. Off by
+	// default (the firmware's lora.ignore_mqtt): broker traffic never costs airtime.
+	RelayMQTT bool `yaml:"relay_mqtt" json:"relay_mqtt"`
+	// DownlinkPerMinute caps packets accepted from the broker (0 = 30).
+	DownlinkPerMinute int       `yaml:"downlink_per_minute" json:"downlink_per_minute"`
+	MapReport         MapReport `yaml:"map_report" json:"map_report"`
+}
+
+// MapReport periodically publishes the relay persona to the broker's map topic.
+type MapReport struct {
+	Enabled  bool          `yaml:"enabled" json:"enabled"`
+	Interval time.Duration `yaml:"interval" json:"interval"` // 0 = 1h, minimum 15m
+	// PositionPrecision is how many bits of latitude/longitude are kept (the firmware's
+	// map_report_settings.position_precision): 14 ≈ 1.5 km, 16 ≈ 360 m. 0 = 14.
+	PositionPrecision int     `yaml:"position_precision" json:"position_precision"`
+	Latitude          float64 `yaml:"latitude" json:"latitude"`
+	Longitude         float64 `yaml:"longitude" json:"longitude"`
+	Altitude          int     `yaml:"altitude" json:"altitude"`
 }
 
 type UDPMulticast struct {
@@ -316,6 +350,17 @@ func (c *Config) validateOne() error {
 	default:
 		return fmt.Errorf("radio.driver must be kiss or none, not %q", c.Radio.Driver)
 	}
+	if m := c.Links.MQTT; m.Enabled {
+		if m.Address == "" {
+			return errors.New("links.mqtt.address is required when the MQTT link is enabled")
+		}
+		if m.MapReport.Enabled && (m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0) {
+			return errors.New("links.mqtt.map_report needs a latitude and longitude")
+		}
+		if p := m.MapReport.PositionPrecision; p < 0 || p > 32 {
+			return errors.New("links.mqtt.map_report.position_precision must be 0-32")
+		}
+	}
 	return nil
 }
 
@@ -328,6 +373,7 @@ func (c *Config) MeshConfig() mesh.Config {
 		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: c.Relay.Role,
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
+		OKToMQTT: c.Links.MQTT.OKToMQTT, IgnoreMQTT: !c.Links.MQTT.RelayMQTT,
 	}
 }
 

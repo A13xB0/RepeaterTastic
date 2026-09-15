@@ -161,7 +161,8 @@ A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": 
 - `GET /api/v1/tokens`, `POST /api/v1/tokens {"name"}` → `{"id","name","token"}` (token shown once), `DELETE /api/v1/tokens/{id}`
 - `GET /api/v1/backup` → JSON file download (config + keys); `POST /api/v1/restore`
 - `GET /api/v1/logs?limit=500` → `[{"time","level","msg"}]`
-- `GET /api/v1/links` → `[{"name": "udp", "type": "udp_multicast", "enabled": false, "connected": false, "rx": 0, "tx": 0}]`
+- `GET /api/v1/links[?radio=<id>]` → the UDP link and the MQTT link (`{"name": "mqtt", "enabled", "connected", "broker", "root", "tls", "rx", "tx", "dropped", "downlink": ["LongFast"], "ok_to_mqtt", "relay_mqtt", "map_report"}`), then the legacy shape:
+- `GET /api/v1/links` (legacy shape) → `[{"name": "udp", "type": "udp_multicast", "enabled": false, "connected": false, "rx": 0, "tx": 0}]`
 
 ## Proposed additions (from the web GUI)
 

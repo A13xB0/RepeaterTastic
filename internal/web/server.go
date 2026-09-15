@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
+	"github.com/A13xB0/RepeaterTastic/internal/links/mqtt"
 	"github.com/A13xB0/RepeaterTastic/internal/links/udp"
 	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
@@ -31,6 +32,7 @@ type Options struct {
 	API     *phoneapi.Manager
 	Logs    *logbuf.Buffer
 	UDP     *udp.Link
+	MQTT    *mqtt.Link
 	Radios  []Radio    // additional radios on the same site
 	Site    *site.Site // nil with a single radio and no site budget
 	Version string
@@ -44,6 +46,7 @@ type Radio struct {
 	Host     *mesh.Host
 	API      *phoneapi.Manager
 	UDP      *udp.Link
+	MQTT     *mqtt.Link
 }
 
 // radioCtx is everything the web server keeps per radio.
@@ -53,6 +56,7 @@ type radioCtx struct {
 	host     *mesh.Host
 	api      *phoneapi.Manager
 	udp      *udp.Link
+	mqtt     *mqtt.Link
 
 	// Modem stats cost serial round trips; share one poll between all viewers.
 	statsMu   sync.Mutex
@@ -149,9 +153,9 @@ func New(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opt: o, cfg: o.Config, host: o.Host, auth: a, log: o.Log.With("component", "web"), mux: http.NewServeMux()}
-	s.radios = append(s.radios, &radioCtx{id: config.MainRadioID, name: "Main", host: o.Host, api: o.API, udp: o.UDP})
+	s.radios = append(s.radios, &radioCtx{id: config.MainRadioID, name: "Main", host: o.Host, api: o.API, udp: o.UDP, mqtt: o.MQTT})
 	for _, x := range o.Radios {
-		s.radios = append(s.radios, &radioCtx{id: x.ID, name: x.Name, cfg: x.Config, host: x.Host, api: x.API, udp: x.UDP})
+		s.radios = append(s.radios, &radioCtx{id: x.ID, name: x.Name, cfg: x.Config, host: x.Host, api: x.API, udp: x.UDP, mqtt: x.MQTT})
 	}
 	s.traces.pending = map[string]time.Time{}
 	a.ttl = func() time.Duration {
@@ -194,7 +198,9 @@ func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-		w.Header().Set("Referrer-Policy", "same-origin")
+		// Not same-origin: map tile servers (OpenStreetMap's policy) refuse requests without a
+		// Referer. Cross-origin requests still only see the origin, never paths or queries.
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.ServeHTTP(w, r)
 	})
 }

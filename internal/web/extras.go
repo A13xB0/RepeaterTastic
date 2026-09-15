@@ -481,17 +481,33 @@ func (s *Server) expectTraceroute(from, target string) {
 
 // -------------------------------------------------------------------------------------- links
 
-func (s *Server) linkJSON() map[string]any {
-	u := map[string]any{"name": "udp", "type": "udp_multicast", "enabled": s.cfg.Links.UDPMulticast.Enabled,
+func (s *Server) linkJSON() map[string]any { return s.udpLinkJSON(s.radios[0]) }
+
+func (s *Server) udpLinkJSON(rc *radioCtx) map[string]any {
+	u := map[string]any{"name": "udp", "type": "udp_multicast", "enabled": s.radioConfig(rc).Links.UDPMulticast.Enabled,
 		"connected": false, "rx": 0, "tx": 0, "detail": "239.0.0.69:4403 + 224.0.0.69:4403"}
-	if l := s.radios[0].udp; l != nil {
+	if l := rc.udp; l != nil {
 		u["connected"], u["rx"], u["tx"] = l.Connected(), l.Rx.Load(), l.Tx.Load()
 	}
 	return u
 }
 
+func (s *Server) mqttLinkJSON(rc *radioCtx) map[string]any {
+	mc := s.radioConfig(rc).Links.MQTT
+	m := map[string]any{"name": "mqtt", "type": "mqtt", "enabled": mc.Enabled, "connected": false, "rx": 0, "tx": 0,
+		"dropped": 0, "detail": mc.Address, "broker": mc.Address, "tls": mc.TLS, "ok_to_mqtt": mc.OKToMQTT,
+		"relay_mqtt": mc.RelayMQTT, "map_report": mc.MapReport.Enabled, "downlink": []string{}}
+	if l := rc.mqtt; l != nil {
+		m["connected"], m["rx"], m["tx"], m["dropped"] = l.Connected(), l.Rx.Load(), l.Tx.Load(), l.Dropped.Load()
+		m["root"], m["downlink"] = l.Root(), l.Subscriptions()
+		m["detail"] = l.Broker() + " · " + l.Root()
+	}
+	return m
+}
+
 func (s *Server) links(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []any{s.linkJSON()})
+	rc := s.radioFor(r)
+	writeJSON(w, http.StatusOK, []any{s.udpLinkJSON(rc), s.mqttLinkJSON(rc)})
 }
 
 func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {

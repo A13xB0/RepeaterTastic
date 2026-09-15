@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
+	"github.com/A13xB0/RepeaterTastic/internal/links/mqtt"
 	"github.com/A13xB0/RepeaterTastic/internal/links/udp"
 	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
 	"github.com/A13xB0/RepeaterTastic/internal/mdns"
@@ -108,9 +109,9 @@ func run(cfgPath string) error {
 	if cfg.Web.Enabled {
 		extra := make([]web.Radio, 0, len(radios)-1)
 		for _, rt := range radios[1:] {
-			extra = append(extra, web.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Config: rt.rc.Config, Host: rt.host, API: rt.api, UDP: rt.udp})
+			extra = append(extra, web.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Config: rt.rc.Config, Host: rt.host, API: rt.api, UDP: rt.udp, MQTT: rt.mqtt})
 		}
-		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp,
+		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
 			Radios: extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
@@ -155,6 +156,7 @@ type radioRuntime struct {
 	host  *mesh.Host
 	api   *phoneapi.Manager
 	udp   *udp.Link
+	mqtt  *mqtt.Link
 }
 
 // startRadio opens a radio's modem, builds its host and identities and starts its client
@@ -200,6 +202,17 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (*
 		go func() {
 			if err := rt.udp.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("UDP link stopped", "err", err)
+			}
+		}()
+	}
+	if mc := rc.Links.MQTT; mc.Enabled {
+		rt.mqtt = mqtt.New(host, mqtt.Options{Address: mc.Address, Username: mc.Username, Password: mc.Password, TLS: mc.TLS,
+			Root: mc.Root, DownlinkPerMinute: mc.DownlinkPerMinute, FirmwareVersion: phoneapi.FirmwareVersion,
+			MapReport: mc.MapReport.Enabled, MapInterval: mc.MapReport.Interval, PositionPrecision: mc.MapReport.PositionPrecision,
+			Latitude: mc.MapReport.Latitude, Longitude: mc.MapReport.Longitude, Altitude: mc.MapReport.Altitude}, log)
+		go func() {
+			if err := rt.mqtt.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("MQTT link stopped", "err", err)
 			}
 		}()
 	}

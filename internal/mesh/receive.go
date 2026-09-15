@@ -117,6 +117,18 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	decoded.PayloadVariant = &pb.MeshPacket_Decoded{Decoded: dec.data}
 	decoded.PkiEncrypted = dec.pki
 
+	if !dec.pki && dec.group != nil && !p.ViaMqtt {
+		ref := dec.group.ref()
+		ref.OKToMQTT = dec.data.Bitfield != nil && *dec.data.Bitfield&1 != 0
+		h.linkMu.RLock()
+		for _, l := range h.links {
+			if cl, ok := l.(ChannelLink); ok {
+				cl.ChannelPacketHeard(p, ref)
+			}
+		}
+		h.linkMu.RUnlock()
+	}
+
 	h.sniffContent(decoded, dec, now)
 	h.askUnknownNode(decoded, dec)
 	h.sniffRouting(decoded, dec)
@@ -346,6 +358,9 @@ func (h *Host) responseHopLimit(p *pb.MeshPacket) uint32 {
 func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
 	cfg := h.Config()
 	if cfg.RelayRole == RoleMute || p.To == wire.BroadcastNoLoRa || p.HopLimit == 0 || p.Id == 0 {
+		return false
+	}
+	if p.ViaMqtt && cfg.IgnoreMQTT {
 		return false
 	}
 	if h.Identity(p.To) != nil || h.Identity(p.From) != nil {

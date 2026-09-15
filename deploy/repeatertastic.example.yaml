@@ -30,7 +30,27 @@ airtime:
 links:
   local_dm_over_rf: false # DMs between identities on this host stay local
   udp_multicast:
-    enabled: false        # join the LAN mesh of native meshtasticd nodes (224.0.0.69 + 239.0.0.69)
+    enabled: false
+  # Meshtastic MQTT gateway (the relay persona is the gateway node). Uplink/downlink is chosen per
+  # identity channel. Recommended for a site on the air: uplink the default channel only, downlink
+  # off (or on one gateway per mesh), never a private channel, relay_mqtt off.
+  mqtt:
+    enabled: false
+    address: mqtt.meshtastic.org:1883   # public broker: zero-hop, default key only, positions coarsened
+    username: meshdev
+    password: large4cats
+    tls: false
+    root: ""                  # "" = msh/<region>, e.g. msh/EU_868
+    ok_to_mqtt: false         # set OK_TO_MQTT on our packets: other gateways may uplink them
+    relay_mqtt: false         # false = the relay never rebroadcasts packets that came from MQTT (ignore_mqtt)
+    downlink_per_minute: 30
+    map_report:
+      enabled: false
+      interval: 1h
+      position_precision: 14  # bits kept: 14 ≈ 1.5 km, 16 ≈ 360 m
+      latitude: 0
+      longitude: 0
+      altitude: 0        # join the LAN mesh of native meshtasticd nodes (224.0.0.69 + 239.0.0.69)
 
 mdns:
   enabled: true          # advertise each identity as _meshtastic._tcp for app discovery
