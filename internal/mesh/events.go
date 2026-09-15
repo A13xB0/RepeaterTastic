@@ -1,0 +1,277 @@
+package mesh
+
+import (
+	"sync"
+	"time"
+)
+
+// Event is published on the host bus for the web UI and other observers.
+type Event struct {
+	Type string // packet, message, identity, node, traceroute, log
+	Data any
+}
+
+// Bus is a non-blocking fan-out; slow subscribers miss events rather than stall the radio.
+type Bus struct {
+	mu   sync.Mutex
+	subs map[chan Event]struct{}
+}
+
+func NewBus() *Bus { return &Bus{subs: map[chan Event]struct{}{}} }
+
+func (b *Bus) Subscribe(buf int) (<-chan Event, func()) {
+	ch := make(chan Event, buf)
+	b.mu.Lock()
+	b.subs[ch] = struct{}{}
+	b.mu.Unlock()
+	return ch, func() {
+		b.mu.Lock()
+		if _, ok := b.subs[ch]; ok {
+			delete(b.subs, ch)
+			close(ch)
+		}
+		b.mu.Unlock()
+	}
+}
+
+func (b *Bus) Publish(e Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ch := range b.subs {
+		select {
+		case ch <- e:
+		default:
+		}
+	}
+}
+
+// PacketRecord is one line of the packet log (API shape, see docs/api.md).
+type PacketRecord struct {
+	Seq         uint64         `json:"seq"`
+	Time        int64          `json:"time"`
+	Direction   string         `json:"direction"`
+	Kind        string         `json:"kind"`
+	ID          uint32         `json:"id"`
+	From        string         `json:"from"`
+	To          string         `json:"to"`
+	ChannelHash uint8          `json:"channel_hash"`
+	Channel     string         `json:"channel,omitempty"`
+	Port        string         `json:"port,omitempty"`
+	HopLimit    uint32         `json:"hop_limit"`
+	HopStart    uint32         `json:"hop_start"`
+	WantAck     bool           `json:"want_ack"`
+	ViaMQTT     bool           `json:"via_mqtt"`
+	NextHop     uint32         `json:"next_hop"`
+	RelayNode   uint32         `json:"relay_node"`
+	RSSI        int32          `json:"rssi"`
+	SNR         float32        `json:"snr"`
+	Size        int            `json:"size"`
+	AirtimeMs   float64        `json:"airtime_ms"`
+	DecodedBy   string         `json:"decoded_by,omitempty"`
+	PKI         bool           `json:"pki"`
+	Summary     string         `json:"summary,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
+	Raw         string         `json:"raw,omitempty"`
+	Transport   string         `json:"transport,omitempty"`
+}
+
+// PacketLog is a fixed-size ring of recent packets.
+type PacketLog struct {
+	mu   sync.Mutex
+	buf  []PacketRecord
+	next int
+	full bool
+	seq  uint64
+}
+
+func NewPacketLog(n int) *PacketLog { return &PacketLog{buf: make([]PacketRecord, n)} }
+
+func (l *PacketLog) Add(r PacketRecord) PacketRecord {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seq++
+	r.Seq = l.seq
+	if r.Time == 0 {
+		r.Time = time.Now().UnixMilli()
+	}
+	l.buf[l.next] = r
+	l.next = (l.next + 1) % len(l.buf)
+	if l.next == 0 {
+		l.full = true
+	}
+	return r
+}
+
+// List returns newest-first records matching filter, up to limit, older than beforeMs (0 = now).
+func (l *PacketLog) List(limit int, beforeMs int64, filter func(*PacketRecord) bool) []PacketRecord {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := l.next
+	if l.full {
+		n = len(l.buf)
+	}
+	out := []PacketRecord{}
+	for i := 0; i < n && len(out) < limit; i++ {
+		idx := (l.next - 1 - i + len(l.buf)) % len(l.buf)
+		r := &l.buf[idx]
+		if beforeMs > 0 && r.Time >= beforeMs {
+			continue
+		}
+		if filter != nil && !filter(r) {
+			continue
+		}
+		out = append(out, *r)
+	}
+	return out
+}
+
+// Message is a chat message for the web UI.
+type Message struct {
+	ID        uint32  `json:"id"`
+	From      string  `json:"from"`
+	To        string  `json:"to"`
+	Channel   int     `json:"channel"`
+	Text      string  `json:"text"`
+	Time      int64   `json:"time"`
+	Direction string  `json:"direction"`
+	Status    string  `json:"status"`
+	Error     string  `json:"error,omitempty"`
+	PKI       bool    `json:"pki"`
+	RSSI      int32   `json:"rssi,omitempty"`
+	SNR       float32 `json:"snr,omitempty"`
+	Hops      int     `json:"hops"`
+}
+
+// Conversation key: "ch:<index>" or "dm:!nodeid".
+func (m *Message) Conversation(self string) string {
+	if m.To == "!ffffffff" {
+		return "ch:" + itoa(m.Channel)
+	}
+	if m.From == self {
+		return "dm:" + m.To
+	}
+	return "dm:" + m.From
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	var b [20]byte
+	p := len(b)
+	for i > 0 {
+		p--
+		b[p] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		p--
+		b[p] = '-'
+	}
+	return string(b[p:])
+}
+
+// MessageStore keeps recent messages per identity.
+type MessageStore struct {
+	mu   sync.Mutex
+	per  map[uint32][]*Message
+	max  int
+	read map[uint32]map[string]int64 // conversation → last read time
+}
+
+func NewMessageStore(max int) *MessageStore {
+	return &MessageStore{per: map[uint32][]*Message{}, max: max, read: map[uint32]map[string]int64{}}
+}
+
+func (s *MessageStore) Add(identity uint32, m *Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := append(s.per[identity], m)
+	if len(l) > s.max {
+		l = l[len(l)-s.max:]
+	}
+	s.per[identity] = l
+}
+
+// SetStatus updates an outgoing message by packet id; returns the updated copy.
+func (s *MessageStore) SetStatus(identity, id uint32, status, errText string) (Message, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.per[identity]
+	for i := len(l) - 1; i >= 0; i-- {
+		if l[i].ID == id && l[i].Direction == "out" {
+			if l[i].Status == "acked" && status != "acked" {
+				return *l[i], false
+			}
+			l[i].Status, l[i].Error = status, errText
+			return *l[i], true
+		}
+	}
+	return Message{}, false
+}
+
+func (s *MessageStore) List(identity uint32, self, conversation string, beforeMs int64, limit int) []Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []Message{}
+	l := s.per[identity]
+	for i := len(l) - 1; i >= 0 && len(out) < limit; i-- {
+		m := l[i]
+		if conversation != "" && m.Conversation(self) != conversation {
+			continue
+		}
+		if beforeMs > 0 && m.Time >= beforeMs {
+			continue
+		}
+		out = append(out, *m)
+	}
+	// oldest first for display
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	if conversation != "" {
+		if s.read[identity] == nil {
+			s.read[identity] = map[string]int64{}
+		}
+		s.read[identity][conversation] = time.Now().UnixMilli()
+	}
+	return out
+}
+
+// ConversationSummary is one entry of the conversations list.
+type ConversationSummary struct {
+	Key      string `json:"key"`
+	Title    string `json:"title"`
+	LastText string `json:"last_text"`
+	LastTime int64  `json:"last_time"`
+	Unread   int    `json:"unread"`
+}
+
+func (s *MessageStore) Conversations(identity uint32, self string) []ConversationSummary {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := map[string]*ConversationSummary{}
+	var order []string
+	for _, m := range s.per[identity] {
+		k := m.Conversation(self)
+		c, ok := idx[k]
+		if !ok {
+			c = &ConversationSummary{Key: k}
+			idx[k] = c
+			order = append(order, k)
+		}
+		c.LastText, c.LastTime = m.Text, m.Time
+		if m.Direction == "in" && m.Time > s.read[identity][k] {
+			c.Unread++
+		}
+	}
+	out := make([]ConversationSummary, 0, len(order))
+	for _, k := range order {
+		out = append(out, *idx[k])
+	}
+	return out
+}
