@@ -169,3 +169,54 @@ func TestConfigPositionHardwareMQTTPerRadio(t *testing.T) {
 		t.Fatalf("unknown hardware model accepted: %d", code)
 	}
 }
+
+func TestAddRenameRemoveRadios(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+
+	if code, res, _ := call(t, srv, "POST", "/api/v1/radios", tok, map[string]any{"id": "Long Slow"}); code != 400 {
+		t.Fatalf("bad id accepted: %d %v", code, res)
+	}
+	code, res, _ := call(t, srv, "POST", "/api/v1/radios", tok, map[string]any{"id": "ls", "name": "LongSlow", "driver": "none",
+		"region": "EU_868", "preset": "LONG_SLOW", "tx_power_dbm": 20})
+	if code != 201 || res["restart_required"] != true {
+		t.Fatalf("add radio %d %v", code, res)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/radios", tok, map[string]any{"id": "ls", "driver": "none"}); code != 400 {
+		t.Fatalf("duplicate id accepted: %d", code)
+	}
+	_, list, _ := call(t, srv, "GET", "/api/v1/radios", tok, nil)
+	pending := list["pending"].([]any)
+	if len(pending) != 1 || pending[0].(map[string]any)["id"] != "ls" || pending[0].(map[string]any)["relay_role"] != "mute" || list["restart_required"] != true {
+		t.Fatalf("pending = %v", list)
+	}
+
+	if code, res, _ := call(t, srv, "PATCH", "/api/v1/radios/mf", tok, map[string]any{"name": "Medium Fast"}); code != 200 || res["name"] != "Medium Fast" {
+		t.Fatalf("rename mf %d %v", code, res)
+	}
+	if code, _, _ := call(t, srv, "PATCH", "/api/v1/radios/main", tok, map[string]any{"name": "LongFast"}); code != 200 {
+		t.Fatalf("rename main %d", code)
+	}
+	_, list, _ = call(t, srv, "GET", "/api/v1/radios", tok, nil)
+	radios := list["radios"].([]any)
+	if radios[0].(map[string]any)["name"] != "LongFast" || radios[1].(map[string]any)["name"] != "Medium Fast" {
+		t.Fatalf("names = %v", radios)
+	}
+
+	if code, _, _ := call(t, srv, "DELETE", "/api/v1/radios/main", tok, nil); code != 400 {
+		t.Fatalf("main radio removed: %d", code)
+	}
+	if code, res, _ := call(t, srv, "DELETE", "/api/v1/radios/ls", tok, nil); code != 200 || res["restart_required"] != false {
+		t.Fatalf("remove a radio that never started %d %v", code, res)
+	}
+	if code, res, _ := call(t, srv, "DELETE", "/api/v1/radios/mf", tok, nil); code != 200 || res["restart_required"] != true {
+		t.Fatalf("remove running mf %d %v", code, res)
+	}
+
+	if code, res, _ := call(t, srv, "PUT", "/api/v1/site", tok, map[string]any{"duty_cycle_percent": 8}); code != 200 ||
+		res["running_duty_cycle_percent"] != float64(8) || res["restart_required"] != false {
+		t.Fatalf("site %d %v", code, res)
+	}
+}

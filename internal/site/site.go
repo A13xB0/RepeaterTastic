@@ -11,7 +11,9 @@ package site
 
 import (
 	"context"
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
@@ -23,7 +25,7 @@ type Site struct {
 	changed chan struct{} // closed and replaced whenever a transmission ends
 	hosts   []*mesh.Host
 	onAir   map[*mesh.Host]span
-	dutyPct float64 // 0 = no site-wide budget
+	dutyPct atomic.Uint64 // math.Float64bits of the budget; 0 = no site-wide budget
 	now     func() time.Time
 }
 
@@ -32,7 +34,9 @@ type span struct{ lo, hi float64 } // MHz
 // New returns a site. dutyPct is the site-wide airtime budget in percent of the last
 // hour summed over all radios; 0 disables it.
 func New(dutyPct float64) *Site {
-	return &Site{changed: make(chan struct{}), onAir: map[*mesh.Host]span{}, dutyPct: dutyPct, now: time.Now}
+	s := &Site{changed: make(chan struct{}), onAir: map[*mesh.Host]span{}, now: time.Now}
+	s.SetDutyCyclePct(dutyPct)
+	return s
 }
 
 // Add registers a host and installs the site as its transmit gate.
@@ -51,7 +55,10 @@ func (s *Site) Hosts() []*mesh.Host {
 }
 
 // DutyCyclePct is the site-wide budget (0 = none).
-func (s *Site) DutyCyclePct() float64 { return s.dutyPct }
+func (s *Site) DutyCyclePct() float64 { return math.Float64frombits(s.dutyPct.Load()) }
+
+// SetDutyCyclePct changes the site-wide budget while running.
+func (s *Site) SetDutyCyclePct(pct float64) { s.dutyPct.Store(math.Float64bits(pct)) }
 
 // TxPercent is the site's summed transmit airtime over the last hour.
 func (s *Site) TxPercent() float64 {
@@ -77,7 +84,7 @@ func (s *Site) Overlaps(h *mesh.Host) []*mesh.Host {
 
 // Acquire implements mesh.TxGate.
 func (s *Site) Acquire(ctx context.Context, h *mesh.Host) (func(), error) {
-	if s.dutyPct > 0 && s.TxPercent() >= s.dutyPct {
+	if limit := s.DutyCyclePct(); limit > 0 && s.TxPercent() >= limit {
 		return nil, mesh.ErrSiteDutyCycle
 	}
 	mine := spanOf(h)

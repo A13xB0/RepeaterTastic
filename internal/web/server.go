@@ -155,7 +155,7 @@ func New(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opt: o, cfg: o.Config, host: o.Host, auth: a, log: o.Log.With("component", "web"), mux: http.NewServeMux()}
-	s.radios = append(s.radios, &radioCtx{id: config.MainRadioID, name: "Main", host: o.Host, api: o.API, udp: o.UDP, mqtt: o.MQTT})
+	s.radios = append(s.radios, &radioCtx{id: config.MainRadioID, name: o.Config.RadioConfigs()[0].Name, host: o.Host, api: o.API, udp: o.UDP, mqtt: o.MQTT})
 	for _, x := range o.Radios {
 		s.radios = append(s.radios, &radioCtx{id: x.ID, name: x.Name, cfg: x.Config, host: x.Host, api: x.API, udp: x.UDP, mqtt: x.MQTT})
 	}
@@ -224,6 +224,11 @@ func (s *Server) routes() {
 
 	priv("GET /api/v1/status", s.getStatus)
 	priv("GET /api/v1/radios", s.listRadios)
+	priv("POST /api/v1/radios", s.addRadio)
+	priv("PATCH /api/v1/radios/{id}", s.patchRadio)
+	priv("DELETE /api/v1/radios/{id}", s.deleteRadio)
+	priv("GET /api/v1/site", s.getSite)
+	priv("PUT /api/v1/site", s.putSite)
 	priv("POST /api/v1/restart", s.restartDaemon)
 	priv("PUT /api/v1/relay", s.putRelay)
 

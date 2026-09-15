@@ -68,6 +68,8 @@ type Site struct {
 	// DutyCyclePct caps the summed transmit airtime of all radios over the last hour,
 	// on top of each radio's own limit. 0 = no site-wide cap.
 	DutyCyclePct float64 `yaml:"duty_cycle_percent" json:"duty_cycle_percent"`
+	// MainRadioName is what the GUI calls the top-level radio ("" = Main).
+	MainRadioName string `yaml:"main_radio_name,omitempty" json:"main_radio_name,omitempty"`
 }
 
 // MainRadioID is the ID of the radio described by the top-level config.
@@ -84,7 +86,11 @@ type RadioConfig struct {
 // RadioConfigs lists every radio, main first. Extra radios get their own state dir
 // (state_dir/radios/<id>) so identities and history never mix.
 func (c *Config) RadioConfigs() []RadioConfig {
-	out := []RadioConfig{{ID: MainRadioID, Name: "Main", Config: c}}
+	mainName := c.Site.MainRadioName
+	if mainName == "" {
+		mainName = "Main"
+	}
+	out := []RadioConfig{{ID: MainRadioID, Name: mainName, Config: c}}
 	for _, ri := range c.Radios {
 		v := *c
 		v.Radio, v.Mesh, v.Relay, v.Airtime, v.Links, v.Identities = ri.Radio, ri.Mesh, ri.Relay, ri.Airtime, ri.Links, ri.Identities
@@ -626,5 +632,13 @@ func (l MQTTLinks) fillNames() {
 				break
 			}
 		}
+	}
+}
+
+// FillRadioDefaults gives radios added at run time the defaults Load would have given them.
+func (c *Config) FillRadioDefaults() {
+	c.fillRadioDefaults()
+	for i := range c.Radios {
+		c.Radios[i].Links.MQTT.fillNames()
 	}
 }

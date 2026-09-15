@@ -9,23 +9,25 @@ import Modal from '@/components/ui/Modal.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import MqttConnections from '@/components/config/MqttConnections.vue'
+import RadiosPanel from '@/components/config/RadiosPanel.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { relTime } from '@/lib/format'
 
-type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'backup'
+type Tab = 'radios' | 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
   { id: 'radio', label: 'Radio' },
   { id: 'relay', label: 'Relay' },
   { id: 'airtime', label: 'Airtime & duty' },
   { id: 'position', label: 'Position & hardware' },
   { id: 'mqtt', label: 'MQTT' },
+  { id: 'radios', label: 'Radios' },
   { id: 'web', label: 'Web & API tokens' },
   { id: 'backup', label: 'Backup & restore' },
 ]
-// Web settings, tokens and backups belong to the host, so they only show on the main radio.
-const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || (t.id !== 'web' && t.id !== 'backup')))
+// The radio list, web settings, tokens and backups belong to the host, so they only show on the main radio.
+const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || (t.id !== 'web' && t.id !== 'backup' && t.id !== 'radios')))
 const route = useRoute()
 const router = useRouter()
 const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio'))
@@ -42,7 +44,7 @@ async function load() {
   form.value = structuredClone(c)
 }
 
-const section = computed(() => (tab.value === 'backup' ? null : tab.value === 'position' ? 'position' : tab.value))
+const section = computed(() => (tab.value === 'backup' || tab.value === 'radios' ? null : tab.value === 'position' ? 'position' : tab.value))
 // The Position tab edits two config sections.
 const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
 const dirty = computed(() => {
@@ -421,6 +423,9 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             </p>
           </div>
         </div>
+
+        <!-- RADIOS -->
+        <RadiosPanel v-else-if="tab === 'radios'" :ports="ports" :regions="regions" @restart="restartRequired = true" />
 
         <!-- MQTT -->
         <MqttConnections v-else-if="tab === 'mqtt'" v-model="form.mqtt" />
