@@ -1,24 +1,56 @@
+![ScotMesh Meshtastic](https://raw.githubusercontent.com/ScotMesh/branding/main/networks/meshtastic/readme-header.png)
+
+<p align="center">
+  <img src="docs/images/repeatertastic-logo.svg" width="112" height="112" alt="RepeaterTastic logo">
+</p>
+
 # RepeaterTastic
 
-Host many virtual Meshtastic nodes in software, all sharing one dumb LoRa modem: the Meshtastic
-equivalent of openHop Repeater's virtual companions.
+Host many virtual Meshtastic nodes in software, all sharing one LoRa modem: the Meshtastic
+equivalent of openHop Repeater's virtual companions. Built and run by
+[ScotMesh](https://github.com/ScotMesh) for Scottish mesh sites, and useful anywhere.
 
-- **One Go binary** (about 10 MB, static, no CGO) for a Raspberry Pi or any Linux box. The web GUI is embedded.
-- **Radio:** a MeshCore KISS modem (Heltec V3, XIAO nRF52840 + Wio-SX1262, RAK4631, T-Beam, …), patched to speak Meshtastic's PHY: sync word 0x2B and a 16-symbol preamble. See [`firmware/`](firmware/).
+- **One Go binary** (about 10 MB, static, no CGO) for a Raspberry Pi or any Linux box, or one container. The web GUI is embedded.
+- **Radio:** a Mesh KISS modem (MeshCore KISS firmware patched to speak Meshtastic's PHY: sync word 0x2B and a 16-symbol preamble) on a Heltec V3, XIAO nRF52840 + Wio-SX1262, RAK4631, T-Beam, … See [`firmware/`](firmware/).
 - **Each virtual node is a full Meshtastic node:** its own X25519 key, a node number of `crc32(public_key)`, channels, and a client-API port. The official apps, the Python CLI and the web client connect to each node as if it were a radio.
-- **Shared per radio:** one relay persona, packet history, a next-hop table, and the duty-cycle budget. DMs between identities on the host are delivered locally.
-- **Optional UDP multicast link:** join the LAN mesh of native `meshtasticd` nodes, on both the 2.7 group (224.0.0.69) and the 2.8 group (239.0.0.69).
+- **Shared per radio:** one relay persona (the only identity that repeats), packet history, a next-hop table and the duty-cycle budget. DMs between identities on the host are delivered locally.
+- **Several radios on one host** (LongFast, MediumFast, …), **MQTT** connections to one or more brokers, fixed **position** broadcasts, and an optional **UDP multicast** link to `meshtasticd` on the LAN.
 
-> **Status:** feature-complete for a first bench test, but **not yet tested on air**.
-> Verified so far:
-> - byte-exact against 25 golden vectors captured from meshtasticd 2.7.26 and 2.8.0;
-> - PKI DMs with ACKs in both directions with real meshtasticd over UDP multicast;
-> - the official Python CLI against the virtual node API ports;
-> - multi-host relaying in simulation.
->
-> Start with [`docs/bench-test.md`](docs/bench-test.md).
+> **Status:** running on a ScotMesh site on a Heltec V3, alongside Reticulum. Still young:
+> expect changes. Start with [`docs/bench-test.md`](docs/bench-test.md) for a new setup.
+> Verified: byte-exact against 25 golden vectors from meshtasticd 2.7.26 and 2.8.0; PKI DMs with
+> ACKs against real meshtasticd; the official apps and Python CLI on the identity ports; on-air
+> channel messages and DMs; multi-radio routing in simulation.
 
 ## Quick start
+
+You need a Mesh KISS modem on USB ([`firmware/`](firmware/) builds and flashes it).
+
+### Docker
+
+```bash
+docker run -d --name repeatertastic --restart unless-stopped \
+  --network host \
+  --device /dev/serial/by-id/usb-…-if00-port0:/dev/ttyUSB0 \
+  --group-add "$(getent group dialout | cut -d: -f3)" \
+  -e REPEATERTASTIC_RADIO_DEVICE=/dev/ttyUSB0 \
+  -v repeatertastic-data:/data \
+  ghcr.io/a13xb0/repeatertastic:latest
+```
+
+Open `http://<host>:8080` and set the admin password; the setup wizard finds the modem and writes
+the config to the volume. The volume holds the config, identity keys and chats, so back it up.
+For a compose file copy [`deploy/docker-compose.example.yml`](deploy/docker-compose.example.yml).
+
+- **Host networking** is what lets the apps discover identities over mDNS and joins the UDP
+  multicast LAN mesh. Without it, publish `8080` and the identity ports (`4403` upwards) instead.
+- **Environment:** `REPEATERTASTIC_CONFIG` (default `/data/repeatertastic.yaml`),
+  `REPEATERTASTIC_STATE_DIR` (`/data`), `REPEATERTASTIC_RADIO_DEVICE`, `REPEATERTASTIC_WEB_PORT`,
+  `REPEATERTASTIC_MAP_API_KEY`.
+- **Build it yourself:** `docker build -t repeatertastic .` (add
+  `--secret id=map_api_key,env=CARTO_API_KEY` to bake in a map key).
+
+### systemd
 
 ```bash
 make build                                   # bin/repeatertastic, bin/kisstool
@@ -27,7 +59,21 @@ sudo ./deploy/install.sh dist/repeatertastic-linux-arm64 dist/kisstool-linux-arm
 # open http://<pi>:8080 and set the admin password
 ```
 
-The configuration reference is [`deploy/repeatertastic.example.yaml`](deploy/repeatertastic.example.yaml).
+Release binaries are on the [releases page](https://github.com/A13xB0/RepeaterTastic/releases).
+The configuration reference is [`deploy/repeatertastic.example.yaml`](deploy/repeatertastic.example.yaml);
+almost everything in it can also be set in the web GUI.
+
+## Using the web GUI
+
+- **Identities:** create, import, edit and move virtual nodes, each with its own app port. The
+  relay persona is created for you.
+- **Chat:** channel conversations and DMs for any identity, live.
+- **Channels:** every identity's eight slots. Add, edit and remove channels (one dialog), or add a
+  channel to several identities at once.
+- **Nodes & map, Packets, Statistics, Logs:** what the radio hears and sends.
+- **Configuration:** Radios (add, edit, remove; site airtime cap), Relay, Airtime & duty, Position &
+  hardware, MQTT, Web & API tokens, Experimental, Backup & restore. A banner lists saved changes
+  that need a restart.
 
 ## Map tiles
 
@@ -134,7 +180,8 @@ LoRa modem ──USB/KISS── radio driver ── receive pipeline ── mesh
 - **Relay:** only the relay persona rebroadcasts, following the firmware's flooding and next-hop rules. N identities never relay the same packet N times.
 
 The plan and research are in [`docs/plan.html`](docs/plan.html), written under the working name
-"Hopstatic". The HTTP API is documented in [`docs/api.md`](docs/api.md).
+"Hopstatic". The HTTP API is documented in [`docs/api.md`](docs/api.md). Coding agents and new
+contributors: read [`AGENTS.md`](AGENTS.md) first.
 
 ## Layout
 
@@ -147,19 +194,25 @@ internal/mesh          host: receive, relay, reliable delivery, identities, node
 internal/phoneapi      Meshtastic client API: TCP stream + HTTP, config handshake, local admin
 internal/radio         radio interface; kiss (serial), sim (tests), null
 internal/links/udp     meshtasticd UDP multicast link
+internal/links/mqtt    Meshtastic MQTT connections (gateway, monitor, bridge, map reports)
+internal/site          several radios on one host: shared transmit turns and airtime cap
+internal/config        YAML config, validation, environment overrides
 internal/web           REST/SSE API, auth, embedded GUI
 internal/pb            generated protobufs (scripts/gen-proto.sh; vendored in proto/)
 ui/                    web GUI (Vue 3 + Vite), built into internal/web/dist
 firmware/              KISS modem patch, board list, build script
 tests/interop          meshtasticd Docker harness + golden vectors
-deploy/                systemd unit, example config, install script
+deploy/                systemd unit, example config, install script, docker-compose example
+Dockerfile             distroless container image
 ```
 
 ## Development
 
 ```bash
 make test race          # unit tests, simulated multi-host mesh tests, golden vectors
+make ui                 # rebuild the GUI into internal/web/dist (commit the result)
 cd ui && npm run dev    # GUI against a mock API
+RT_TEST_MQTT_BROKER=127.0.0.1:1883 go test ./internal/links/mqtt   # MQTT against a real broker
 cd tests/interop && ./run_meshtasticd.sh up 2 && ./run_repeatertastic.sh up   # real firmware interop
 ```
 

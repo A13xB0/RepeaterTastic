@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -50,7 +51,14 @@ func main() {
 		fmt.Println("repeatertastic", version)
 		return
 	}
-	cfgPath := flag.String("config", "/etc/repeatertastic/repeatertastic.yaml", "configuration file")
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
+	defaultConfig := "/etc/repeatertastic/repeatertastic.yaml"
+	if p := strings.TrimSpace(os.Getenv("REPEATERTASTIC_CONFIG")); p != "" {
+		defaultConfig = p
+	}
+	cfgPath := flag.String("config", defaultConfig, "configuration file (env REPEATERTASTIC_CONFIG)")
 	flag.Parse()
 	if err := run(*cfgPath); err != nil {
 		fmt.Fprintln(os.Stderr, "repeatertastic:", err)
@@ -63,6 +71,7 @@ func run(cfgPath string) error {
 	if err != nil {
 		return err
 	}
+	cfg.ApplyEnv()
 	logs := logbuf.New(2000)
 	level := new(slog.LevelVar) // the web GUI changes it live
 	var l slog.Level
@@ -353,4 +362,25 @@ func runMDNS(ctx context.Context, hosts []*mesh.Host, log *slog.Logger) {
 	if err := r.Run(ctx); err != nil {
 		log.Warn("mDNS advertising disabled", "err", err)
 	}
+}
+
+// healthcheck is `repeatertastic healthcheck` for container health checks: the web server answers
+// on 127.0.0.1 (port from REPEATERTASTIC_WEB_PORT, default 8080). Exit status 0 = healthy.
+func healthcheck() int {
+	port := strings.TrimSpace(os.Getenv("REPEATERTASTIC_WEB_PORT"))
+	if port == "" {
+		port = "8080"
+	}
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/api/v1/setup")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "unhealthy:", err)
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, "unhealthy: HTTP", resp.StatusCode)
+		return 1
+	}
+	return 0
 }

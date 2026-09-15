@@ -72,3 +72,14 @@ func TestMQTTValidation(t *testing.T) {
 		t.Fatalf("acknowledged bridge rejected: %v", err)
 	}
 }
+
+func TestApplyEnv(t *testing.T) {
+	t.Setenv("REPEATERTASTIC_STATE_DIR", "/data")
+	t.Setenv("REPEATERTASTIC_RADIO_DEVICE", "/dev/ttyACM0")
+	t.Setenv("REPEATERTASTIC_WEB_PORT", "9090")
+	c := Default()
+	c.ApplyEnv()
+	if c.StateDir != "/data" || c.Radio.Device != "/dev/ttyACM0" || c.Web.Port != 9090 {
+		t.Fatalf("env not applied: %s %s %d", c.StateDir, c.Radio.Device, c.Web.Port)
+	}
+}

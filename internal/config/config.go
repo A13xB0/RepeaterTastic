@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -665,5 +666,25 @@ func (c *Config) FillRadioDefaults() {
 	c.fillRadioDefaults()
 	for i := range c.Radios {
 		c.Radios[i].Links.MQTT.fillNames()
+	}
+}
+
+// ApplyEnv applies container-friendly overrides on top of the file (they are not written back
+// unless the config is saved from the GUI):
+//
+//	REPEATERTASTIC_STATE_DIR     state_dir
+//	REPEATERTASTIC_RADIO_DEVICE  radio.device of the main radio
+//	REPEATERTASTIC_WEB_PORT      web.port
+func (c *Config) ApplyEnv() {
+	if v := strings.TrimSpace(os.Getenv("REPEATERTASTIC_STATE_DIR")); v != "" {
+		c.StateDir = v
+	}
+	if v := strings.TrimSpace(os.Getenv("REPEATERTASTIC_RADIO_DEVICE")); v != "" {
+		c.Radio.Device = v
+	}
+	if v := strings.TrimSpace(os.Getenv("REPEATERTASTIC_WEB_PORT")); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 && p < 65536 {
+			c.Web.Port = p
+		}
 	}
 }

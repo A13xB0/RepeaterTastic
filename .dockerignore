@@ -1,0 +1,6 @@
+.git
+bin
+dist
+ui/node_modules
+tests/interop/data
+*.log
