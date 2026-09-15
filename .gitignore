@@ -1,0 +1,11 @@
+/bin/
+/dist/
+*.test
+*.out
+/tests/interop/.venv/
+/tests/interop/data/
+/firmware/out/*.bin
+/firmware/work/
+/ui/node_modules/
+/ui/dist/
+.DS_Store

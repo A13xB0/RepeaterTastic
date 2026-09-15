@@ -1,0 +1,693 @@
+<title>Hopstatic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --ground:#F3F5F4; --surface:#FFFFFF; --ink:#16201D; --ink-2:#4A5752; --ink-3:#6E7B76;
+  --rule:#D5DCD9; --accent:#1C5D85; --accent-soft:#E1ECF3;
+  --warn:#8F5500; --warn-soft:#F6EAD6; --ok:#2E6B45; --ok-soft:#E0EEE5; --crit:#A33A2B; --crit-soft:#F5E1DD;
+  --code-bg:#E9EEEC;
+  --f-display:"Bricolage Grotesque","Avenir Next","Segoe UI",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,-apple-system,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0F1413; --surface:#161D1B; --ink:#DCE3E0; --ink-2:#A2AFAA; --ink-3:#7F8C87;
+    --rule:#2A3431; --accent:#7CB6DB; --accent-soft:#1A2C38;
+    --warn:#E0A54A; --warn-soft:#3A2C16; --ok:#7CC49A; --ok-soft:#1A2E22; --crit:#E58A7B; --crit-soft:#3A1E1A;
+    --code-bg:#1B2321;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0F1413; --surface:#161D1B; --ink:#DCE3E0; --ink-2:#A2AFAA; --ink-3:#7F8C87;
+  --rule:#2A3431; --accent:#7CB6DB; --accent-soft:#1A2C38;
+  --warn:#E0A54A; --warn-soft:#3A2C16; --ok:#7CC49A; --ok-soft:#1A2E22; --crit:#E58A7B; --crit-soft:#3A1E1A;
+  --code-bg:#1B2321;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.6;padding-inline:20px;padding-block:0 80px}
+a{color:var(--accent);text-underline-offset:2px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.shell{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:1fr;gap:48px}
+@media (min-width:1080px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+nav.toc{display:none}
+@media (min-width:1080px){
+  nav.toc{display:block;position:sticky;top:calc(env(safe-area-inset-top,0px) + 32px);align-self:start;padding-top:180px;font-size:13.5px}
+  nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+  nav.toc a{color:var(--ink-2);text-decoration:none}
+  nav.toc a:hover{color:var(--accent)}
+  nav.toc .label{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px}
+}
+main{max-width:780px;min-width:0}
+header.top{padding-block:56px 32px;border-bottom:1px solid var(--rule);margin-bottom:40px}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);display:flex;flex-wrap:wrap;gap:6px 18px}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(40px,6vw,58px);line-height:1.02;letter-spacing:-.02em;margin:14px 0 16px;text-wrap:balance}
+.lede{font-size:19px;line-height:1.55;color:var(--ink-2);max-width:62ch;margin:0}
+h2{font-family:var(--f-display);font-weight:600;font-size:28px;line-height:1.15;letter-spacing:-.01em;margin:64px 0 14px;text-wrap:balance;scroll-margin-top:24px}
+h3{font-family:var(--f-body);font-weight:600;font-size:17px;margin:32px 0 8px;text-wrap:balance}
+p,li{max-width:68ch}
+p{margin:0 0 14px}
+ul,ol{padding-left:22px;margin:0 0 16px}
+li{margin-bottom:6px}
+code{font-family:var(--f-mono);font-size:.88em;background:var(--code-bg);padding:1px 5px;border-radius:3px}
+pre{font-family:var(--f-mono);font-size:13px;line-height:1.55;background:var(--code-bg);padding:16px 18px;border-radius:6px;overflow-x:auto;margin:0 0 18px}
+pre code{background:none;padding:0;font-size:inherit}
+.muted{color:var(--ink-3)}
+.small{font-size:14px}
+
+/* verdict */
+.verdict{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:22px 24px;display:grid;gap:14px}
+.verdict .head{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+.verdict .big{font-family:var(--f-display);font-size:24px;font-weight:600}
+.verdict ul{margin:0}
+.chip{display:inline-block;font-family:var(--f-mono);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:99px;white-space:nowrap;vertical-align:1px}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.crit{background:var(--crit-soft);color:var(--crit)}
+.chip.info{background:var(--accent-soft);color:var(--accent)}
+
+/* callout */
+.note{border-left:3px solid var(--warn);background:var(--warn-soft);padding:12px 16px;border-radius:0 6px 6px 0;margin:0 0 18px}
+.note p:last-child{margin:0}
+
+/* tables */
+.tbl{overflow-x:auto;margin:0 0 20px;border:1px solid var(--rule);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--rule)}
+tr:last-child td{border-bottom:none}
+th{font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);background:var(--ground)}
+td.mono,.mono{font-family:var(--f-mono);font-size:13px;font-variant-numeric:tabular-nums}
+
+/* byte map */
+.bytemap{overflow-x:auto;margin:6px 0 10px}
+.bm-row{display:grid;grid-template-columns:repeat(16,minmax(38px,1fr));min-width:640px;gap:2px}
+.bm-cell{font-family:var(--f-mono);font-size:11px;color:var(--ink-3);text-align:center;padding:2px 0}
+.bm-field{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:8px 6px;text-align:center;font-family:var(--f-mono);font-size:12.5px;line-height:1.3}
+.bm-field b{display:block;font-family:var(--f-body);font-weight:600;font-size:13px;color:var(--ink)}
+.bm-field span{color:var(--ink-3);font-size:11px}
+.bm-field.hot{background:var(--accent-soft);border-color:transparent}
+.bits{display:grid;grid-template-columns:3fr 1fr 1fr 3fr;gap:2px;max-width:420px;margin:10px 0 20px}
+.bits div{font-family:var(--f-mono);font-size:12px;text-align:center;padding:6px 4px;background:var(--surface);border:1px solid var(--rule);border-radius:4px}
+.bits div span{display:block;font-size:10.5px;color:var(--ink-3)}
+
+/* diagram */
+figure{margin:8px 0 24px}
+.diagram{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:12px}
+.diagram svg{display:block;min-width:720px;width:100%;height:auto}
+figcaption{font-size:13.5px;color:var(--ink-3);margin-top:8px;max-width:68ch}
+svg .box{fill:var(--ground);stroke:var(--rule);stroke-width:1.2}
+svg .box.hot{fill:var(--accent-soft);stroke:var(--accent)}
+svg .box.hw{fill:var(--surface);stroke:var(--ink-3);stroke-dasharray:4 3}
+svg text{fill:var(--ink);font-family:var(--f-body);font-size:13px}
+svg text.t{font-weight:600;font-size:13.5px}
+svg text.s{fill:var(--ink-3);font-size:11.5px}
+svg text.m{font-family:var(--f-mono);font-size:11px;fill:var(--ink-2)}
+svg .ln{stroke:var(--ink-3);stroke-width:1.3;fill:none}
+svg .ln.acc{stroke:var(--accent)}
+svg .arrow{fill:var(--ink-3)}
+svg .arrow.acc{fill:var(--accent)}
+
+/* phases */
+.phases{list-style:none;padding:0;margin:0;display:grid;gap:0;counter-reset:ph}
+.phase{display:grid;grid-template-columns:56px minmax(0,1fr);gap:0 16px;padding:18px 0;border-top:1px solid var(--rule)}
+.phase:last-child{border-bottom:1px solid var(--rule)}
+.phase .n{font-family:var(--f-display);font-weight:700;font-size:30px;line-height:1;color:var(--accent)}
+.phase h3{margin:2px 0 6px}
+.phase ul{margin:0 0 8px}
+.phase .exit{font-size:14.5px;background:var(--ok-soft);color:var(--ink);padding:8px 12px;border-radius:5px;max-width:68ch}
+.phase .exit b{color:var(--ok);font-weight:600}
+
+/* decisions */
+.decisions{display:grid;gap:12px;margin:0 0 20px}
+.decision{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 18px}
+.decision h3{margin:0 0 4px;font-size:16px}
+.decision p{margin:0;font-size:15px;color:var(--ink-2)}
+.decision .rec{color:var(--ink)}
+
+.rules{display:grid;gap:0;margin:0 0 16px}
+.rule{padding:14px 0;border-top:1px solid var(--rule)}
+.rule:last-child{border-bottom:1px solid var(--rule)}
+.rule h3{margin:0 0 4px;font-size:16.5px}
+.rule p{margin:0;color:var(--ink-2)}
+
+/* GUI wireframe */
+.mock-wrap{overflow-x:auto;margin:8px 0 8px;border:1px solid var(--rule);border-radius:8px;background:var(--surface)}
+.mock{min-width:760px;display:grid;grid-template-columns:168px minmax(0,1fr);font-size:13px;line-height:1.4}
+.mock-side{border-right:1px solid var(--rule);padding:14px 10px;display:grid;align-content:start;gap:2px;background:var(--ground)}
+.mock-brand{font-family:var(--f-display);font-weight:700;font-size:16px;padding:2px 8px 12px}
+.mock-nav{padding:6px 8px;border-radius:5px;color:var(--ink-2)}
+.mock-nav.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.mock-main{display:grid;align-content:start;min-width:0}
+.mock-top{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--rule);font-size:12px;color:var(--ink-2)}
+.mock-top .mono{font-size:12px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px;vertical-align:0}
+.gauge{display:inline-flex;align-items:center;gap:8px}
+.gauge .bar{width:90px;height:6px;border-radius:3px;background:var(--rule);position:relative;overflow:hidden}
+.gauge .bar i{position:absolute;inset:0 auto 0 0;width:41%;background:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:5px;overflow:hidden;margin-left:auto}
+.seg span{padding:3px 9px;font-size:12px;color:var(--ink-2)}
+.seg span.on{background:var(--accent);color:var(--surface);font-weight:600}
+.mock-body{padding:16px}
+.mock-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+.mock-head b{font-family:var(--f-display);font-size:18px;font-weight:600}
+.btn{font-size:12px;padding:5px 11px;border-radius:5px;border:1px solid var(--rule);color:var(--ink)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--surface);font-weight:600}
+.mock table{font-size:12.5px}
+.mock th,.mock td{padding:8px 10px}
+.mock td .sub{display:block;color:var(--ink-3);font-size:11.5px}
+
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--rule);font-size:13.5px;color:var(--ink-3)}
+footer ul{padding-left:18px}
+@media (max-width:520px){ body{font-size:15.5px} .lede{font-size:17px} h2{font-size:24px} .phase{grid-template-columns:40px minmax(0,1fr)} .phase .n{font-size:24px}}
+</style>
+
+<div class="shell">
+<nav class="toc" aria-label="Contents">
+  <div class="label">Contents</div>
+  <ol>
+    <li><a href="#verdict">Verdict</a></li>
+    <li><a href="#openhop">What we take from openHop</a></li>
+    <li><a href="#radio">Radio and modem</a></li>
+    <li><a href="#arch">Architecture</a></li>
+    <li><a href="#rules">Rules that differ from MeshCore</a></li>
+    <li><a href="#wire">Wire reference</a></li>
+    <li><a href="#api">Client API servers</a></li>
+    <li><a href="#links">Inter-routing</a></li>
+    <li><a href="#gui">Web GUI</a></li>
+    <li><a href="#phases">Phases</a></li>
+    <li><a href="#layout">Repo and config</a></li>
+    <li><a href="#testing">Testing</a></li>
+    <li><a href="#risks">Risks</a></li>
+    <li><a href="#decisions">Decisions for you</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow"><span>Build plan · v0.1</span><span>15 Sep 2026</span><span>Target: Meshtastic 2.7 – 2.8</span></div>
+  <h1>Hopstatic</h1>
+  <p class="lede">An openHop-style host for Meshtastic. A Pi (or any Linux box) runs many virtual Meshtastic nodes in software, all sharing one dumb LoRa modem. Each node gets its own TCP API port that the official apps can connect to, and the nodes route to each other locally. <span class="muted">“Hopstatic” is a working name.</span></p>
+</header>
+
+<section id="verdict">
+<div class="verdict">
+  <div class="head"><span class="chip ok">Feasible</span><span class="big">Yes, and the radio side needs one small patch.</span></div>
+  <ul>
+    <li><b>Meshtastic already fits a dumb modem.</b> A packet is a 16-byte plaintext header plus an encrypted protobuf, at most 255 bytes, sent as ordinary explicit-header LoRa. The node logic runs entirely on the ESP32 and uses nothing from the radio chip except the SX126x itself.</li>
+    <li><b>The MeshCore KISS modem almost works as-is.</b> It already exposes freq/BW/SF/CR, RSSI and SNR per packet, TX-done events, and a channel-busy check. For LongFast (SF11) its preamble is already 16 symbols, the same as Meshtastic's.</li>
+    <li><b>The one blocker is the sync word.</b> The modem hardcodes <code>RADIOLIB_SX126X_SYNC_WORD_PRIVATE</code> (0x12) at <code>src/helpers/radiolib/CustomSX1262.h:56</code>. Meshtastic uses <b>0x2B</b>, so right now the modem cannot hear Meshtastic at all. Adding a <code>SetSyncWord</code> sub-command is about 30 lines.</li>
+    <li><b>Many identities are easier than on MeshCore.</b> Meshtastic addresses are exact 32-bit node numbers, not 1-byte hashes, so working out who a packet is for is a lookup, not trial decryption.</li>
+  </ul>
+</div>
+</section>
+
+<section id="openhop">
+<h2>What we take from openHop</h2>
+<p>openHop Repeater is the renamed pyMC_Repeater, running on openhop_core (the renamed pyMC_core). It is MIT-licensed Python on asyncio. Its virtual companions are the model to copy. Five patterns carry over directly:</p>
+<ul>
+  <li><b>The host owns the radio.</b> Identities are “bridges” with no radio of their own. They transmit through a single injector (<code>router.inject_packet(origin=…)</code>).</li>
+  <li><b>One router makes every decision.</b> Every received packet goes through <code>PacketRouter</code>, which hands it to local identities and then to the forwarding engine.</li>
+  <li><b>One TCP port per identity.</b> Its <code>CompanionFrameServer</code> is an <code>asyncio.start_server</code> per companion, and a new client evicts the old one.</li>
+  <li><b>Injected packets are tagged with their origin.</b> The originating identity never receives its own packet back, while the other local identities still get it.</li>
+  <li><b>TX is confirmed by TX-done.</b> <code>KissModemWrapper</code> sends one frame at a time and waits for <code>0xF8</code> TxDone. It already matches the MeshCore KISS protocol byte for byte.</li>
+</ul>
+<p>Two things to do differently. openHop <em>always</em> transmits a local-to-local message over the air before delivering it in software, which wastes airtime for DMs. Its sync word is also fixed at firmware build time. We make both configurable.</p>
+</section>
+
+<section id="radio">
+<h2>Radio and modem</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Option</th><th>Works for Meshtastic?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><b>MeshCore KISS modem</b> on Heltec V3<br><span class="muted small">env <code>Heltec_v3_kiss_modem</code>; about 80 other boards have a KISS env</span></td><td><span class="chip warn">After patch</span></td><td>Recommended. Needs <code>SetSyncWord</code>, plus <code>SetPreamble</code> for SF7/SF8 presets, where MeshCore forces 32 symbols (<code>preambleLengthForSF</code>). Worth upstreaming, because openHop's own wrapper notes the sync word can't be changed at runtime.</td></tr>
+    <tr><td><b>Pi + SX1262 SPI HAT</b></td><td><span class="chip ok">Yes</span></td><td>openhop_core's <code>SX1262Radio</code> sets the sync word in software (register value <code>0x24B4</code> for 0x2B). No firmware at all. Timing is the best of any option, because CAD and TX run on the host.</td></tr>
+    <tr><td><b>openhop_modem</b> (USB/TCP)</td><td><span class="chip info">Unverified</span></td><td>openHop's own dumb-SX1262 firmware. I haven't read its protocol yet. Check whether it exposes the sync word before depending on it.</td></tr>
+    <tr><td>Stock Meshtastic firmware</td><td><span class="chip crit">No</span></td><td>The identity and the mesh logic live on the device. It has no raw TX/RX mode.</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Modem patch (sketch, against local <code>MeshCore/examples/kiss_modem</code>)</h3>
+<pre><code>// KissModem.h — next free sub-commands after 0x1A GetSignalReport
+#define HW_CMD_SET_SYNC_WORD   0x1B   // data: sync word (1)   e.g. 0x2B
+#define HW_CMD_SET_PREAMBLE    0x1C   // data: symbols (2, LE) e.g. 16
+#define HW_CMD_GET_PHY_EXTRA   0x1D   // -> sync (1) + preamble (2)
+
+// main.cpp
+void onSetSyncWord(uint8_t sw)  { radio_driver.setSyncWord(sw); }        // RadioLib SX126x: 0x2B -> reg 0x0740 = 24 B4
+void onSetPreamble(uint16_t n)  { radio_driver.setPreambleOverride(n); } // must survive setParams(),
+                                                                         // which calls updatePreamble(sf)</code></pre>
+<p>Session setup from the host, once per connect (EU_868 LongFast shown):</p>
+<pre><code>SetRadio      freq=869525000 bw=250000 sf=11 cr=5
+SetSyncWord   0x2B
+SetPreamble   16
+SetTxPower    27            # region limit; the antenna and ERP are your responsibility
+TXDELAY       0             # the firmware default is 500 ms, which breaks Meshtastic contention timing
+Persistence   255           # the host runs the Meshtastic contention window, the modem only does a carrier check</code></pre>
+</section>
+
+<section id="arch">
+<h2>Architecture</h2>
+<p>One process, asyncio, Python. The rest of this section follows the diagram.</p>
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 900 470" role="img" aria-label="Architecture: LoRa modem feeds radio driver, then RX pipeline, then mesh router, which serves virtual nodes, each with a TCP API port; links for UDP multicast and MQTT attach to the router.">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow acc" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+
+  <!-- hardware -->
+  <rect class="box hw" x="20" y="40" width="150" height="86" rx="6"/>
+  <text class="t" x="36" y="68">LoRa modem</text>
+  <text class="s" x="36" y="88">Heltec V3, KISS fw</text>
+  <text class="m" x="36" y="108">sync 0x2B · pre 16</text>
+
+  <line class="ln" x1="170" y1="83" x2="224" y2="83" marker-end="url(#ah)" marker-start="url(#ah)"/>
+  <text class="m" x="176" y="74">USB</text>
+
+  <!-- host boundary -->
+  <rect x="232" y="14" width="652" height="442" rx="10" style="fill:none;stroke:var(--rule);stroke-width:1.2"/>
+  <text class="s" x="248" y="36">Linux host · one process</text>
+
+  <rect class="box" x="248" y="48" width="170" height="70" rx="6"/>
+  <text class="t" x="262" y="74">Radio driver</text>
+  <text class="s" x="262" y="94">KISS · SPI · UDP-sim</text>
+
+  <line class="ln" x1="418" y1="83" x2="470" y2="83" marker-end="url(#ah)"/>
+
+  <rect class="box" x="472" y="48" width="396" height="70" rx="6"/>
+  <text class="t" x="486" y="74">RX pipeline</text>
+  <text class="s" x="486" y="94">parse header → (from,id) dedupe → sniff ACKs → decrypt → decode Data</text>
+
+  <line class="ln" x1="670" y1="118" x2="670" y2="160" marker-end="url(#ah)"/>
+
+  <!-- router -->
+  <rect class="box hot" x="248" y="162" width="620" height="100" rx="6"/>
+  <text class="t" x="264" y="188">Mesh router</text>
+  <text class="s" x="264" y="208">Relay persona (one per radio) · next-hop table · packet history</text>
+  <text class="s" x="264" y="226">TX scheduler: Meshtastic contention window + channel-busy check + duty-cycle budget</text>
+  <text class="s" x="264" y="244">Local short-circuit for identity → identity traffic</text>
+
+  <line class="ln" x1="333" y1="162" x2="333" y2="118" marker-end="url(#ah)"/>
+  <text class="m" x="340" y="146">TX</text>
+
+  <!-- identities -->
+  <g>
+    <rect class="box" x="248" y="304" width="190" height="72" rx="6"/>
+    <text class="t" x="262" y="328">Node !a1c40e07</text>
+    <text class="s" x="262" y="346">“Base Camp” · keys, NodeDB,</text>
+    <text class="s" x="262" y="362">channels, outbox</text>
+    <rect class="box" x="463" y="304" width="190" height="72" rx="6"/>
+    <text class="t" x="477" y="328">Node !5b9e2213</text>
+    <text class="s" x="477" y="346">“Ops Desk”</text>
+    <rect class="box" x="678" y="304" width="190" height="72" rx="6"/>
+    <text class="t" x="692" y="328">Node … ×N</text>
+    <text class="s" x="692" y="346">hot-add at runtime</text>
+  </g>
+  <line class="ln acc" x1="343" y1="262" x2="343" y2="302" marker-end="url(#aha)" marker-start="url(#aha)"/>
+  <line class="ln acc" x1="558" y1="262" x2="558" y2="302" marker-end="url(#aha)" marker-start="url(#aha)"/>
+  <line class="ln acc" x1="773" y1="262" x2="773" y2="302" marker-end="url(#aha)" marker-start="url(#aha)"/>
+
+  <!-- tcp -->
+  <rect class="box" x="248" y="398" width="190" height="42" rx="6"/>
+  <text class="m" x="262" y="423">TCP :4403 · mDNS</text>
+  <rect class="box" x="463" y="398" width="190" height="42" rx="6"/>
+  <text class="m" x="477" y="423">TCP :4404 · mDNS</text>
+  <rect class="box" x="678" y="398" width="190" height="42" rx="6"/>
+  <text class="m" x="692" y="423">TCP :44xx · mDNS</text>
+  <line class="ln" x1="343" y1="376" x2="343" y2="398"/>
+  <line class="ln" x1="558" y1="376" x2="558" y2="398"/>
+  <line class="ln" x1="773" y1="376" x2="773" y2="398"/>
+
+  <!-- links -->
+  <rect class="box" x="20" y="176" width="190" height="72" rx="6"/>
+  <text class="t" x="34" y="200">Links</text>
+  <text class="s" x="34" y="218">UDP multicast (meshtasticd)</text>
+  <text class="s" x="34" y="234">Host ↔ host · MQTT</text>
+  <line class="ln" x1="210" y1="212" x2="246" y2="212" marker-end="url(#ah)" marker-start="url(#ah)"/>
+
+  <!-- apps -->
+  <text class="s" x="34" y="410">Meshtastic apps,</text>
+  <text class="s" x="34" y="426">Python CLI, web UI</text>
+  <line class="ln" x1="150" y1="419" x2="246" y2="419" marker-end="url(#ah)" marker-start="url(#ah)"/>
+</svg>
+</div>
+<figcaption>Only the router talks to the radio. Virtual nodes never relay on their own: relaying belongs to one persona per radio, so a packet is never re-broadcast N times.</figcaption>
+</figure>
+
+<h3>Receive path, in order</h3>
+<ol>
+  <li><b>Parse and screen the header.</b> Drop <code>from == 0</code>. Ignore <code>next_hop</code>/<code>relay_node</code> when <code>hop_start == 0</code>. Attach RSSI and SNR from the modem's <code>0xF9 RxMeta</code>.</li>
+  <li><b>Check packet history</b>, keyed by (from, id) and shared across the host. A duplicate still counts. It can be an <em>implicit ACK</em> for an identity that is waiting, it can cancel a pending relay, and it can replace a queued copy that has a lower hop limit.</li>
+  <li><b>Sniff for routing.</b> Overheard ACKs and replies update the shared next-hop table, because every identity is in the same RF spot.</li>
+  <li><b>Decrypt.</b> If <code>channel == 0</code> and <code>dest</code> is a local node number, use PKI with that identity's X25519 key. Otherwise gather every channel, across all identities, whose 1-byte hash matches. Try AES-CTR on each and accept the first result that decodes as a valid <code>Data</code> protobuf. CTR mode has no MAC, which is also how the firmware does it.</li>
+  <li><b>Deliver.</b> A unicast goes to the one identity whose node number matches. A broadcast goes to every identity holding that channel, all at once, which is the “all receive at the same time” requirement.</li>
+  <li><b>Relay decision.</b> The relay persona follows the configured role (CLIENT, ROUTER or CLIENT_MUTE). It relays if the packet isn't to or from us, hop_limit is above 0, and next_hop is 0 or our last byte. A relay decrements hop_limit, sets relay_node, and schedules with the SNR-weighted contention window.</li>
+</ol>
+</section>
+
+<section id="rules">
+<h2>Rules that differ from MeshCore</h2>
+<div class="rules">
+  <div class="rule"><h3>All identities must share the primary channel name and preset</h3><p>The frequency is <code>djb2(primary channel name) % slots</code>. If one app renames its primary channel, it silently asks for a different frequency. On the client API, reject changes to region, preset, frequency slot and primary channel name, and report the host's LoRa config back unchanged. Secondary channels and PSKs stay per identity.</p></div>
+  <div class="rule"><h3>Node numbers come from the key</h3><p>From 2.8, node number = <code>crc32(public_key)</code>, and a node's first NodeInfo only verifies if that holds. When creating an identity, regenerate the X25519 key until the result isn't reserved (0–3 or 0xFFFFFFFF), has a last byte that isn't 0x00, and has a last byte unique among local identities, ideally among heard neighbours too. <span class="chip info">verify</span> that ErriezCRC32 is standard IEEE CRC-32.</p></div>
+  <div class="rule"><h3>One relay persona per radio</h3><p>MeshCore hosts are repeaters by nature. A Meshtastic host with 20 identities that each relayed independently would flood the channel. The persona is an identity too, with its own NodeInfo, and it is what neighbours see as <code>relay_node</code>.</p></div>
+  <div class="rule"><h3>DMs must use PKI</h3><p>2.7+ rejects channel-key TEXT_MESSAGE DMs addressed to a node (“Rejecting legacy DM”). The virtual node needs X25519 + AES-CCM from day one. When a peer's key is unknown, send a NodeInfo request first.</p></div>
+  <div class="rule"><h3>Reliability belongs to each identity, routing to the host</h3><p>Retries run per identity: 5 attempts for unicast on 2.8, the last one falling back to flood. Next-hop routes, packet history and airtime are shared.</p></div>
+  <div class="rule"><h3>Airtime is one budget</h3><p>A 100-byte packet on LongFast takes about 1.0 s. EU_868 allows 10%, which is 360 s an hour for <em>all</em> identities plus relays. Keep a shared hourly budget and priority queues (ACK/routing › reliable › default › background). Stagger periodic NodeInfo, and leave position and telemetry off by default.</p></div>
+  <div class="rule"><h3>Always set <code>Data.bitfield</code></h3><p>A 2.8 node treats a packet with hop_start 0 and no bitfield as pre-2.3 firmware and skips it.</p></div>
+</div>
+</section>
+
+<section id="wire">
+<h2>Wire reference</h2>
+<h3>Header, 16 bytes, little-endian, plaintext</h3>
+<div class="bytemap">
+  <div class="bm-row">
+    <div class="bm-cell">0</div><div class="bm-cell">1</div><div class="bm-cell">2</div><div class="bm-cell">3</div>
+    <div class="bm-cell">4</div><div class="bm-cell">5</div><div class="bm-cell">6</div><div class="bm-cell">7</div>
+    <div class="bm-cell">8</div><div class="bm-cell">9</div><div class="bm-cell">10</div><div class="bm-cell">11</div>
+    <div class="bm-cell">12</div><div class="bm-cell">13</div><div class="bm-cell">14</div><div class="bm-cell">15</div>
+  </div>
+  <div class="bm-row">
+    <div class="bm-field hot" style="grid-column:span 4"><b>dest</b><span>u32 · ffffffff = broadcast</span></div>
+    <div class="bm-field hot" style="grid-column:span 4"><b>from</b><span>u32 node number</span></div>
+    <div class="bm-field" style="grid-column:span 4"><b>id</b><span>u32 · 22 random + 10 counter bits</span></div>
+    <div class="bm-field"><b>flags</b></div>
+    <div class="bm-field"><b>ch</b><span>hash</span></div>
+    <div class="bm-field"><b>next</b><span>hop</span></div>
+    <div class="bm-field"><b>relay</b><span>node</span></div>
+  </div>
+</div>
+<div class="bits" aria-label="flags byte">
+  <div>7 6 5<span>hop_start</span></div><div>4<span>via_mqtt</span></div><div>3<span>want_ack</span></div><div>2 1 0<span>hop_limit</span></div>
+</div>
+<p class="small muted">After the header comes the encrypted <code>Data</code> protobuf, at most 239 bytes. <code>next_hop</code> and <code>relay_node</code> hold the last byte of a node number, with 0x00 mapped to 0xFF.</p>
+
+<div class="tbl"><table>
+  <thead><tr><th>Piece</th><th>Exact behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>PHY, LongFast</td><td class="mono">SF11 · BW 250 kHz · CR 4/5 · preamble 16 · sync 0x2B · explicit header · CRC on · LDRO off</td></tr>
+    <tr><td>Frequency</td><td><code>slot = channel_num ? channel_num−1 : djb2(name) % numSlots</code>; <code>freq = start + bw/2 + slot·bw</code> when spacing and padding are 0. EU_868 LongFast gives <span class="mono">869.525 MHz</span>, US gives <span class="mono">906.875 MHz</span> (slot 19). 2.8 changed slot counting from floor to round, so test against real nodes in regions whose band doesn't divide evenly.</td></tr>
+    <tr><td>Channel hash</td><td>XOR of the name bytes, XOR'd with the XOR of the expanded key bytes. LongFast with the default key gives <span class="mono">0x08</span>.</td></tr>
+    <tr><td>Default key</td><td>PSK <span class="mono">0x01</span> (“AQ==”) expands to <span class="mono">d4f1bb3a20290759f0bcffabcf4e6901</span>. PSK <span class="mono">n</span> adds n−1 to the last byte.</td></tr>
+    <tr><td>Channel crypto</td><td>AES-CTR (128/256). IV = <span class="mono">id u64 LE ‖ from u32 LE ‖ 00000000</span>. No MAC.</td></tr>
+    <tr><td>PKI DM</td><td>key = SHA-256(X25519(priv, peer_pub)). AES-256-CCM, 13-byte nonce <span class="mono">id LE4 ‖ extraNonce LE4 ‖ from LE4 ‖ 00</span>, 8-byte tag. On air: <span class="mono">ciphertext ‖ tag(8) ‖ extraNonce(4)</span>, header <code>ch = 0</code>. Never used for NodeInfo, Routing, Position or Traceroute.</td></tr>
+    <tr><td>Signatures (2.8)</td><td>XEdDSA, 64 bytes in <code>Data.xeddsa_signature</code>, over <span class="mono">from LE4 ‖ id LE4 ‖ portnum LE4 ‖ payload</span>. Optional under the default COMPATIBLE policy, but once you sign, keep signing.</td></tr>
+    <tr><td>Contention slot</td><td><code>slot = 2.5·(2^SF / BW) + 7.6 ms</code>, about 28 ms on LongFast. <code>CW = map(snr, −20…10 → 3…8)</code>. A CLIENT relay waits <code>2·CWmax·slot + rand(2^CW)·slot</code>, a ROUTER waits <code>rand(2·CW)·slot</code>.</td></tr>
+    <tr><td>ACK</td><td>Port ROUTING_APP, <code>Data.request_id</code> = original id, <code>Routing{error_reason: NONE}</code>. Hearing your own (from, id) relayed counts as an implicit ACK.</td></tr>
+  </tbody>
+</table></div>
+<p class="small muted">Sources: firmware <code>src/mesh/RadioInterface.{h,cpp}</code>, <code>CryptoEngine.cpp</code>, <code>Channels.cpp</code>, <code>NextHopRouter.cpp</code>, <code>ReliableRouter.cpp</code>, <code>NodeDB.cpp</code>, read at master 2.8.1 (<code>9d27b27</code>) and compared with tags 2.7.26 and 2.8.0.</p>
+</section>
+
+<section id="api">
+<h2>Client API servers</h2>
+<p>Each identity runs its own copy of the firmware's <code>PhoneAPI</code> state machine on its own TCP port. Frames are <code>0x94 0xC3 ‖ len u16 BE ‖ protobuf</code>, the host receives <code>ToRadio</code> and sends <code>FromRadio</code>, and the maximum frame is 512 bytes.</p>
+<div class="tbl"><table>
+  <thead><tr><th>Must implement</th><th>Can stub or refuse</th></tr></thead>
+  <tbody><tr>
+    <td>
+      <ul class="small" style="margin:0">
+        <li>Two-stage handshake: <code>want_config_id 69420</code> (my_info, metadata with firmware_version ≥ 2.5.14, channels, config, moduleConfig, complete), then <code>69421</code> (own NodeInfo, peers, complete)</li>
+        <li><code>heartbeat</code>, answered with <code>QueueStatus</code></li>
+        <li><code>ToRadio.packet</code>: QueueStatus now, Routing ACK once delivered</li>
+        <li>Admin to self: get/set owner, get/set channel (secondary channels), get config, device metadata, session passkey, begin/commit edit</li>
+        <li>An offline queue replayed on reconnect</li>
+      </ul>
+    </td>
+    <td>
+      <ul class="small" style="margin:0">
+        <li>Region, preset, frequency or primary channel changes: return an error and the host's values</li>
+        <li>XModem/file transfer, OTA, reboot, factory reset</li>
+        <li>Bluetooth, WiFi, display and GPS config (read-only defaults)</li>
+        <li>MQTT client proxy (Links handle MQTT instead)</li>
+        <li>Remote admin of other nodes (later phase)</li>
+      </ul>
+    </td>
+  </tr></tbody>
+</table></div>
+<p><b>Discovery.</b> Advertise each identity as <code>_meshtastic._tcp</code> over mDNS with its own port and name, so apps that browse the network see “Base Camp” and “Ops Desk” as separate radios.</p>
+<div class="note"><p><b>Check in phase 0:</b> whether the Android and iOS apps accept a non-4403 port on a manually entered address. If either insists on 4403, give each identity its own IP (extra addresses on the interface, or macvlan in Docker) and bind every server to <code>ip:4403</code>.</p></div>
+</section>
+
+<section id="links">
+<h2>Inter-routing</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Path</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><b>Local DM</b><br><span class="muted small">identity → identity, same host</span></td><td>Delivered in software, with a synthesised ACK and no RF (default). The option <code>local_dm: also_rf</code> copies openHop's always-transmit behaviour for people who want local traffic visible on the mesh.</td></tr>
+    <tr><td><b>Local broadcast</b></td><td>Delivered straight to every local identity on that channel, then transmitted once. When a relayed copy comes back, the packet history drops it for delivery but counts it as an implicit ACK.</td></tr>
+    <tr><td><b>UDP multicast</b></td><td><span class="mono">239.0.0.69:4403</span>, carrying encrypted <code>MeshPacket</code> protobufs. This is what native <code>meshtasticd</code> uses, so Hopstatic can share a LAN mesh with real meshtasticd nodes and other Hopstatic hosts. Treat it as another interface, with its own history entry and no RF airtime.</td></tr>
+    <tr><td><b>Host ↔ host</b> (WAN)</td><td>The same MeshPacket stream over authenticated TCP or WireGuard, for joining two sites. Per-link rules control which channels and ports cross.</td></tr>
+    <tr><td><b>MQTT gateway</b></td><td><code>msh/2/e/&lt;channel&gt;/!gateway</code> with <code>ServiceEnvelope</code>. Uplink and downlink are set per channel and are off by default.</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section id="gui">
+<h2>Web GUI</h2>
+<p>The layout copies openHop's dashboard so openHop users feel at home: a sidebar of views, a top bar showing radio health and relay mode, and live data pushed over WebSockets. openHop's UI (<code>openHop_RepeaterUI</code>, MIT, read at <code>acb5162</code>) is built with Vue 3, TypeScript, Vite, Pinia, Tailwind, Chart.js and Leaflet. Its API client is generated from the backend's <code>openapi.yaml</code>. Hopstatic uses the same stack and the same codegen step.</p>
+
+<figure>
+<div class="mock-wrap">
+<div class="mock" role="img" aria-label="Wireframe of the Identities view with example data">
+  <div class="mock-side">
+    <div class="mock-brand">Hopstatic</div>
+    <div class="mock-nav">Dashboard</div>
+    <div class="mock-nav on">Identities</div>
+    <div class="mock-nav">Nodes &amp; map</div>
+    <div class="mock-nav">Chat</div>
+    <div class="mock-nav">Channels</div>
+    <div class="mock-nav">Packets</div>
+    <div class="mock-nav">Statistics</div>
+    <div class="mock-nav">Links</div>
+    <div class="mock-nav">Configuration</div>
+    <div class="mock-nav">Logs</div>
+  </div>
+  <div class="mock-main">
+    <div class="mock-top">
+      <span><span class="dot"></span>Modem · Heltec V3 · KISS</span>
+      <span class="mono">EU_868 · LongFast · 869.525 MHz · sync 0x2B</span>
+      <span class="gauge">Airtime 1 h <span class="bar"><i></i></span><span class="mono">4.1 / 10 %</span></span>
+      <span class="seg" aria-label="Relay mode"><span class="on">Client</span><span>Router</span><span>Mute</span></span>
+    </div>
+    <div class="mock-body">
+      <div class="mock-head"><b>Identities</b><span style="display:flex;gap:8px"><span class="btn">Import key</span><span class="btn pri">New identity</span></span></div>
+      <div class="tbl" style="margin:0">
+      <table>
+        <thead><tr><th>Node</th><th>API</th><th>Apps</th><th>Outbox</th><th>Airtime 1 h</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><b>Hopstatic Relay</b><span class="sub mono">!3f0a91c2 · relay persona</span></td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">9.8 s</td><td><span class="chip info">Relaying</span></td></tr>
+          <tr><td><b>Base Camp</b><span class="sub mono">!a1c40e07 · BASE</span></td><td class="mono">:4403</td><td class="mono">1</td><td class="mono">0</td><td class="mono">3.2 s</td><td><span class="chip ok">Online</span></td></tr>
+          <tr><td><b>Ops Desk</b><span class="sub mono">!5b9e2213 · OPS</span></td><td class="mono">:4404</td><td class="mono">0</td><td class="mono">12</td><td class="mono">1.1 s</td><td><span class="chip warn">No app</span></td></tr>
+          <tr><td><b>Weather Bot</b><span class="sub mono">!7d21e4a9 · WX</span></td><td class="mono">:4405</td><td class="mono">1</td><td class="mono">0</td><td class="mono">133.6 s</td><td><span class="chip crit">Over share</span></td></tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+<figcaption>Wireframe with example data. Every node number is <code>crc32(pubkey)</code>, and the last bytes (c2, 07, 13, a9) are all unique. “Over share” means that one identity is using more than its configured slice of the hourly duty-cycle budget.</figcaption>
+</figure>
+
+<h3>Views</h3>
+<div class="tbl"><table>
+  <thead><tr><th>Hopstatic view</th><th>openHop equivalent</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><b>Setup wizard</b></td><td>Setup</td><td>Detects the modem (<code>/dev/serial/by-id</code>, Ping, version) and checks it accepts the sync-word command. You pick region and preset and see the computed frequency live, then set the relay role and admin password.</td></tr>
+    <tr><td><b>Dashboard</b></td><td>Dashboard</td><td>Headline figures (RX, TX, duplicates, relays, ACK success) and a live packet table showing from → to, port, channel, hops, SNR and RSSI. Each packet is tagged <em>ours</em>, <em>relayed</em>, <em>dup</em> or <em>undecryptable</em>. Also an airtime chart against the duty-cycle line, a noise-floor sparkline and a breakdown by port.</td></tr>
+    <tr><td><b>Identities</b></td><td>Companions</td><td>Create an identity (the key is generated and the node number and last-byte clash check are shown before saving), import a key, edit names, role and channels. Shows each identity's API port and IP, connected apps, outbox size and airtime share. Also enable/disable, restart the API server, delete, and export or back up the key.</td></tr>
+    <tr><td><b>Nodes &amp; map</b></td><td>Neighbors, Neighbor links</td><td>The shared node list: last heard, SNR, hops away, role, hardware, whether we have their key, and which identities know them. Leaflet map of positions. Per-node actions: traceroute or request NodeInfo, sent from the identity you choose.</td></tr>
+    <tr><td><b>Chat</b></td><td><span class="muted">new</span> (openHop has only a raw frame proxy)</td><td>Channel messages and DMs for any identity, straight from the browser. It speaks the real client API over <code>/ws/identities/{node}/api</code>, so it doubles as a test client for phase 3.</td></tr>
+    <tr><td><b>Channels</b></td><td>Transport keys</td><td>A grid of identities × channels. The shared primary channel is shown locked. Import and export channel sets as <code>meshtastic.org/e/#…</code> URLs and QR codes.</td></tr>
+    <tr><td><b>Packets</b></td><td>Packet archive</td><td>Search by node, port, channel and time. The detail view shows the header byte-map, flag bits, which key decrypted the packet, and the decoded protobuf as JSON.</td></tr>
+    <tr><td><b>Statistics</b></td><td>Statistics, RF health</td><td>Airtime per identity and for relays over 24 h and 7 d, ACK success per identity, channel utilisation, and packets lost while we were transmitting.</td></tr>
+    <tr><td><b>Links</b></td><td><span class="muted">new</span></td><td>Status and counters for UDP multicast, host links and MQTT, plus per-link channel and port filters.</td></tr>
+    <tr><td><b>Configuration</b></td><td>Configuration</td><td>Radio, relay, duty cycle, contention-window tuning, web settings and API tokens, backup and restore (keys included), database maintenance.</td></tr>
+    <tr><td><b>Logs, System</b></td><td>Logs, System stats</td><td>Live log tail, CPU and temperature, modem link state and reconnect history.</td></tr>
+  </tbody>
+</table></div>
+<p class="small muted">Not carried over from openHop because they're MeshCore-only: room servers, neighbour scopes, policy engine, CAD calibration, LetsMesh. Plugins wait until after phase 6.</p>
+
+<h3>Backend for the GUI</h3>
+<ul>
+  <li><b>Web server:</b> FastAPI on uvicorn, in the same asyncio loop as the router, so the UI reads live state directly with no IPC. openHop runs CherryPy in a thread. FastAPI generates the OpenAPI spec itself, which feeds the UI's <code>api:generate</code> step exactly as openHop's spec does.</li>
+  <li><b>Auth:</b> the setup wizard creates the admin account. Browser sessions use JWT; scripts and Home Assistant use API tokens. Default bind is <code>0.0.0.0:8080</code>.</li>
+  <li><b>Official Meshtastic web client:</b> each identity also serves the firmware's HTTP API, <code>PUT /api/v1/toradio</code> and <code>GET /api/v1/fromradio</code> (<code>src/mesh/http/ContentHandler.cpp</code>). That means the official Meshtastic Web client can open any identity, which gives a second full-featured client for little extra work.</li>
+</ul>
+<pre><code>GET  /api/v1/status                      radio, airtime, relay mode
+GET  /api/v1/identities                  POST create · PATCH /{node} · DELETE /{node}
+POST /api/v1/identities/{node}/key       import · GET export (admin only)
+GET  /api/v1/nodes?heard_since=…         shared NodeDB
+POST /api/v1/nodes/{node}/traceroute     body: { "from_identity": "!a1c40e07" }
+GET  /api/v1/packets?from=&amp;port=&amp;channel=&amp;since=
+GET  /api/v1/stats/airtime?window=24h
+GET  /api/v1/channels                    PUT /{identity}/{index}
+GET  /api/v1/links                       PATCH /{link}
+PUT  /api/v1/config                      live reload where safe, else asks for restart
+
+WS   /ws/packets                         decoded live packet feed
+WS   /ws/events                          identity up/down, app connects, airtime ticks
+WS   /ws/identities/{node}/api           raw client-API frames for browser chat</code></pre>
+<p><b>Reusing openHop's UI.</b> Copy the generic parts with their MIT notice: sidebar and top-bar layout, packet table, airtime and packet-type charts, sparkline, confirm/restart/key modals, theme toggle, login and setup flow, and the WebSocket store. Rewrite the views, since openHop's views alone are about 19,000 lines, nearly all MeshCore-specific.</p>
+</section>
+
+<section id="phases">
+<h2>Phases</h2>
+<p class="muted">Each phase ends with something testable against real Meshtastic hardware, and the order is forced: nothing later works without the one before.</p>
+<ol class="phases">
+  <li class="phase"><div class="n">0</div><div>
+    <h3>Proof of air</h3>
+    <ul><li>Patch the KISS modem (sync word, preamble), flash a Heltec V3.</li><li>A throwaway Python script: sniff LongFast, decode headers, decrypt the default channel, print text.</li><li>Hand-build and transmit one broadcast text. Check the app port question from the Client API section.</li></ul>
+    <div class="exit"><b>Exit:</b> a stock Meshtastic phone shows our text on LongFast, and we show theirs.</div>
+  </div></li>
+  <li class="phase"><div class="n">1</div><div>
+    <h3>Wire library</h3>
+    <ul><li>Header codec, channel hash, key expansion, AES-CTR, PKI CCM, djb2 frequency slots, region and preset tables, LoRa airtime maths.</li><li>Protobufs generated from <code>meshtastic/protobufs</code>, pinned to a tag.</li><li>Golden vectors captured from <code>meshtasticd</code> (native) with known keys.</li></ul>
+    <div class="exit"><b>Exit:</b> bytes match meshtasticd both ways for every piece above.</div>
+  </div></li>
+  <li class="phase"><div class="n">2</div><div>
+    <h3>One virtual node, end to end</h3>
+    <ul><li>Radio driver (reuse or port <code>openhop_core</code> <code>KissModemWrapper</code>), RX pipeline, packet history, TX scheduler with contention window and channel-busy check, duty-cycle budget.</li><li>NodeInfo, text, PKI DM with want_ack and retries, ACK/NAK, traceroute replies, relay persona.</li><li>A FastAPI skeleton with <code>/ws/packets</code> and a bare live-packet page, which becomes the debugging tool for every later phase.</li></ul>
+    <div class="exit"><b>Exit:</b> the virtual node appears with its key in a stock node's list, and DMs show delivered ticks in both directions.</div>
+  </div></li>
+  <li class="phase"><div class="n">3</div><div>
+    <h3>Client API</h3>
+    <ul><li>TCP server, PhoneAPI state machine, admin-to-self subset, mDNS advertisement.</li><li>Test order: Python <code>TCPInterface</code>, then Android, then iOS.</li><li>Browser chat over <code>/ws/identities/{node}/api</code>, plus the per-identity HTTP API so the official Meshtastic Web client can connect.</li></ul>
+    <div class="exit"><b>Exit:</b> the official apps connect, list nodes, and send and receive channel messages and DMs through the virtual node.</div>
+  </div></li>
+  <li class="phase"><div class="n">4</div><div>
+    <h3>Many identities</h3>
+    <ul><li>Identity manager with hot add and remove, key generation under the last-byte rules, a port or IP per identity.</li><li>Local short-circuit, shared next-hop table, staggered periodic traffic, SQLite persistence (keys, NodeDB, channels, outbox).</li><li>GUI: setup wizard, Identities, and Nodes &amp; map, with JWT login.</li></ul>
+    <div class="exit"><b>Exit:</b> 20 identities connected at once, all receive the same broadcast, local DMs work with the RF link unplugged, 48-hour soak on a live mesh with no duplicate relays.</div>
+  </div></li>
+  <li class="phase"><div class="n">5</div><div>
+    <h3>Links</h3>
+    <ul><li>UDP multicast interface, host-to-host link, MQTT gateway, per-link channel filters.</li></ul>
+    <div class="exit"><b>Exit:</b> a message from RF at site A reaches a meshtasticd node on the LAN and an app on site B's host, then comes back.</div>
+  </div></li>
+  <li class="phase"><div class="n">6</div><div>
+    <h3>Operate it</h3>
+    <ul><li>YAML config with live reload. The rest of the GUI: dashboard charts, statistics, packet archive with byte-level detail, channels with QR import/export, links, configuration, backup and restore, logs, API tokens.</li><li>systemd unit, Docker image, Prometheus metrics.</li><li>2.8 XEdDSA signing on by default, AEAD channels once they ship in a tagged release, remote admin.</li></ul>
+    <div class="exit"><b>Exit:</b> someone else installs it on a Pi from the docs alone.</div>
+  </div></li>
+</ol>
+</section>
+
+<section id="layout">
+<h2>Repo and config</h2>
+<pre><code>hopstatic/
+  radio/      kiss.py  spi.py  udp_sim.py          # one LoRaRadio interface
+  phy/        presets.py  regions.py  freqslot.py  airtime.py
+  wire/       header.py  channel_crypto.py  pki.py  xeddsa.py  pb/   # generated protobufs
+  mesh/       history.py  scheduler.py  router.py  nexthop.py  reliable.py
+  node/       identity.py  nodedb.py  modules/{nodeinfo,text,routing,traceroute,position,telemetry,admin}.py
+  api/        stream_server.py  phone_api.py  mdns.py  http_phoneapi.py   # per-identity client APIs
+  links/      local.py  udp_multicast.py  host_link.py  mqtt.py
+  store/      sqlite.py
+  web/        app.py  auth.py  routes/  ws.py                            # FastAPI, OpenAPI spec
+  tests/vectors/   # captured from meshtasticd
+ui/                # Vue 3 + TS + Vite + Pinia + Tailwind; built into web/static
+  src/views/  Setup  Dashboard  Identities  Nodes  Chat  Channels  Packets  Statistics  Links  Configuration  Logs
+  src/generated/openapi.ts   # npm run api:generate</code></pre>
+<pre><code>radio:
+  type: kiss
+  port: /dev/serial/by-id/usb-Silicon_Labs_CP2102-if00
+  region: EU_868
+  preset: LONG_FAST
+  primary_channel: ""          # empty = "LongFast"; shared by every identity
+  tx_power_dbm: 27
+
+relay:
+  role: client                 # client | router | mute
+  long_name: "Hopstatic Relay"
+  short_name: "HOPR"
+
+airtime:
+  duty_cycle_percent: 10       # region default
+  nodeinfo_interval: 3h
+  position: off
+  telemetry: off
+
+identities:
+  - long_name: "Base Camp"
+    short_name: "BASE"
+    key: file:keys/base.x25519  # node number is derived: crc32(pubkey)
+    api: { bind: 0.0.0.0, port: 4403, mdns: true }
+    channels:
+      - { name: "",      psk: "AQ==" }
+      - { name: "Ops",   psk: "base64:…" }
+  - long_name: "Ops Desk"
+    short_name: "OPS"
+    key: file:keys/ops.x25519
+    api: { bind: 0.0.0.0, port: 4404, mdns: true }
+
+web:
+  bind: 0.0.0.0
+  port: 8080
+  auth: jwt                    # admin created by the setup wizard; API tokens under Configuration
+
+links:
+  local_dm: software_only     # software_only | also_rf
+  udp_multicast: { enabled: false }
+  mqtt: { enabled: false }</code></pre>
+</section>
+
+<section id="testing">
+<h2>Testing</h2>
+<ul>
+  <li><b>Reference peer without RF.</b> <code>meshtasticd</code> native in Docker with UDP multicast enabled. Point Hopstatic's <code>udp_sim</code> radio at the same group and the whole stack, including routing, runs in CI against real firmware logic.</li>
+  <li><b>Golden vectors.</b> Give meshtasticd fixed keys and capture every packet type. Unit tests must reproduce the bytes exactly.</li>
+  <li><b>Bench RF.</b> Two Heltec V3s, one on stock Meshtastic and one on the KISS modem, with attenuators or dummy loads. Script scenarios with the Python API on the stock node.</li>
+  <li><b>Apps.</b> A manual checklist per release for Android and iOS: connect, handshake, DM with ticks, channel message, rename, add a secondary channel, reconnect replay.</li>
+  <li><b>Live soak.</b> 48 hours on the local mesh, watching duplicate relays, airtime percentage, ACK success rate and RX drops while TXing.</li>
+  <li><b>Later, optional.</b> Your <code>virtual-sx1262</code> already emulates the chip RadioLib drives. Meshtastic firmware also drives SX1262 through RadioLib, so a MeshBench-style RF-accurate multi-node test could host it too. Not needed to ship.</li>
+</ul>
+</section>
+
+<section id="risks">
+<h2>Risks</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Risk</th><th>Level</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>USB serial round-trip jitter blurs the ~28 ms contention slots</td><td><span class="chip warn">Medium</span></td><td>Measure in phase 2. If it hurts, add a <code>TxAfter(ms)</code> sub-command so the modem owns the final delay and the channel-busy check. The SPI path avoids this entirely.</td></tr>
+    <tr><td>Apps can't address several nodes on one IP</td><td><span class="chip warn">Medium</span></td><td>An IP per identity (aliases or macvlan), plus mDNS. Settled in phase 0.</td></tr>
+    <tr><td>Protocol churn: node numbers from keys, signing and retry counts in 2.8, AEAD on master</td><td><span class="chip warn">Medium</span></td><td>Pin a protobufs tag, keep a compatibility matrix per firmware minor version, and run the meshtasticd CI peer at two versions.</td></tr>
+    <tr><td>Airtime exhaustion with many identities</td><td><span class="chip warn">Medium</span></td><td>A shared hourly budget, priority queues, quiet defaults, and an airtime graph in the UI.</td></tr>
+    <tr><td>Node-list clutter annoys the local mesh</td><td><span class="chip warn">Medium</span></td><td>Quiet NodeInfo, no position by default, and a documented etiquette section. Consider CLIENT_MUTE for identities that only need to read.</td></tr>
+    <tr><td>GUI scope creep: openHop's views alone are ~19k lines</td><td><span class="chip warn">Medium</span></td><td>Ship views in phase order, packet feed first. Everything goes through the REST API, so scripts and Home Assistant work before the UI is finished.</td></tr>
+    <tr><td>Last-byte collisions with neighbours confuse next-hop routing</td><td><span class="chip info">Low</span></td><td>Pick keys whose last byte avoids heard neighbours, and warn when a collision appears later.</td></tr>
+    <tr><td>Half duplex: packets arriving during our TX are lost</td><td><span class="chip info">Low</span></td><td>Inherent to any single radio. Count the losses. A second modem as a dedicated receiver is possible later.</td></tr>
+    <tr><td>Frequency slot mismatch in regions whose band doesn't divide evenly (2.7 vs 2.8 rounding)</td><td><span class="chip info">Low</span></td><td>Allow an explicit <code>frequency</code> override. EU_868, EU_433 and US are unaffected.</td></tr>
+    <tr><td>Licence: Meshtastic protobufs and firmware are GPL-3.0</td><td><span class="chip info">Low</span></td><td>Licence Hopstatic GPL-3.0. openhop_core (MIT) can be used inside it. Avoid using the Meshtastic name or logo in branding.</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section id="decisions">
+<h2>Decisions for you</h2>
+<div class="decisions">
+  <div class="decision"><h3>Standalone project or part of openHop?</h3><p class="rec"><b>Recommend standalone,</b> in Python, importing <code>openhop_core.hardware</code> for the radio drivers. The protocols share nothing above the radio, and one modem can't serve both networks at once (different sync word and frequency). A host could still run openHop and Hopstatic side by side with two modems, and a shared web UI can come later.</p></div>
+  <div class="decision"><h3>Should the host relay?</h3><p class="rec"><b>Recommend configurable, defaulting to <code>client</code>.</b> Use <code>router</code> only for a well-sited box, and <code>mute</code> for indoor Pis that only host identities.</p></div>
+  <div class="decision"><h3>Local DMs: software only, or over the air too?</h3><p class="rec"><b>Recommend software only.</b> It saves airtime and still works when the radio is unplugged.</p></div>
+  <div class="decision"><h3>Fork openHop's UI or build a new one?</h3><p class="rec"><b>Recommend a new app on the same stack and layout,</b> reusing openHop's generic components under their MIT notice. A straight fork would mean carrying and deleting thousands of lines of MeshCore views. Keep the look close enough that someone running both feels at home.</p></div>
+  <div class="decision"><h3>Upstream the modem patch to MeshCore?</h3><p class="rec"><b>Recommend yes.</b> It's generic (sync word and preamble), it helps openHop, and it avoids maintaining a fork of the firmware.</p></div>
+  <div class="decision"><h3>Name</h3><p>“Hopstatic” is a placeholder. The final name should avoid the Meshtastic trademark.</p></div>
+</div>
+</section>
+
+<footer>
+  <p>Research basis: local MeshCore <code>examples/kiss_modem</code> and <code>src/helpers/radiolib</code> at <code>b7e5db8d</code>; openhop_repeater and openhop_core at <code>13eb8b2</code> (9 Sep 2026); Meshtastic firmware master <code>9d27b27</code>, compared with tags v2.7.26 and v2.8.0; protobufs master; Meshtastic-Android master.</p>
+  <ul>
+    <li><a href="https://github.com/openhop-dev/openhop_repeater">openhop-dev/openhop_repeater</a> · <a href="https://github.com/openhop-dev/openhop_core">openhop_core</a> · <a href="https://docs.openhop.dev/">docs.openhop.dev</a></li>
+    <li><a href="https://github.com/meshtastic/firmware">meshtastic/firmware</a> · <a href="https://github.com/meshtastic/protobufs">meshtastic/protobufs</a> · <a href="https://meshtastic.org/docs/overview/mesh-algo/">Mesh algorithm</a> · <a href="https://meshtastic.org/docs/overview/encryption/">Encryption</a></li>
+    <li>Prior art: <a href="https://github.com/kabili207/meshtastic-go">meshtastic-go</a> (MIT; raw MQTT/UDP virtual nodes, useful reference) · <a href="https://github.com/meshtastic/Meshtasticator">Meshtasticator</a> · <a href="https://github.com/alphafox02/meshtastic-sniffer">meshtastic-sniffer</a></li>
+    <li>Considered and rejected: running N <code>meshtasticd</code> instances bridged to one modem. Each would relay independently, there'd be no shared history or airtime budget, and <code>--sim</code> mode disables PKI.</li>
+  </ul>
+</footer>
+</main>
+</div>
