@@ -241,8 +241,16 @@ func (s *Session) configByType(t pb.AdminMessage_ConfigType) *pb.Config {
 			Role: u.Role, RebroadcastMode: pb.Config_DeviceConfig_ALL,
 			NodeInfoBroadcastSecs: uint32(hc.NodeInfoInterval / time.Second)}}}
 	case pb.AdminMessage_POSITION_CONFIG:
+		_, fixed := s.id.FixedPosition()
+		secs := s.id.PositionInterval()
+		if secs == 0 {
+			secs = 3 * 3600
+			if iv := hc.Position.Interval; iv > 0 {
+				secs = uint32(iv / time.Second)
+			}
+		}
 		return &pb.Config{PayloadVariant: &pb.Config_Position{Position: &pb.Config_PositionConfig{
-			GpsMode: pb.Config_PositionConfig_NOT_PRESENT, PositionBroadcastSecs: 43200}}}
+			GpsMode: pb.Config_PositionConfig_NOT_PRESENT, PositionBroadcastSecs: secs, FixedPosition: fixed}}}
 	case pb.AdminMessage_POWER_CONFIG:
 		return &pb.Config{PayloadVariant: &pb.Config_Power{Power: &pb.Config_PowerConfig{}}}
 	case pb.AdminMessage_NETWORK_CONFIG:

@@ -118,6 +118,9 @@ export interface Identity {
   share_limit_pct?: number
   /** Cap on the hop limit of packets this identity sends; 0 = the radio's hop limit. */
   hop_limit?: number
+  /** Own fixed position (null = uses the radio's site position). */
+  position?: { latitude: number; longitude: number; altitude: number } | null
+  position_secs?: number
   /** Proposed: unread browser-chat messages across all conversations. */
   unread?: number
   created_at: number

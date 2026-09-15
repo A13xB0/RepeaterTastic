@@ -11,7 +11,8 @@ import { toast } from '@/composables/toast'
 const props = defineProps<{ identity: Identity | null }>()
 const emit = defineEmits<{ close: [] }>()
 
-const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, share_limit_pct: 25, hop_limit: 0 })
+const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, share_limit_pct: 25, hop_limit: 0,
+  own_position: false, latitude: 0, longitude: 0, altitude: 0, position_secs: 0 })
 const saving = ref(false)
 const error = ref('')
 const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR', 'ROUTER', 'ROUTER_LATE']
@@ -21,7 +22,9 @@ watch(
   (i) => {
     if (!i) return
     error.value = ''
-    form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0 }
+    form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
+      own_position: !!i.position, latitude: i.position?.latitude ?? 0, longitude: i.position?.longitude ?? 0, altitude: i.position?.altitude ?? 0,
+      position_secs: i.position_secs ?? 0 }
   },
 )
 
@@ -41,6 +44,9 @@ async function save() {
   if (i.api && f.api_port !== i.api.port) patch.api_port = f.api_port
   if (f.share_limit_pct !== (i.share_limit_pct ?? 25)) patch.share_limit_pct = f.share_limit_pct
   if (f.hop_limit !== (i.hop_limit ?? 0)) patch.hop_limit = f.hop_limit
+  if (f.position_secs !== (i.position_secs ?? 0)) patch.position_secs = f.position_secs
+  const pos = f.own_position ? { latitude: f.latitude, longitude: f.longitude, altitude: f.altitude } : null
+  if (JSON.stringify(pos) !== JSON.stringify(i.position ?? null)) patch.position = pos
   if (!Object.keys(patch).length) return emit('close')
   saving.value = true
   error.value = ''
@@ -76,6 +82,24 @@ async function save() {
       <div v-if="identity.api">
         <label class="label" for="e-port">API port</label>
         <input id="e-port" v-model.number="form.api_port" type="number" min="1024" max="65535" class="input tabular-nums" />
+      </div>
+      <div class="sm:col-span-2 rounded-xl border border-line-soft bg-raised px-3.5 py-3">
+        <label class="flex items-center gap-2 text-[13px] font-medium">
+          <input v-model="form.own_position" type="checkbox" class="size-4 accent-[var(--brand)]" /> Own fixed position
+        </label>
+        <p class="hint !mt-1">Otherwise it uses the radio's site position (if the radio broadcasts one from this identity). Also settable from the Meshtastic app.</p>
+        <div v-if="form.own_position" class="mt-2 grid gap-3 sm:grid-cols-3">
+          <div><label class="label" for="e-lat">Latitude</label><input id="e-lat" v-model.number="form.latitude" type="number" step="0.000001" class="input tabular-nums" /></div>
+          <div><label class="label" for="e-lon">Longitude</label><input id="e-lon" v-model.number="form.longitude" type="number" step="0.000001" class="input tabular-nums" /></div>
+          <div><label class="label" for="e-alt">Altitude (m)</label><input id="e-alt" v-model.number="form.altitude" type="number" class="input tabular-nums" /></div>
+        </div>
+        <div class="mt-2">
+          <label class="label" for="e-psecs">Position broadcast</label>
+          <select id="e-psecs" v-model.number="form.position_secs" class="input">
+            <option :value="0">Radio default</option>
+            <option v-for="v in [1800, 3600, 10800, 21600, 43200, 86400]" :key="v" :value="v">every {{ v >= 3600 ? `${v / 3600} h` : `${v / 60} min` }}</option>
+          </select>
+        </div>
       </div>
       <div class="sm:col-span-2">
         <label class="label" for="e-hops">Hop limit cap</label>

@@ -82,7 +82,9 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 
 - `POST /api/v1/identities` `{"long_name": "...", "short_name": "...", "private_key": "base64 (optional)", "api_port": 4404}` → Identity (201)
 - `POST /api/v1/identities/preview-key` `{"private_key": "base64 (optional)"}` → `{"private_key", "public_key", "node_id", "node_num", "last_byte": 7, "collision": null | "!xxxxxx07"}` — generate a key and check its last byte against local and heard nodes, before creating
-- `PATCH /api/v1/identities/{node_id}` `{"long_name"?, "short_name"?, "enabled"?, "api_port"?, "hop_limit"?}` → Identity. `hop_limit` (0-7, 0 = the radio's) caps every packet the identity sends, whatever its client asks for; `POST /identities` takes it too.
+- `PATCH /api/v1/identities/{node_id}` `{"long_name"?, "short_name"?, "enabled"?, "api_port"?, "hop_limit"?}` → Identity. `hop_limit` (0-7, 0 = the radio's) caps every packet the identity sends, whatever its client asks for; `POST /identities` takes it too. `position` (`{"latitude", "longitude", "altitude"}`, or `null` to use the radio's site position) and `position_secs` (0 = the radio's, else ≥ 1800) set the identity's own fixed position.
+
+From the Meshtastic app, each identity also takes: Device → role, LoRa → hop limit (as its cap), Position → fixed position (set/remove) and broadcast interval, owner name and channels. Radio-wide LoRa settings (region, preset, power, frequency) from an app are ignored, since every identity shares the radio.
 - `DELETE /api/v1/identities/{node_id}` → 204
 - `GET /api/v1/identities/{node_id}/key` → `{"private_key": "base64", "public_key": "base64"}`
 - `PUT /api/v1/identities/{node_id}/channels/{index}` `{"name", "psk" (base64), "role": "PRIMARY|SECONDARY|DISABLED", "uplink", "downlink"}` → Identity. Index 0 name/role is locked (409 with an explanation).

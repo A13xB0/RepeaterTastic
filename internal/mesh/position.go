@@ -102,45 +102,66 @@ func hardwareFromModem(name string) pb.HardwareModel {
 	return pb.HardwareModel_PORTDUINO
 }
 
-// broadcastsPosition reports whether this identity sends the site position.
-func (h *Host) broadcastsPosition(id *Identity) bool {
-	pos := h.Config().Position
-	return pos.Set() && (id.IsRelay || pos.AllIdentities)
-}
-
-// recordOwnPositions puts the site position on our identities in the node DB, so apps
-// connected to them (and the node map) show where they are.
-func (h *Host) recordOwnPositions() {
-	cfg := h.Config()
-	if !cfg.Position.Set() {
-		return
-	}
-	pos := cfg.Position.proto(time.Now())
-	for _, id := range h.Identities() {
-		if h.broadcastsPosition(id) {
-			h.DB.Update(id.NodeNum, func(e *NodeEntry) { e.Position = proto.Clone(pos).(*pb.Position) })
+// positionFor is the position an identity broadcasts: its own fixed position if it has one,
+// otherwise the radio's site position when the site policy covers it.
+func (h *Host) positionFor(id *Identity) (FixedPosition, bool) {
+	site := h.Config().Position
+	if own, ok := id.FixedPosition(); ok {
+		p := FixedPosition{Latitude: own.Latitude, Longitude: own.Longitude, Altitude: own.Altitude,
+			PrecisionBits: site.PrecisionBits, Interval: site.Interval}
+		if secs := id.PositionInterval(); secs > 0 {
+			p.Interval = time.Duration(secs) * time.Second
 		}
+		return p, true
+	}
+	if site.Set() && (id.IsRelay || site.AllIdentities) {
+		if secs := id.PositionInterval(); secs > 0 {
+			site.Interval = time.Duration(secs) * time.Second
+		}
+		return site, true
+	}
+	return FixedPosition{}, false
+}
+
+// broadcastsPosition reports whether this identity broadcasts a position.
+func (h *Host) broadcastsPosition(id *Identity) bool {
+	_, ok := h.positionFor(id)
+	return ok
+}
+
+// RecordOwnPositions puts each identity's position in the node DB, so apps connected to it
+// (and the node map) show where it is.
+func (h *Host) RecordOwnPositions() {
+	now := time.Now()
+	for _, id := range h.Identities() {
+		pos, ok := h.positionFor(id)
+		var p *pb.Position
+		if ok {
+			p = pos.proto(now)
+		}
+		h.DB.Update(id.NodeNum, func(e *NodeEntry) { e.Position = p })
 	}
 }
 
-// periodicPosition broadcasts the site position from each eligible identity on its interval.
+// periodicPosition broadcasts each identity's position on its interval.
 func (h *Host) periodicPosition(now time.Time) {
-	cfg := h.Config()
-	if !cfg.Position.Set() {
-		return
-	}
 	for _, id := range h.Identities() {
-		if !id.Enabled || !h.broadcastsPosition(id) {
+		pos, ok := h.positionFor(id)
+		if !id.Enabled || !ok {
 			continue
 		}
 		id.mu.Lock()
 		if id.nextPosition.IsZero() {
-			// first broadcast a little after the NodeInfo, staggered per identity
-			id.nextPosition = id.nextNodeInfo.Add(45 * time.Second)
+			// first broadcast a little after the NodeInfo (or soon after a change), staggered per identity
+			first := id.nextNodeInfo.Add(45 * time.Second)
+			if first.Before(now) {
+				first = now.Add(time.Duration(10+id.NodeNum%50) * time.Second)
+			}
+			id.nextPosition = first
 		}
 		due := !now.Before(id.nextPosition)
 		if due {
-			id.nextPosition = now.Add(cfg.Position.interval())
+			id.nextPosition = now.Add(pos.interval())
 		}
 		id.mu.Unlock()
 		if !due || h.Air.ChannelUtilPercent(now) > 40 || !h.radioOK.Load() {
@@ -149,13 +170,14 @@ func (h *Host) periodicPosition(now time.Time) {
 		if limit := h.dutyLimit(); limit < 100 && h.Air.TxPercent(now) > limit/2 {
 			continue
 		}
-		h.sendPosition(id, wire.Broadcast, 0, 0)
+		h.sendPosition(id, pos, wire.Broadcast, 0, 0)
 	}
 }
 
 // replyPosition answers a position request addressed to one of our identities.
 func (h *Host) replyPosition(id *Identity, req *pb.MeshPacket) {
-	if !h.broadcastsPosition(id) {
+	pos, ok := h.positionFor(id)
+	if !ok {
 		return
 	}
 	now := time.Now()
@@ -166,12 +188,12 @@ func (h *Host) replyPosition(id *Identity, req *pb.MeshPacket) {
 	}
 	id.lastPositionReply = now
 	id.mu.Unlock()
-	h.sendPosition(id, req.From, int(req.Channel), req.Id)
+	h.sendPosition(id, pos, req.From, int(req.Channel), req.Id)
 }
 
-func (h *Host) sendPosition(id *Identity, to uint32, channel int, requestID uint32) {
+func (h *Host) sendPosition(id *Identity, pos FixedPosition, to uint32, channel int, requestID uint32) {
 	cfg := h.Config()
-	payload, err := proto.Marshal(cfg.Position.proto(time.Now()))
+	payload, err := proto.Marshal(pos.proto(time.Now()))
 	if err != nil {
 		return
 	}

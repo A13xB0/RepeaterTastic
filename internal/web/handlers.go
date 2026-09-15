@@ -230,6 +230,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		"is_relay": id.IsRelay, "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
 		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id), "hop_limit": id.MaxHops(),
+		"position": identityPositionJSON(id), "position_secs": id.PositionInterval(),
 		"unread": rc.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
 	}
 }
@@ -416,14 +417,16 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		LongName  *string  `json:"long_name"`
-		ShortName *string  `json:"short_name"`
-		Enabled   *bool    `json:"enabled"`
-		APIPort   *int     `json:"api_port"`
-		APIBind   *string  `json:"api_bind"`
-		Role      *string  `json:"role"`
-		Share     *float64 `json:"share_limit_pct"`
-		HopLimit  *uint32  `json:"hop_limit"`
+		LongName  *string         `json:"long_name"`
+		ShortName *string         `json:"short_name"`
+		Enabled   *bool           `json:"enabled"`
+		APIPort   *int            `json:"api_port"`
+		APIBind   *string         `json:"api_bind"`
+		Role      *string         `json:"role"`
+		Share     *float64        `json:"share_limit_pct"`
+		HopLimit  *uint32         `json:"hop_limit"`
+		Position  json.RawMessage `json:"position"` // {"latitude","longitude","altitude"} or null to remove
+		PosSecs   *uint32         `json:"position_secs"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -433,6 +436,28 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+	if len(req.Position) > 0 {
+		var p *mesh.IdentityPosition
+		if string(req.Position) != "null" {
+			p = &mesh.IdentityPosition{}
+			if err := json.Unmarshal(req.Position, p); err != nil {
+				writeError(w, http.StatusBadRequest, "position: "+err.Error())
+				return
+			}
+		}
+		if err := id.SetFixedPosition(p); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.radioOf(id).host.RecordOwnPositions()
+	}
+	if req.PosSecs != nil {
+		if *req.PosSecs != 0 && *req.PosSecs < 1800 {
+			writeError(w, http.StatusBadRequest, "position_secs must be 0 (the radio's) or at least 1800")
+			return
+		}
+		id.SetPositionInterval(*req.PosSecs)
 	}
 	if req.HopLimit != nil {
 		if err := id.SetMaxHops(*req.HopLimit); err != nil {
@@ -1233,4 +1258,11 @@ func mapTileURL(u string) string {
 		return config.DefaultMapTileURL
 	}
 	return u
+}
+
+func identityPositionJSON(id *mesh.Identity) any {
+	if p, ok := id.FixedPosition(); ok {
+		return p
+	}
+	return nil
 }

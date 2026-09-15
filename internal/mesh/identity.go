@@ -44,7 +44,12 @@ type Identity struct {
 	// client asks for (0 = the radio's hop_limit). Keeps a chatty client, such as rnsd's
 	// RNS tunnel, from flooding the whole mesh.
 	HopLimit uint32
-	MACAddr  []byte
+	// OwnPosition is a fixed position set for this identity (from its app or the web GUI),
+	// used instead of the radio's site position; nil = none.
+	OwnPosition *IdentityPosition
+	// PositionSecs is this identity's position broadcast interval (0 = the radio's).
+	PositionSecs uint32
+	MACAddr      []byte
 
 	sinks             map[ClientSink]struct{}
 	backlog           []*pb.FromRadio
@@ -245,18 +250,20 @@ func (id *Identity) resolvedChannels(presetDisplay string) []resolvedChannel {
 
 // IdentityRecord is the on-disk form of an identity.
 type IdentityRecord struct {
-	PrivateKey string   `json:"private_key"`
-	LongName   string   `json:"long_name"`
-	ShortName  string   `json:"short_name"`
-	Role       string   `json:"role,omitempty"`
-	IsRelay    bool     `json:"is_relay,omitempty"`
-	Enabled    bool     `json:"enabled"`
-	APIBind    string   `json:"api_bind,omitempty"`
-	APIPort    int      `json:"api_port,omitempty"`
-	CreatedAt  int64    `json:"created_at"`
-	ShareLimit float64  `json:"share_limit_pct,omitempty"`
-	HopLimit   uint32   `json:"hop_limit,omitempty"`
-	Channels   []string `json:"channels"` // base64 protobuf Channel
+	PrivateKey   string            `json:"private_key"`
+	LongName     string            `json:"long_name"`
+	ShortName    string            `json:"short_name"`
+	Role         string            `json:"role,omitempty"`
+	IsRelay      bool              `json:"is_relay,omitempty"`
+	Enabled      bool              `json:"enabled"`
+	APIBind      string            `json:"api_bind,omitempty"`
+	APIPort      int               `json:"api_port,omitempty"`
+	CreatedAt    int64             `json:"created_at"`
+	ShareLimit   float64           `json:"share_limit_pct,omitempty"`
+	HopLimit     uint32            `json:"hop_limit,omitempty"`
+	Position     *IdentityPosition `json:"position,omitempty"`
+	PositionSecs uint32            `json:"position_secs,omitempty"`
+	Channels     []string          `json:"channels"` // base64 protobuf Channel
 }
 
 func (id *Identity) Record() IdentityRecord {
@@ -267,6 +274,7 @@ func (id *Identity) Record() IdentityRecord {
 		LongName:   id.User.LongName, ShortName: id.User.ShortName, Role: id.User.Role.String(),
 		IsRelay: id.IsRelay, Enabled: id.Enabled, APIBind: id.APIBind, APIPort: id.APIPort,
 		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct, HopLimit: id.HopLimit,
+		Position: id.OwnPosition, PositionSecs: id.PositionSecs,
 	}
 	for _, ch := range id.Channels {
 		b, _ := proto.Marshal(ch)
@@ -287,6 +295,7 @@ func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
 	id.IsRelay, id.Enabled, id.APIBind, id.APIPort = r.IsRelay, r.Enabled, r.APIBind, r.APIPort
 	id.ShareLimitPct = r.ShareLimit
 	id.HopLimit = r.HopLimit
+	id.OwnPosition, id.PositionSecs = r.Position, r.PositionSecs
 	if v, ok := pb.Config_DeviceConfig_Role_value[r.Role]; ok {
 		id.User.Role = pb.Config_DeviceConfig_Role(v)
 	}
@@ -374,4 +383,52 @@ func (id *Identity) SetMaxHops(n uint32) error {
 	id.HopLimit = n
 	id.mu.Unlock()
 	return nil
+}
+
+// IdentityPosition is a fixed location for one identity.
+type IdentityPosition struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Altitude  int32   `json:"altitude"`
+}
+
+// FixedPosition returns the identity's own fixed position, if it has one.
+func (id *Identity) FixedPosition() (IdentityPosition, bool) {
+	id.mu.RLock()
+	defer id.mu.RUnlock()
+	if id.OwnPosition == nil {
+		return IdentityPosition{}, false
+	}
+	return *id.OwnPosition, true
+}
+
+// SetFixedPosition sets (or with nil, removes) the identity's own fixed position.
+func (id *Identity) SetFixedPosition(p *IdentityPosition) error {
+	if p != nil && (p.Latitude < -90 || p.Latitude > 90 || p.Longitude < -180 || p.Longitude > 180 || (p.Latitude == 0 && p.Longitude == 0)) {
+		return fmt.Errorf("position out of range")
+	}
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if p == nil {
+		id.OwnPosition = nil
+	} else {
+		cp := *p
+		id.OwnPosition = &cp
+	}
+	id.nextPosition = time.Time{} // broadcast the change soon
+	return nil
+}
+
+// PositionInterval is the identity's own broadcast interval in seconds (0 = the radio's).
+func (id *Identity) PositionInterval() uint32 {
+	id.mu.RLock()
+	defer id.mu.RUnlock()
+	return id.PositionSecs
+}
+
+// SetPositionInterval sets the identity's broadcast interval; 0 follows the radio.
+func (id *Identity) SetPositionInterval(secs uint32) {
+	id.mu.Lock()
+	id.PositionSecs = secs
+	id.mu.Unlock()
 }

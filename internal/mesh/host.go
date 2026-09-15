@@ -528,7 +528,7 @@ func (h *Host) timerLoop(ctx context.Context) {
 			return
 		case now := <-tick.C:
 			if now.Sub(lastSave) > time.Minute {
-				h.recordOwnPositions()
+				h.RecordOwnPositions()
 			}
 			h.doRetransmissions(now)
 			h.periodicNodeInfo(now)
