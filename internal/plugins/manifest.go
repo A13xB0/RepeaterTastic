@@ -55,7 +55,7 @@ type Run struct {
 }
 
 // Managed: RepeaterTastic runs Exec (a bundle path; {os} and {arch} are replaced, e.g.
-// bin/meshflow-{os}-{arch}) and keeps it running while the plugin is enabled.
+// bin/my-plugin-{os}-{arch}) and keeps it running while the plugin is enabled.
 type Managed struct {
 	Exec string   `yaml:"exec" json:"exec"`
 	Args []string `yaml:"args" json:"args,omitempty"`

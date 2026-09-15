@@ -83,6 +83,10 @@ type PacketRecord struct {
 	// decoded payload when one of this radio's channels or keys could read it. Never logged.
 	Mesh *pb.MeshPacket `json:"-"`
 	Data *pb.Data       `json:"-"`
+	// RelayChannel is the channel's index on this radio's relay persona when RelayHolds: the
+	// relay persona holds the channel, or the packet is a PKI DM to it (index 0).
+	RelayChannel int  `json:"-"`
+	RelayHolds   bool `json:"-"`
 }
 
 // PacketLog is a fixed-size ring of recent packets.

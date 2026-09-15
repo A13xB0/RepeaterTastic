@@ -103,11 +103,11 @@ plugins:
     messages_per_hour: 30         # per plugin; 0 = plugins may not send messages
     traceroutes_per_hour: 12      # per plugin; 0 = plugins may not send traceroutes
     entries:                      # pin plugins: the GUI shows these as "config file" and won't change them
-        - id: meshflow
+        - id: my-plugin
           enabled: true
           permissions: [packets.read, nodes.read, traceroute.send]
           settings:
-              api_key: ${MESHFLOW_API_KEY}   # ${VAR} is read from the environment
+              api_key: ${MY_PLUGIN_API_KEY}  # ${VAR} is read from the environment
 ```
 
 Pinned entries still need the plugin installed. The folder looks like this:

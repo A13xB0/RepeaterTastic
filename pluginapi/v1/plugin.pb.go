@@ -1151,8 +1151,11 @@ type PacketEvent struct {
 	TimeMs      int64  `protobuf:"varint,8,opt,name=time_ms,json=timeMs,proto3" json:"time_ms,omitempty"`
 	// The node that reports this packet: the radio's relay persona.
 	ReporterNodeNum uint32 `protobuf:"varint,9,opt,name=reporter_node_num,json=reporterNodeNum,proto3" json:"reporter_node_num,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The channel's index on the relay persona (0-7), or -1 when the relay persona doesn't hold
+	// the channel. When it is set, mesh_packet.channel is that index; otherwise it is the on-air hash.
+	RelayChannelIndex int32 `protobuf:"varint,10,opt,name=relay_channel_index,json=relayChannelIndex,proto3" json:"relay_channel_index,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *PacketEvent) Reset() {
@@ -1244,6 +1247,13 @@ func (x *PacketEvent) GetTimeMs() int64 {
 func (x *PacketEvent) GetReporterNodeNum() uint32 {
 	if x != nil {
 		return x.ReporterNodeNum
+	}
+	return 0
+}
+
+func (x *PacketEvent) GetRelayChannelIndex() int32 {
+	if x != nil {
+		return x.RelayChannelIndex
 	}
 	return 0
 }
@@ -1929,7 +1939,7 @@ const file_plugin_proto_rawDesc = "" +
 	"\thops_away\x18\n" +
 	" \x01(\x05R\bhopsAway\x12\x19\n" +
 	"\bvia_mqtt\x18\v \x01(\bR\aviaMqtt\x12\x14\n" +
-	"\x05local\x18\f \x01(\bR\x05local\"\xa0\x02\n" +
+	"\x05local\x18\f \x01(\bR\x05local\"\xd0\x02\n" +
 	"\vPacketEvent\x12\x19\n" +
 	"\bradio_id\x18\x01 \x01(\tR\aradioId\x12\x1c\n" +
 	"\tdirection\x18\x02 \x01(\tR\tdirection\x12\x12\n" +
@@ -1940,7 +1950,9 @@ const file_plugin_proto_rawDesc = "" +
 	"\fchannel_hash\x18\x06 \x01(\rR\vchannelHash\x12!\n" +
 	"\fchannel_name\x18\a \x01(\tR\vchannelName\x12\x17\n" +
 	"\atime_ms\x18\b \x01(\x03R\x06timeMs\x12*\n" +
-	"\x11reporter_node_num\x18\t \x01(\rR\x0freporterNodeNum\"?\n" +
+	"\x11reporter_node_num\x18\t \x01(\rR\x0freporterNodeNum\x12.\n" +
+	"\x13relay_channel_index\x18\n" +
+	" \x01(\x05R\x11relayChannelIndex\"?\n" +
 	"\tNodeEvent\x122\n" +
 	"\x04node\x18\x01 \x01(\v2\x1e.repeatertastic.plugin.v1.NodeR\x04node\"\x95\x02\n" +
 	"\x10TextMessageEvent\x12\x19\n" +

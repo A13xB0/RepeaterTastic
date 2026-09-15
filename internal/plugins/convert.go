@@ -31,17 +31,24 @@ func packetEvent(r Radio, rec mesh.PacketRecord) *pluginv1.HostMessage {
 	if rec.Mesh == nil {
 		return nil
 	}
-	p := rec.Mesh
+	p := proto.Clone(rec.Mesh).(*pb.MeshPacket)
+	if p.RxTime == nil && rec.Direction == "rx" {
+		t := uint32(rec.Time / 1000)
+		p.RxTime = &t
+	}
+	relayIndex := int32(-1)
 	if rec.Data != nil {
-		p = proto.Clone(rec.Mesh).(*pb.MeshPacket)
 		p.PayloadVariant = &pb.MeshPacket_Decoded{Decoded: rec.Data}
+		if rec.RelayHolds {
+			p.Channel, relayIndex = uint32(rec.RelayChannel), int32(rec.RelayChannel)
+		}
 	}
 	b, err := proto.Marshal(p)
 	if err != nil {
 		return nil
 	}
 	ev := &pluginv1.PacketEvent{RadioId: r.ID, Direction: rec.Direction, Kind: rec.Kind, MeshPacket: b, Decoded: rec.Data != nil,
-		ChannelHash: uint32(rec.ChannelHash), ChannelName: rec.Channel, TimeMs: rec.Time}
+		ChannelHash: uint32(rec.ChannelHash), ChannelName: rec.Channel, TimeMs: rec.Time, RelayChannelIndex: relayIndex}
 	if relay := r.Host.Relay(); relay != nil {
 		ev.ReporterNodeNum = relay.NodeNum
 	}

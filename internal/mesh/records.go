@@ -37,6 +37,17 @@ func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) 
 func (h *Host) fillRecordFromDecoded(r *PacketRecord, p *pb.MeshPacket, dec decodeResult) {
 	r.Port = dec.data.Portnum.String()
 	r.Data = dec.data
+	if dec.pki {
+		// Only a DM to the relay persona itself: never another identity's private messages.
+		r.RelayChannel, r.RelayHolds = 0, dec.target != nil && dec.target.IsRelay
+	} else if dec.group != nil {
+		for _, m := range dec.group.members {
+			if m.id.IsRelay {
+				r.RelayChannel, r.RelayHolds = m.index, true
+				break
+			}
+		}
+	}
 	r.PKI = dec.pki
 	if dec.group != nil {
 		r.Channel = dec.group.name

@@ -55,12 +55,12 @@ async function attach() {
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <label class="label" for="at-id">Plugin ID</label>
-          <input id="at-id" v-model="id" class="input mono" placeholder="meshflow" maxlength="40" />
+          <input id="at-id" v-model="id" class="input mono" placeholder="my-plugin" maxlength="40" />
           <p class="hint" :class="id && !idOk ? '!text-bad' : ''">The id the plugin says in its Hello.</p>
         </div>
         <div>
           <label class="label" for="at-name">Name</label>
-          <input id="at-name" v-model="name" class="input" placeholder="Meshflow" maxlength="60" />
+          <input id="at-name" v-model="name" class="input" placeholder="Plugin name" maxlength="60" />
         </div>
       </div>
       <div class="eyebrow mb-1 mt-4">Permissions</div>

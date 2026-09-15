@@ -104,13 +104,13 @@ const mb = (n: number) => (n / 1048576).toFixed(n < 1048576 ? 2 : 1)
       </div>
       <div>
         <div class="font-medium">Use the command line</div>
-        <pre class="mono mt-2 overflow-x-auto rounded-lg bg-raised px-2.5 py-2 text-xs leading-relaxed">sudo -u repeatertastic repeatertastic plugin install meshflow.zip
-sudo -u repeatertastic repeatertastic plugin enable meshflow all
+        <pre class="mono mt-2 overflow-x-auto rounded-lg bg-raised px-2.5 py-2 text-xs leading-relaxed">sudo -u repeatertastic repeatertastic plugin install my-plugin.zip
+sudo -u repeatertastic repeatertastic plugin enable my-plugin all
 repeatertastic plugin list</pre>
       </div>
       <div>
         <div class="font-medium">Or in Docker</div>
-        <pre class="mono mt-2 overflow-x-auto rounded-lg bg-raised px-2.5 py-2 text-xs leading-relaxed">docker cp meshflow.zip repeatertastic:/data/plugins/inbox/</pre>
+        <pre class="mono mt-2 overflow-x-auto rounded-lg bg-raised px-2.5 py-2 text-xs leading-relaxed">docker cp my-plugin.zip repeatertastic:/data/plugins/inbox/</pre>
       </div>
       <p class="text-xs text-ink-3">The config file can also pin a plugin's switch, permissions and settings under <span class="mono">plugins.entries</span>; see docs/plugins.md.</p>
     </div>
