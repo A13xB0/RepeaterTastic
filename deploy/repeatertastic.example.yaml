@@ -1,0 +1,48 @@
+# RepeaterTastic configuration. Most of this can also be changed in the web GUI.
+
+radio:
+  # kiss: a MeshCore KISS modem flashed with firmware/ (sync word patch). none: no radio (UDP only).
+  driver: kiss
+  # Prefer the stable /dev/serial/by-id/... path over /dev/ttyUSB0.
+  device: /dev/ttyUSB0
+  baud: 115200
+
+mesh:
+  region: EU_868          # US, EU_868, EU_433, ANZ, ...
+  preset: LONG_FAST       # must match the mesh you want to join
+  primary_channel: ""     # "" = preset name ("LongFast"); shared by every identity, it picks the frequency
+  channel_num: 0          # 0 = derive the frequency slot from the channel name, like the firmware
+  override_frequency_mhz: 0
+  frequency_offset_mhz: 0
+  tx_power_dbm: 0         # 0 = region limit. Check your antenna gain and local rules.
+  hop_limit: 3
+
+relay:
+  role: client            # client (relay like a normal node) | router (relay first) | mute (never relay)
+  long_name: RepeaterTastic Relay
+  short_name: RPTR
+
+airtime:
+  duty_cycle_percent: 0   # 0 = region default (EU_868: 10%)
+  override_duty_cycle: false
+  nodeinfo_interval: 3h
+
+links:
+  local_dm_over_rf: false # DMs between identities on this host stay local
+  udp_multicast:
+    enabled: false        # join the LAN mesh of native meshtasticd nodes (224.0.0.69 + 239.0.0.69)
+
+web:
+  enabled: true
+  bind: 0.0.0.0
+  port: 8080
+
+state_dir: /var/lib/repeatertastic
+log_level: info
+
+# Created once on first start; afterwards identities live in state_dir/identities.json and are
+# managed from the web GUI.
+identities:
+  - long_name: Base Camp
+    short_name: BASE
+    api_port: 4403

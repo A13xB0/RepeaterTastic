@@ -1,0 +1,32 @@
+[Unit]
+Description=RepeaterTastic virtual Meshtastic nodes
+Documentation=https://github.com/A13xB0/RepeaterTastic
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=repeatertastic
+Group=repeatertastic
+SupplementaryGroups=dialout
+ExecStart=/usr/local/bin/repeatertastic -config /etc/repeatertastic/repeatertastic.yaml
+Restart=on-failure
+RestartSec=5
+StateDirectory=repeatertastic
+StateDirectoryMode=0700
+ConfigurationDirectory=repeatertastic
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/repeatertastic /etc/repeatertastic
+DeviceAllow=char-ttyUSB rw
+DeviceAllow=char-ttyACM rw
+DevicePolicy=closed
+
+[Install]
+WantedBy=multi-user.target

@@ -20,6 +20,7 @@ import (
 	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
 	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
+	"github.com/A13xB0/RepeaterTastic/internal/radio"
 )
 
 type Options struct {
@@ -42,6 +43,23 @@ type Server struct {
 
 	cfgMu      sync.Mutex
 	loginFails sync.Map // ip → *loginState
+
+	// Modem stats cost serial round trips; share one poll between all viewers.
+	statsMu   sync.Mutex
+	statsAt   time.Time
+	lastStats radio.Stats
+}
+
+func (s *Server) radioStats(ctx context.Context) radio.Stats {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	if time.Since(s.statsAt) > 5*time.Second {
+		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		s.lastStats = s.host.Radio().Stats(cctx)
+		cancel()
+		s.statsAt = time.Now()
+	}
+	return s.lastStats
 }
 
 type loginState struct {

@@ -113,7 +113,7 @@ func (s *Server) statusJSON(r *http.Request) map[string]any {
 	rp := h.RadioParams()
 	hc := h.Config()
 	info := h.Radio().Info()
-	st := h.Radio().Stats(r.Context())
+	st := s.radioStats(r.Context())
 	txMs, rxMs := h.Air.HourTotals(now)
 	duty := hc.DutyCyclePct
 	if duty == 0 {
