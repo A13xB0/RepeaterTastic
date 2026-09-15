@@ -271,6 +271,32 @@ export async function startLive() {
   ])
 }
 
+// A browser allows only six connections to one address, and every open tab's event stream holds
+// one for good: with six tabs open, nothing else can load. Tabs in the background give their
+// stream up after a short while and catch up when they're shown again.
+const HIDDEN_GRACE_MS = 15_000
+let hiddenTimer: number | undefined
+let pausedHidden = false
+document.addEventListener('visibilitychange', () => {
+  if (!started) return
+  if (document.hidden) {
+    clearTimeout(hiddenTimer)
+    hiddenTimer = window.setTimeout(() => {
+      if (document.hidden && started) {
+        pausedHidden = true
+        disconnect()
+      }
+    }, HIDDEN_GRACE_MS)
+    return
+  }
+  clearTimeout(hiddenTimer)
+  if (pausedHidden) {
+    pausedHidden = false
+    connect()
+    void Promise.allSettled([refreshStatus(), refreshIdentities(), refreshNodes(), refreshPackets(), refreshLogs(), refreshRadios()])
+  }
+})
+
 export function stopLive() {
   started = false
   disconnect()
