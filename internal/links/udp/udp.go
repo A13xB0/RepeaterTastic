@@ -15,8 +15,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 const DefaultPort = 4403

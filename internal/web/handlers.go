@@ -21,11 +21,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
-	"github.com/A13xB0/RepeaterTastic/internal/config"
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/phy"
-	"github.com/A13xB0/RepeaterTastic/internal/wire"
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/internal/config"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/phy"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // ---------------------------------------------------------------------------------- setup/auth

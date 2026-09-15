@@ -1,6 +1,6 @@
 [Unit]
 Description=RepeaterTastic virtual Meshtastic nodes
-Documentation=https://github.com/A13xB0/RepeaterTastic
+Documentation=https://github.com/ScotMesh/RepeaterTastic
 After=network-online.target
 Wants=network-online.target
 

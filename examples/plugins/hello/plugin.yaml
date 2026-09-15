@@ -5,7 +5,7 @@ version: 1.0.0
 api: 1
 description: Counts what each radio hears, lists the nodes it has seen, and can answer "ping" on a relay persona's channels.
 author: ScotMesh
-homepage: https://github.com/A13xB0/RepeaterTastic/tree/main/examples/plugins/hello
+homepage: https://github.com/ScotMesh/RepeaterTastic/tree/main/examples/plugins/hello
 license: GPL-3.0-or-later
 logo: logo.svg
 permissions:

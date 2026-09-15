@@ -16,16 +16,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/config"
-	"github.com/A13xB0/RepeaterTastic/internal/links/mqtt"
-	"github.com/A13xB0/RepeaterTastic/internal/links/udp"
-	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
-	"github.com/A13xB0/RepeaterTastic/internal/plugins"
-	"github.com/A13xB0/RepeaterTastic/internal/radio"
-	"github.com/A13xB0/RepeaterTastic/internal/site"
-	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/ScotMesh/RepeaterTastic/internal/config"
+	"github.com/ScotMesh/RepeaterTastic/internal/links/mqtt"
+	"github.com/ScotMesh/RepeaterTastic/internal/links/udp"
+	"github.com/ScotMesh/RepeaterTastic/internal/logbuf"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/phoneapi"
+	"github.com/ScotMesh/RepeaterTastic/internal/plugins"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
+	"github.com/ScotMesh/RepeaterTastic/internal/site"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 )
 
 type Options struct {

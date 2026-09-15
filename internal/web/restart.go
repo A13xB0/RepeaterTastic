@@ -5,7 +5,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/A13xB0/RepeaterTastic/internal/config"
+	"github.com/ScotMesh/RepeaterTastic/internal/config"
 )
 
 // cloneConfig deep-copies a configuration (YAML keeps secrets such as MQTT passwords).

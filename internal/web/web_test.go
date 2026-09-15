@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/A13xB0/RepeaterTastic/internal/config"
-	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
-	"github.com/A13xB0/RepeaterTastic/internal/radio/null"
+	"github.com/ScotMesh/RepeaterTastic/internal/config"
+	"github.com/ScotMesh/RepeaterTastic/internal/logbuf"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/phoneapi"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
 )
 
 func testWeb(t *testing.T) *httptest.Server {

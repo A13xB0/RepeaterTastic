@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/config"
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/radio/sim"
-	"github.com/A13xB0/RepeaterTastic/pb"
-	pluginv1 "github.com/A13xB0/RepeaterTastic/pluginapi/v1"
-	"github.com/A13xB0/RepeaterTastic/pluginsdk"
+	"github.com/ScotMesh/RepeaterTastic/internal/config"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/sim"
+	"github.com/ScotMesh/RepeaterTastic/pb"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
+	"github.com/ScotMesh/RepeaterTastic/pluginsdk"
 )
 
 // TestMain doubles as the plugin program: the bundle's run.sh starts this test binary with

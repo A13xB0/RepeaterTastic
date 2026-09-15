@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // jsonPacket renders a decoded packet in the firmware's MQTT JSON shape

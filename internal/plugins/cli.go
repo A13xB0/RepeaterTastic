@@ -17,7 +17,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/config"
+	"github.com/ScotMesh/RepeaterTastic/internal/config"
 )
 
 const cliUsage = `usage: repeatertastic plugin [-config file] <command>

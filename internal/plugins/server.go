@@ -19,9 +19,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/wire"
-	pluginv1 "github.com/A13xB0/RepeaterTastic/pluginapi/v1"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
 )
 
 // session is one connected plugin's event stream.

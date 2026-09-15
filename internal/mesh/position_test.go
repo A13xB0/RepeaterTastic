@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func TestHardwareFromModem(t *testing.T) {

@@ -5,10 +5,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/wire"
-	"github.com/A13xB0/RepeaterTastic/pb"
-	pluginv1 "github.com/A13xB0/RepeaterTastic/pluginapi/v1"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
+	"github.com/ScotMesh/RepeaterTastic/pb"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
 )
 
 func (m *Manager) radiosProto() []*pluginv1.Radio {

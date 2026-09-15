@@ -1,4 +1,4 @@
-module github.com/A13xB0/RepeaterTastic
+module github.com/ScotMesh/RepeaterTastic
 
 go 1.25.0
 

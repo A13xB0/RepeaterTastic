@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/phy"
-	"github.com/A13xB0/RepeaterTastic/internal/radio"
+	"github.com/ScotMesh/RepeaterTastic/internal/phy"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 )
 
 // PatchedVersion is the GetVersion value of firmware carrying the sync word / preamble patch.

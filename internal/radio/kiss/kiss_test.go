@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/radio"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 )
 
 // ------------------------------------------------------------------------------- fake modem

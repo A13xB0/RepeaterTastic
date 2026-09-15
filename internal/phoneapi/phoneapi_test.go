@@ -13,10 +13,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/radio/null"
-	"github.com/A13xB0/RepeaterTastic/internal/wire"
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func testServer(t *testing.T) (*mesh.Host, *mesh.Identity, *Server) {

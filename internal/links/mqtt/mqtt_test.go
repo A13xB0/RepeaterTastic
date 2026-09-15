@@ -11,10 +11,10 @@ import (
 	paho "github.com/eclipse/paho.mqtt.golang"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/radio/null"
-	"github.com/A13xB0/RepeaterTastic/internal/wire"
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func TestTruncateKeepsTopBits(t *testing.T) {

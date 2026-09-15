@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/A13xB0/RepeaterTastic/internal/plugins"
+	"github.com/ScotMesh/RepeaterTastic/internal/plugins"
 )
 
 // assetKeys are capability keys in plugin asset URLs. The GUI authenticates with a bearer token,

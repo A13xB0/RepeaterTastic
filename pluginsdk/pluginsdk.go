@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pluginv1 "github.com/A13xB0/RepeaterTastic/pluginapi/v1"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
 )
 
 // Options say how to reach RepeaterTastic. Empty fields come from the environment

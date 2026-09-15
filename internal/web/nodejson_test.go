@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 )
 
 // A node that has been heard but hasn't sent its NodeInfo has no User. The web

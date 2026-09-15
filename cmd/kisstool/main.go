@@ -17,11 +17,11 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/phy"
-	"github.com/A13xB0/RepeaterTastic/internal/radio"
-	"github.com/A13xB0/RepeaterTastic/internal/radio/kiss"
-	"github.com/A13xB0/RepeaterTastic/internal/wire"
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/internal/phy"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 const usage = `usage: kisstool <command> [flags]

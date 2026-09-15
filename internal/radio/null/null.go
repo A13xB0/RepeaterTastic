@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/A13xB0/RepeaterTastic/internal/radio"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 )
 
 type Radio struct {

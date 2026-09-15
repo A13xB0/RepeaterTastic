@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/pb"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // Event is published on the host bus for the web UI and other observers.

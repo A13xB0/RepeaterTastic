@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/A13xB0/RepeaterTastic/internal/radio"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 )
 
 func TestTextRoundTrip(t *testing.T) {

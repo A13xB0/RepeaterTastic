@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sort"
 
-	pluginv1 "github.com/A13xB0/RepeaterTastic/pluginapi/v1"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
 )
 
 // Info is a plugin as the web API shows it. Secrets are masked.

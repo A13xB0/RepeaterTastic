@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 )
 
 // Site is a mesh.TxGate shared by every host on one site.

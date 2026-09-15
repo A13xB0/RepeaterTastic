@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/phy"
-	"github.com/A13xB0/RepeaterTastic/internal/radio"
+	"github.com/ScotMesh/RepeaterTastic/internal/phy"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 )
 
 // Link is what a receiver sees of a sender.

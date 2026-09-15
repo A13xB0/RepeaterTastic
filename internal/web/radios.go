@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/config"
+	"github.com/ScotMesh/RepeaterTastic/internal/config"
 )
 
 // radioByID returns the radio with that ID, or nil.
