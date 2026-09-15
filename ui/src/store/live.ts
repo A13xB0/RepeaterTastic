@@ -87,8 +87,7 @@ export async function refreshRadios() {
     live.radios = r.radios
     live.site = r.site
     live.pendingRadios = (r.pending ?? []).filter((p) => p.action === 'start').map((p) => ({ id: p.id, name: p.name, preset: p.preset }))
-    if (r.radios.length + live.pendingRadios.length > 1)
-      api.get<{ multi_radio_identities: boolean }>('/experimental').then((x) => (live.multiRadioIdentities = x.multi_radio_identities), () => {})
+    api.get<{ multi_radio_identities: boolean }>('/experimental').then((x) => (live.multiRadioIdentities = x.multi_radio_identities), () => {})
     // A remembered radio that no longer exists falls back to the main one.
     if (radio.value !== 'main' && !r.radios.some((x) => x.id === radio.value)) setRadio('main')
   } catch {

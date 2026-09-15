@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -265,14 +267,25 @@ func toDTO(c *config.Config, h *mesh.Host) configDTO {
 	return d
 }
 
+// shortDuration writes a duration the way people type it: 30m, 1h30m, 3h, 90s.
 func shortDuration(d time.Duration) string {
-	s := d.String()
-	s = strings.TrimSuffix(s, "0s")
-	s = strings.TrimSuffix(s, "0m")
-	if s == "" {
+	if d <= 0 {
 		return "0s"
 	}
-	return s
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	sec := int((d % time.Minute) / time.Second)
+	out := ""
+	if h > 0 {
+		out += strconv.Itoa(h) + "h"
+	}
+	if m > 0 {
+		out += strconv.Itoa(m) + "m"
+	}
+	if sec > 0 || out == "" {
+		out += strconv.Itoa(sec) + "s"
+	}
+	return out
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
@@ -359,8 +372,9 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	next.Relay.Role, next.Relay.LongName, next.Relay.ShortName = d.Relay.Role, d.Relay.LongName, d.Relay.ShortName
 	next.Links.LocalDMOverRF = d.Relay.LocalDM == "also_rf"
-	if d.Airtime.DutyCyclePercent != rc.host.RadioParams().Region.DutyCyclePct {
-		next.Airtime.DutyCyclePct = d.Airtime.DutyCyclePercent
+	next.Airtime.DutyCyclePct = d.Airtime.DutyCyclePercent
+	if d.Airtime.DutyCyclePercent == rc.host.RadioParams().Region.DutyCyclePct {
+		next.Airtime.DutyCyclePct = 0 // the region's default, so it follows the region
 	}
 	next.Airtime.IdentitySharePct = d.Airtime.IdentitySharePercent
 	if iv, err := time.ParseDuration(d.Airtime.NodeInfoInterval); err == nil && iv >= 10*time.Minute {
@@ -451,6 +465,10 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 			res["error"] = "the modem answers but rejected Meshtastic's sync word: flash the RepeaterTastic KISS firmware"
 		}
 		writeJSON(w, http.StatusOK, res)
+		return
+	}
+	if !serialPath(req.Device) {
+		writeError(w, http.StatusBadRequest, "device must be a serial port such as /dev/ttyUSB0 or /dev/serial/by-id/…")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -872,4 +890,19 @@ func (s *Server) mapKeySource() string {
 		return "none"
 	}
 	return s.opt.MapKeySource
+}
+
+// serialPath limits the setup probe (reachable before a password is set) to serial devices.
+func serialPath(p string) bool {
+	p = filepath.Clean(p)
+	for _, prefix := range []string{"/dev/tty", "/dev/serial/", "/dev/cu.", "/dev/rfcomm"} {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	// udev aliases such as /dev/rsn-meshtastic: allow a symlink that resolves to a serial device
+	if target, err := filepath.EvalSymlinks(p); err == nil && target != p && strings.HasPrefix(p, "/dev/") {
+		return serialPath(target)
+	}
+	return false
 }

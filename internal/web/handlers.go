@@ -500,7 +500,10 @@ func (s *Server) moveIdentity(w http.ResponseWriter, r *http.Request) {
 	if from.api != nil {
 		from.api.Stop(id.NodeNum) // free the port before the other radio's manager binds it
 	}
-	dropped := from.host.DropOutgoing(id.NodeNum, "moved to "+to.name+" before it was sent")
+	dropped := 0
+	for _, orc := range s.radios { // its guest traffic on other radios too
+		dropped += orc.host.DropOutgoing(id.NodeNum, "moved to "+to.name+" before it was sent")
+	}
 	msgs, read := from.host.Messages.Take(id.NodeNum)
 	if err := to.host.AddIdentity(id); err != nil {
 		_ = from.host.AddIdentity(id) // put it back as it was
@@ -564,46 +567,93 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	// Check everything first, so a request is applied completely or not at all.
+	bad := func(code int, msg string) { writeError(w, code, msg) }
 	if req.Role != nil && !id.IsRelay {
-		if err := id.SetRole(*req.Role); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		if _, ok := pb.Config_DeviceConfig_Role_value[strings.ToUpper(*req.Role)]; !ok {
+			bad(http.StatusBadRequest, fmt.Sprintf("unknown role %q", *req.Role))
 			return
 		}
 	}
-	if len(req.Position) > 0 {
-		var p *mesh.IdentityPosition
-		if string(req.Position) != "null" {
-			p = &mesh.IdentityPosition{}
-			if err := json.Unmarshal(req.Position, p); err != nil {
-				writeError(w, http.StatusBadRequest, "position: "+err.Error())
+	var pos *mesh.IdentityPosition
+	if len(req.Position) > 0 && string(req.Position) != "null" {
+		pos = &mesh.IdentityPosition{}
+		if err := json.Unmarshal(req.Position, pos); err != nil {
+			bad(http.StatusBadRequest, "position: "+err.Error())
+			return
+		}
+		if pos.Latitude < -90 || pos.Latitude > 90 || pos.Longitude < -180 || pos.Longitude > 180 || (pos.Latitude == 0 && pos.Longitude == 0) {
+			bad(http.StatusBadRequest, "position out of range")
+			return
+		}
+	}
+	if req.PosSecs != nil && *req.PosSecs != 0 && *req.PosSecs < 1800 {
+		bad(http.StatusBadRequest, "position_secs must be 0 (the radio's) or at least 1800")
+		return
+	}
+	if req.HopLimit != nil && *req.HopLimit > wire.HopMax {
+		bad(http.StatusBadRequest, fmt.Sprintf("hop_limit must be 0-%d", wire.HopMax))
+		return
+	}
+	if req.Share != nil && (*req.Share < 0 || *req.Share > 100) {
+		bad(http.StatusBadRequest, "share_limit_pct must be between 0 and 100")
+		return
+	}
+	var mr *mesh.MultiRadio
+	if len(req.MultiRadio) > 0 {
+		var err error
+		if mr, err = s.parseMultiRadio(s.radioFor(r), id, req.MultiRadio); err != nil {
+			bad(http.StatusBadRequest, err.Error())
+			return
+		}
+		if mr != nil && mr.DefaultRadio != "" {
+			if clash := s.lastByteClash(id, mr.DefaultRadio); clash != "" {
+				bad(http.StatusConflict, clash)
 				return
 			}
 		}
-		if err := id.SetFixedPosition(p); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+	}
+	var bind *string
+	if req.APIBind != nil {
+		b := strings.TrimSpace(*req.APIBind)
+		if b != "" && net.ParseIP(b) == nil {
+			bad(http.StatusBadRequest, "api_bind must be an IP address such as 127.0.0.1, or empty for every interface")
 			return
 		}
+		bind = &b
+	}
+	if req.APIPort != nil && !id.IsRelay {
+		if *req.APIPort < 1 || *req.APIPort > 65535 {
+			bad(http.StatusBadRequest, "api_port must be 1-65535")
+			return
+		}
+		want := id.APIBind
+		if bind != nil {
+			want = *bind
+		}
+		for _, orc := range s.radios { // one host, one port space, whatever the radio
+			for _, other := range orc.host.Identities() {
+				if other != id && other.APIPort == *req.APIPort && (other.APIBind == want || other.APIBind == "" || want == "") {
+					bad(http.StatusConflict, fmt.Sprintf("port %d is already used by %s on %s", *req.APIPort, other.NodeID(), orc.name))
+					return
+				}
+			}
+		}
+	}
+
+	// Apply.
+	if req.Role != nil && !id.IsRelay {
+		_ = id.SetRole(*req.Role)
+	}
+	if len(req.Position) > 0 {
+		_ = id.SetFixedPosition(pos)
 		s.radioOf(id).host.RecordOwnPositions()
 	}
 	if req.PosSecs != nil {
-		if *req.PosSecs != 0 && *req.PosSecs < 1800 {
-			writeError(w, http.StatusBadRequest, "position_secs must be 0 (the radio's) or at least 1800")
-			return
-		}
 		id.SetPositionInterval(*req.PosSecs)
 	}
 	if req.HopLimit != nil {
-		if err := id.SetMaxHops(*req.HopLimit); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	if req.Share != nil {
-		if *req.Share < 0 || *req.Share > 100 {
-			writeError(w, http.StatusBadRequest, "share_limit_pct must be between 0 and 100")
-			return
-		}
-		id.ShareLimitPct = *req.Share
+		_ = id.SetMaxHops(*req.HopLimit)
 	}
 	long, short := "", ""
 	if req.LongName != nil {
@@ -614,43 +664,23 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	id.SetOwner(long, short)
 	if len(req.MultiRadio) > 0 {
-		mr, err := s.parseMultiRadio(s.radioFor(r), id, req.MultiRadio)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
 		id.SetMultiRadio(mr)
 		s.opt.Federation.Changed()
 	}
-	if req.Enabled != nil && !id.IsRelay {
-		id.Enabled = *req.Enabled
-	}
-	if req.APIPort != nil && !id.IsRelay {
-		bind := id.APIBind
-		if req.APIBind != nil {
-			bind = *req.APIBind
+	id.SetSettings(func(x *mesh.IdentitySettings) {
+		if req.Enabled != nil && !id.IsRelay {
+			x.Enabled = *req.Enabled
 		}
-		if *req.APIPort < 1 || *req.APIPort > 65535 {
-			writeError(w, http.StatusBadRequest, "api_port must be 1-65535")
-			return
+		if req.APIPort != nil && !id.IsRelay {
+			x.APIPort = *req.APIPort
 		}
-		for _, orc := range s.radios { // one host, one port space, whatever the radio
-			for _, other := range orc.host.Identities() {
-				if other != id && other.APIPort == *req.APIPort && (other.APIBind == bind || other.APIBind == "" || bind == "") {
-					writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s on %s", *req.APIPort, other.NodeID(), orc.name))
-					return
-				}
-			}
+		if bind != nil {
+			x.APIBind = *bind
 		}
-		id.APIPort = *req.APIPort
-	}
-	if req.APIBind != nil {
-		if b := strings.TrimSpace(*req.APIBind); b != "" && net.ParseIP(b) == nil {
-			writeError(w, http.StatusBadRequest, "api_bind must be an IP address such as 127.0.0.1, or empty for every interface")
-			return
+		if req.Share != nil {
+			x.ShareLimitPct = *req.Share
 		}
-		id.APIBind = strings.TrimSpace(*req.APIBind)
-	}
+	})
 	s.hostFor(r).DB.Update(id.NodeNum, func(e *mesh.NodeEntry) { e.User = id.UserCopy() })
 	s.hostFor(r).ChannelsChanged()
 	s.hostFor(r).Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
@@ -720,6 +750,10 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "no radio "+*req.Radio)
 			return
 		}
+		if clash := s.lastByteClash(id, *req.Radio); clash != "" {
+			writeError(w, http.StatusConflict, clash)
+			return
+		}
 	}
 	psk, err := base64.StdEncoding.DecodeString(req.PSK)
 	if err != nil {
@@ -740,7 +774,7 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Name != s.hostFor(r).Config().PrimaryChannel {
 			writeError(w, http.StatusConflict,
-				"the primary channel name is shared by every identity because it picks the frequency; change it under Configuration → Radio")
+				"the primary channel name is shared by every identity because it picks the frequency; change it with Edit under Configuration → Radios")
 			return
 		}
 	}
@@ -755,7 +789,7 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if role != pb.Channel_DISABLED && req.Radio != nil && idx > 0 {
+	if role != pb.Channel_DISABLED && req.Radio != nil && idx > 0 && (*req.Radio != "" || id.MultiRadio() != nil) {
 		id.SetSlotRadio(idx, *req.Radio)
 		s.opt.Federation.Changed()
 	}
@@ -768,9 +802,13 @@ func (s *Server) getChannelURL(w http.ResponseWriter, r *http.Request) {
 	if id == nil {
 		return
 	}
-	rp := s.hostFor(r).RadioParams()
+	host := s.hostFor(r)
+	if orc := s.radioByID(host.SlotRadio(id, 0)); orc != nil { // slot 0 lives on the default radio
+		host = orc.host
+	}
+	rp := host.RadioParams()
 	set := &pb.ChannelSet{LoraConfig: &pb.Config_LoRaConfig{UsePreset: true, ModemPreset: rp.Preset, Region: rp.Region.Code,
-		HopLimit: s.hostFor(r).Config().HopLimit, TxEnabled: true}}
+		HopLimit: host.Config().HopLimit, TxEnabled: true}}
 	for i := 0; i < mesh.MaxChannels; i++ {
 		if ch := id.ChannelCopy(i); ch != nil && ch.Role != pb.Channel_DISABLED {
 			set.Settings = append(set.Settings, ch.Settings)
@@ -804,19 +842,37 @@ func (s *Server) postChannelURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	primaryName := s.hostFor(r).Config().PrimaryChannel
-	next := 1
+	free := func() int { // secondary channels go into free slots; existing channels are kept
+		for k := 1; k < mesh.MaxChannels; k++ {
+			if c := id.ChannelCopy(k); c == nil || c.Role == pb.Channel_DISABLED {
+				return k
+			}
+		}
+		return -1
+	}
+	skipped := 0
 	for i, st := range set.Settings {
 		if i == 0 && (st.GetName() == primaryName || st.GetName() == "") {
 			ch := id.ChannelCopy(0)
 			ch.Settings.Psk = st.Psk
-			_ = s.hostFor(r).SetChannel(id, ch)
+			if err := s.hostFor(r).SetChannel(id, ch); err != nil {
+				writeError(w, http.StatusBadRequest, "primary channel: "+err.Error())
+				return
+			}
 			continue
 		}
-		if next >= mesh.MaxChannels {
-			break
+		k := free()
+		if k < 0 {
+			skipped++
+			continue
 		}
-		_ = s.hostFor(r).SetChannel(id, &pb.Channel{Index: int32(next), Role: pb.Channel_SECONDARY, Settings: st})
-		next++
+		if err := s.hostFor(r).SetChannel(id, &pb.Channel{Index: int32(k), Role: pb.Channel_SECONDARY, Settings: st}); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("channel %q: %v", st.GetName(), err))
+			return
+		}
+	}
+	if skipped > 0 {
+		s.log.Info("channel URL import: no free slot for some channels", "identity", id.NodeID(), "skipped", skipped)
 	}
 	s.saveIdentities()
 	writeJSON(w, http.StatusOK, s.identityJSON(id))
@@ -1155,9 +1211,9 @@ func (s *Server) applyConfig(r *http.Request, next *config.Config) error {
 	}
 	s.cfgMu.Lock()
 	path := s.cfg.Path()
-	identities := s.cfg.Identities
+	// Sections with their own endpoints may have changed since next was copied: keep the current ones.
+	next.Identities, next.Radios, next.Site, next.Experimental = s.cfg.Identities, s.cfg.Radios, s.cfg.Site, s.cfg.Experimental
 	*s.cfg = *next
-	s.cfg.Identities = identities
 	s.cfgMu.Unlock()
 	if path != "" {
 		if err := s.saveConfigFile(); err != nil {
@@ -1363,27 +1419,47 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Nothing is replaced under the running daemon (it would save its own state back over it):
+	// the backup is staged next to each file and moved into place when the daemon next starts.
+	var cfgYAML []byte
+	if b.Config != "" {
+		c := config.Default()
+		if err := yaml.Unmarshal([]byte(b.Config), c); err != nil {
+			writeError(w, http.StatusBadRequest, "the backup's configuration can't be read: "+err.Error())
+			return
+		}
+		if err := c.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "the backup's configuration isn't valid: "+err.Error())
+			return
+		}
+		cfgYAML = []byte(b.Config)
+	}
+	s.cfgMu.Lock()
+	stateDir, cfgPath := s.cfg.StateDir, s.cfg.Path()
+	s.cfgMu.Unlock()
 	for id, recs := range sets {
-		dir := s.cfg.StateDir
+		dir := stateDir
 		if id != config.MainRadioID {
-			dir = filepath.Join(s.cfg.StateDir, "radios", id) // where RadioConfigs puts that radio's state
+			dir = filepath.Join(stateDir, "radios", id) // where RadioConfigs puts that radio's state
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		data, _ := json.MarshalIndent(recs, "", "  ")
-		if err := os.WriteFile(filepath.Join(dir, "identities.json"), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "identities.json.restore"), data, 0o600); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
-	if b.Config != "" && s.cfg.Path() != "" {
-		c := config.Default()
-		if err := yaml.Unmarshal([]byte(b.Config), c); err == nil && c.Validate() == nil {
-			_ = os.WriteFile(s.cfg.Path(), []byte(b.Config), 0o600)
+	if cfgYAML != nil && cfgPath != "" {
+		if err := os.WriteFile(cfgPath+".restore", cfgYAML, 0o600); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
+	s.restorePending.Store(true)
+	s.log.Warn("backup staged; it replaces the configuration and identities when the daemon restarts")
 	writeJSON(w, http.StatusOK, map[string]any{"restart_required": true})
 }
 
@@ -1576,14 +1652,11 @@ func (s *Server) parseMultiRadio(home *radioCtx, id *mesh.Identity, raw json.Raw
 		mr.DefaultRadio = "" // home is the default default
 	}
 	switch {
-	case req.DM == "", req.DM == mesh.DMAuto, req.DM == mesh.DMDefault, req.DM == "home", exists(req.DM):
+	case req.DM == "", req.DM == mesh.DMAuto, req.DM == mesh.DMDefault, exists(req.DM):
 	default:
 		return nil, fmt.Errorf("multi_radio: dm must be auto, default or a radio, not %q", req.DM)
 	}
 	mr.DM, mr.Fallback = req.DM, req.Fallback
-	if mr.DM == "home" {
-		mr.DM = mesh.DMDefault
-	}
 	if req.Channels != nil {
 		mr.Channels = map[int]string{}
 		for idx, r := range *req.Channels {
@@ -1625,6 +1698,8 @@ func (s *Server) routePreview(w http.ResponseWriter, r *http.Request) {
 	for _, rid := range radios {
 		if rc := s.radioByID(rid); rc != nil {
 			names = append(names, rc.name)
+		} else {
+			names = append(names, rid) // keeps radio_names lined up with radios
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"radios": radios, "radio_names": names, "reason": reason,
@@ -1671,4 +1746,22 @@ func (s *Server) siteRadioCount() int {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	return 1 + len(s.cfg.Radios)
+}
+
+// lastByteClash reports (as a message) another identity that would share a radio with id and has
+// the same last byte of its node number, which next-hop routing can't tell apart. "" = none.
+func (s *Server) lastByteClash(id *mesh.Identity, radioID string) string {
+	for _, rc := range s.radios {
+		for _, other := range rc.host.Identities() {
+			if other == id || wire.LastByte(other.NodeNum) != wire.LastByte(id.NodeNum) {
+				continue
+			}
+			for _, r := range s.identityRadios(rc, other) {
+				if r == radioID {
+					return fmt.Sprintf("%s shares its last byte with %s, which is also on %s; they can't share a radio", id.NodeID(), other.NodeID(), radioID)
+				}
+			}
+		}
+	}
+	return ""
 }

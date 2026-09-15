@@ -134,15 +134,19 @@ func (s *Server) addRadio(w http.ResponseWriter, r *http.Request) {
 	if ri.Mesh.Preset == "" {
 		ri.Mesh.Preset = "LONG_FAST"
 	}
-	whole.Radios = append(whole.Radios, ri)
+	s.cfgMu.Lock()
+	whole = *s.cfg // check and add against the config as it is now
+	whole.Radios = append(append([]config.RadioInstance(nil), s.cfg.Radios...), ri)
 	whole.FillRadioDefaults()
-	if err := whole.Validate(); err != nil {
+	err := whole.Validate()
+	if err == nil {
+		s.cfg.Radios = whole.Radios
+	}
+	s.cfgMu.Unlock()
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.cfgMu.Lock()
-	s.cfg.Radios = whole.Radios
-	s.cfgMu.Unlock()
 	if err := s.saveIfPath(); err != nil {
 		writeError(w, http.StatusInternalServerError, "radio added but the config file could not be saved: "+err.Error())
 		return
@@ -205,7 +209,7 @@ func (s *Server) patchRadio(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putRadio(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.radioByID(id) != nil {
-		writeError(w, http.StatusConflict, "that radio is running; edit it under its LoRa & modem settings")
+		writeError(w, http.StatusConflict, "that radio is running; use Edit on it in Configuration → Radios")
 		return
 	}
 	var req struct {
@@ -221,9 +225,9 @@ func (s *Server) putRadio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
 	whole := *s.cfg
 	whole.Radios = append([]config.RadioInstance(nil), s.cfg.Radios...)
-	s.cfgMu.Unlock()
 	found := false
 	for i := range whole.Radios {
 		ri := &whole.Radios[i]
@@ -256,12 +260,12 @@ func (s *Server) putRadio(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.cfgMu.Lock()
 	s.cfg.Radios = whole.Radios
-	s.cfgMu.Unlock()
-	if err := s.saveIfPath(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	if s.cfg.Path() != "" {
+		if err := s.cfg.Save(); err != nil { // cfgMu is held
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "restart_required": true})
 }
@@ -367,9 +371,8 @@ func (s *Server) putExtraRelay(w http.ResponseWriter, r *http.Request, rc *radio
 	if rc.cfg != nil {
 		rc.cfg.Relay.Role = role
 	}
-	err := s.cfg.Save()
 	s.cfgMu.Unlock()
-	if err != nil {
+	if err := s.saveIfPath(); err != nil {
 		s.log.Warn("relay role changed but the config file could not be saved", "radio", rc.id, "err", err)
 	}
 	writeJSON(w, http.StatusOK, s.statusJSON(r)["relay"])
@@ -407,7 +410,15 @@ func (s *Server) applyRadioConfig(r *http.Request, rc *radioCtx, next *config.Co
 		return err
 	}
 	s.cfgMu.Lock()
-	s.cfg.Radios = radios
+	for i := range s.cfg.Radios { // only this radio's entry: others may have changed meanwhile
+		if s.cfg.Radios[i].ID == rc.id {
+			for _, nr := range radios {
+				if nr.ID == rc.id {
+					s.cfg.Radios[i] = nr
+				}
+			}
+		}
+	}
 	*rc.cfg = *view.Config
 	s.cfgMu.Unlock()
 	if s.cfg.Path() != "" {
@@ -425,7 +436,11 @@ func (s *Server) restartDaemon(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"restarting": true})
 	s.log.Warn("restart requested from the web GUI")
 	go func() {
-		time.Sleep(500 * time.Millisecond)
-		os.Exit(75) // EX_TEMPFAIL: systemd's Restart=on-failure brings the daemon back
+		time.Sleep(500 * time.Millisecond) // let the response reach the browser
+		if s.opt.Restart != nil {
+			s.opt.Restart() // clean shutdown, then exit 75 for the supervisor
+			return
+		}
+		os.Exit(75)
 	}()
 }

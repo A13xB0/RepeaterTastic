@@ -370,6 +370,13 @@ func TestConfigurationGaps(t *testing.T) {
 	if len(b["identities"].([]any)) != 1 || len(b["radio_identities"].(map[string]any)["mf"].([]any)) != 2 {
 		t.Fatalf("backup = identities %v radio_identities %v", b["identities"], b["radio_identities"])
 	}
+	if code, res, _ := call(t, srv, "POST", "/api/v1/restore", tok, b); code != 200 {
+		t.Fatalf("restore %d %v", code, res)
+	}
+	_, st, _ = call(t, srv, "GET", "/api/v1/status", tok, nil)
+	if !strings.Contains(fmt.Sprint(st["restart_reasons"]), "restored backup") {
+		t.Fatalf("restore isn't a restart reason: %v", st["restart_reasons"])
+	}
 	b["radio_identities"].(map[string]any)["../evil"] = []any{}
 	if code, _, _ := call(t, srv, "POST", "/api/v1/restore", tok, b); code != 400 {
 		t.Fatalf("restore with a path-like radio id accepted: %d", code)

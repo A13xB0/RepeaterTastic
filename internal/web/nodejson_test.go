@@ -3,6 +3,7 @@ package web
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
 )
@@ -61,5 +62,18 @@ func TestMissingAssetIs404(t *testing.T) {
 	s.spa().ServeHTTP(rec, httptest.NewRequest("GET", "/config/mqtt", nil))
 	if rec.Code != 200 {
 		t.Fatalf("history route = %d, want the app page", rec.Code)
+	}
+}
+
+func TestShortDurationRoundTrips(t *testing.T) {
+	for _, d := range []time.Duration{10 * time.Minute, 30 * time.Minute, time.Hour, 90 * time.Minute, 3 * time.Hour, 168 * time.Hour, 90 * time.Second, 0} {
+		s := shortDuration(d)
+		back, err := time.ParseDuration(s)
+		if err != nil || back != d {
+			t.Errorf("%v → %q → %v (%v)", d, s, back, err)
+		}
+	}
+	if shortDuration(30*time.Minute) != "30m" || shortDuration(90*time.Minute) != "1h30m" {
+		t.Fatalf("got %q %q", shortDuration(30*time.Minute), shortDuration(90*time.Minute))
 	}
 }

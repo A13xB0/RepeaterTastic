@@ -63,7 +63,6 @@ async function save() {
     const next = { ...form.value }
     for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(r.config[s])
     form.value = next
-    refreshStatus().catch(() => {})
     toast(r.restart_required ? 'Saved. Restart the daemon to apply.' : 'Saved and applied')
     refreshStatus().catch(() => {})
   } catch (e) {
@@ -174,7 +173,7 @@ async function restore() {
     toastError(new Error('That file is not valid JSON'))
     return
   }
-  if (!(await confirmDialog({ title: 'Restore this backup?', body: `Config and identity keys from ${f.name} replace what is on this host now. Download a backup of the current state first if you might need it.`, confirm: 'Restore', danger: true }))) return
+  if (!(await confirmDialog({ title: 'Restore this backup?', body: `The config and identity keys from ${f.name} replace what's on this host when the daemon next restarts. Download a backup of the current state first if you might need it.`, confirm: 'Restore', danger: true }))) return
   restoring.value = true
   try {
     const r = await api.post<{ restart_required: boolean }>('/restore', body)
@@ -439,7 +438,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
           <div class="rounded-xl border border-line-soft p-5">
             <Download class="size-5 text-brand" />
             <h4 class="card-title mt-2">Download backup</h4>
-            <p class="mt-1 text-[13px] text-ink-3">One JSON file with the config and every identity's private key. Store it like a password.</p>
+            <p class="mt-1 text-[13px] text-ink-3">One JSON file with the config (including MQTT passwords) and every identity's private key. Store it like a password.</p>
             <button class="btn mt-4" :disabled="downloading" @click="download"><Spinner v-if="downloading" /><Download v-else class="size-4" />Download backup</button>
           </div>
           <div class="rounded-xl border border-line-soft p-5">

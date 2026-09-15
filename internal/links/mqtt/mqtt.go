@@ -435,7 +435,7 @@ func (l *Link) onMessage(channel string, payload []byte) {
 		return
 	}
 	p := env.Packet
-	if l.ours(env.GetGatewayId()) || l.host.Identity(p.From) != nil {
+	if l.ours(env.GetGatewayId()) || l.host.SiteIdentity(p.From) {
 		return // our own uplink (from any of our connections) coming back
 	}
 	// Like the firmware, only encrypted packets from a real node are taken from a broker.
@@ -465,7 +465,7 @@ func (l *Link) onMessage(channel string, payload []byte) {
 // ours reports whether a gateway id is one of this radio's identities.
 func (l *Link) ours(gatewayID string) bool {
 	n, err := strconv.ParseUint(strings.TrimPrefix(gatewayID, "!"), 16, 32)
-	return err == nil && l.host.Identity(uint32(n)) != nil
+	return err == nil && l.host.SiteIdentity(uint32(n)) // any radio of this site, not just this one
 }
 
 func (l *Link) publishMapReport() {

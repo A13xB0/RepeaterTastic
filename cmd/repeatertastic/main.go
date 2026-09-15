@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -64,9 +66,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "repeatertastic:", err)
 		os.Exit(1)
 	}
+	if restartRequested.Load() {
+		os.Exit(75) // EX_TEMPFAIL: the supervisor (systemd Restart=on-failure, Docker restart policy) starts it again
+	}
 }
 
+// restartRequested is set when the web GUI asks for a restart: run shuts down cleanly (saving
+// identities and closing modems), then main exits 75 so the supervisor starts it again.
+var restartRequested atomic.Bool
+
 func run(cfgPath string) error {
+	restoredConfig := applyStaged(cfgPath) // a backup restored from the GUI replaces the config at start
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
@@ -83,6 +93,14 @@ func run(cfgPath string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if restoredConfig {
+		log.Info("configuration restored from a backup")
+	}
+	for _, rc := range cfg.RadioConfigs() { // ...and its identities, before any radio loads them
+		if applyStaged(filepath.Join(rc.StateDir, "identities.json")) {
+			log.Info("identities restored from a backup", "radio", rc.ID)
+		}
+	}
 
 	rcs := cfg.RadioConfigs()
 	uplinked := mqtt.NewUplinked() // one per site: a packet heard on two radios is published once
@@ -151,7 +169,8 @@ func run(cfgPath string) error {
 		log.Info("map tiles", "api_key", source)
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
 			MapAPIKey: key, MapKeySource: source, LogLevel: level, Federation: fed,
-			Radios: extra, Site: st, Version: version, Log: log})
+			Restart: func() { restartRequested.Store(true); stop() },
+			Radios:  extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
 		}
@@ -383,4 +402,17 @@ func healthcheck() int {
 		return 1
 	}
 	return 0
+}
+
+// applyStaged moves path+".restore" (written by a backup restore) over path. It reports whether it did.
+func applyStaged(path string) bool {
+	staged := path + ".restore"
+	if _, err := os.Stat(staged); err != nil {
+		return false
+	}
+	if err := os.Rename(staged, path); err != nil {
+		fmt.Fprintln(os.Stderr, "repeatertastic: applying restored", path+":", err)
+		return false
+	}
+	return true
 }

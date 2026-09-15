@@ -454,3 +454,21 @@ func sameChannel(a, b *pb.Channel) bool {
 	return a.Role == b.Role && a.GetSettings().GetName() == b.GetSettings().GetName() &&
 		string(a.GetSettings().GetPsk()) == string(b.GetSettings().GetPsk())
 }
+
+// IdentitySettings are the identity's plain settings, changed together under its lock.
+type IdentitySettings struct {
+	Enabled       bool
+	APIPort       int
+	APIBind       string
+	ShareLimitPct float64
+}
+
+// SetSettings changes Enabled, APIPort, APIBind and ShareLimitPct under the identity's lock, so a
+// concurrent Record (saving) never sees a half-changed identity.
+func (id *Identity) SetSettings(fn func(*IdentitySettings)) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	x := IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct}
+	fn(&x)
+	id.Enabled, id.APIPort, id.APIBind, id.ShareLimitPct = x.Enabled, x.APIPort, x.APIBind, x.ShareLimitPct
+}

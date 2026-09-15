@@ -192,6 +192,7 @@ type fedKey struct{ identity, from, id uint32 }
 type Federation struct {
 	enabled atomic.Bool
 	hosts   []*Host
+	gen     atomic.Uint64 // bumped whenever identities, channels or routing change (guest caches)
 
 	mu        sync.Mutex
 	delivered map[fedKey]time.Time
@@ -223,6 +224,7 @@ func (f *Federation) Changed() {
 	if f == nil {
 		return
 	}
+	f.gen.Add(1)
 	for _, h := range f.hosts {
 		h.ChannelsChanged()
 	}
@@ -267,6 +269,24 @@ func (h *Host) guests() []*Identity {
 	if !h.fedOn() {
 		return nil
 	}
+	// Cached: this runs several times per received packet, and walking every identity's slots on
+	// every other radio each time is wasteful. Any change bumps fed.gen.
+	gen := h.fed.gen.Load()
+	h.guestMu.Lock()
+	if h.guestOK && h.guestGen == gen {
+		out := h.guestList
+		h.guestMu.Unlock()
+		return out
+	}
+	h.guestMu.Unlock()
+	out := h.computeGuests()
+	h.guestMu.Lock()
+	h.guestList, h.guestGen, h.guestOK = out, gen, true
+	h.guestMu.Unlock()
+	return out
+}
+
+func (h *Host) computeGuests() []*Identity {
 	var out []*Identity
 	for _, o := range h.fed.hosts {
 		if o == h {
@@ -380,6 +400,15 @@ func (h *Host) isSiteIdentity(num uint32) bool {
 		return true
 	}
 	return h.fedOn() && h.fed.homeOf(num) != nil
+}
+
+// SiteIdentity reports whether num is an identity on any radio of this site, whether or not
+// multi-radio identities are switched on (e.g. to ignore our own packets coming back from MQTT).
+func (h *Host) SiteIdentity(num uint32) bool {
+	if h.Identity(num) != nil {
+		return true
+	}
+	return h.fed != nil && h.fed.homeOf(num) != nil
 }
 
 // homeHost is the host an identity lives on.

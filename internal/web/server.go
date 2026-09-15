@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
@@ -45,6 +46,8 @@ type Options struct {
 	LogLevel *slog.LevelVar
 	// Federation joins the radios for experimental multi-radio identities (nil = not available).
 	Federation *mesh.Federation
+	// Restart shuts the daemon down cleanly for its supervisor to start again (nil = exit 75 at once).
+	Restart func()
 }
 
 // Radio is an additional radio served by the same web GUI.
@@ -91,6 +94,8 @@ type Server struct {
 	// booted is the configuration the daemon started with, to tell which saved changes still
 	// need a restart.
 	booted *config.Config
+	// restorePending is set once a backup has been staged for the next start.
+	restorePending atomic.Bool
 }
 
 func (rc *radioCtx) stats(ctx context.Context) radio.Stats {
@@ -296,8 +301,8 @@ func (s *Server) routes() {
 func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if tok == "" {
-			tok = r.URL.Query().Get("token")
+		if tok == "" && strings.HasSuffix(r.URL.Path, "/events") {
+			tok = r.URL.Query().Get("token") // EventSource can't send headers; nowhere else, so tokens stay out of URLs and logs
 		}
 		if !s.auth.Valid(tok) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")

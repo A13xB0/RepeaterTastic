@@ -1,54 +1,37 @@
 <script setup lang="ts">
-// One identity's channel slots, plus sharing and importing a channel URL. Adding and editing a
-// slot opens the slot dialog, the same one the Channels page uses.
+// One identity's channels at a glance, plus sharing and importing a channel URL. Slots are added,
+// edited and removed on the Channels page only (one place for that).
 import { computed, ref, watch } from 'vue'
 import { Lock, QrCode as QrIcon } from '@lucide/vue'
 import { api, enc } from '@/api/client'
-import type { Channel, ChannelRole, Identity } from '@/api/types'
+import type { ChannelRole, Identity } from '@/api/types'
 import Drawer from '@/components/ui/Drawer.vue'
 import QrCode from '@/components/ui/QrCode.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import ChannelSlotDialog, { type SiteChannel } from '@/components/identities/ChannelSlotDialog.vue'
 import { multiRadioActive, live, radioName, upsertIdentity } from '@/store/live'
-import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { channelSlots } from '@/lib/channels'
 
-const props = defineProps<{ identityId: string | null; focus?: number }>()
+const props = defineProps<{ identityId: string | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
 const multi = computed(() => multiRadioActive())
 const tab = ref<'edit' | 'share'>('edit')
-const slotDialog = ref<number | null>(null)
 const shareUrl = ref('')
 const importUrl = ref('')
 const importing = ref(false)
 
 watch(
   () => props.identityId,
-  (id) => {
+  () => {
     tab.value = 'edit'
     shareUrl.value = ''
     importUrl.value = ''
-    slotDialog.value = id && props.focus !== undefined && props.focus > 0 ? props.focus : null
   },
 )
 
-// Channels other identities have, offered as "existing channel" in the dialog.
-const siteChannels = computed<SiteChannel[]>(() => {
-  const map = new Map<string, SiteChannel>()
-  for (const i of [...live.identities, ...(multi.value ? live.allIdentities : [])])
-    for (const c of i.channels)
-      if (c.role === 'SECONDARY') {
-        const radio = multi.value ? (c.radio ?? i.radio_id) : undefined
-        const key = `${c.name}|${c.psk}|${radio ?? ''}`
-        if (!map.has(key)) map.set(key, { key, name: c.name, psk: c.psk, radio, holders: [] })
-        if (!map.get(key)!.holders.includes(i.node_id)) map.get(key)!.holders.push(i.node_id)
-      }
-  return [...map.values()]
-})
 
 const pskKind = (psk: string) => {
   if (!psk) return 'no encryption'
@@ -57,22 +40,6 @@ const pskKind = (psk: string) => {
   return len === 1 ? `default key #${atob(psk).charCodeAt(0)}` : `AES-${len * 8}`
 }
 
-async function remove(ch: Channel) {
-  if (!identity.value) return
-  const ok = await confirmDialog({
-    title: `Remove ${ch.display_name} from ${identity.value.long_name}?`,
-    body: `Slot ${ch.index} becomes free and ${identity.value.long_name} stops hearing and sending on it.`,
-    confirm: 'Remove channel',
-    danger: true,
-  })
-  if (!ok) return
-  try {
-    upsertIdentity(await api.put<Identity>(`/identities/${enc(identity.value.node_id)}/channels/${ch.index}`, { name: '', psk: '', role: 'DISABLED', uplink: false, downlink: false }))
-    toast(`${ch.display_name} removed`)
-  } catch (e) {
-    toastError(e)
-  }
-}
 
 async function loadShare() {
   if (!identity.value) return
@@ -111,6 +78,10 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
       </div>
 
       <div v-if="tab === 'edit'" class="space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-raised px-3.5 py-2.5 text-[13px]">
+          <span class="text-ink-3">Add, edit and remove channels on the Channels page.</span>
+          <RouterLink to="/channels" class="btn btn-sm" @click="emit('close')">Open Channels</RouterLink>
+        </div>
         <div v-for="ch in channelSlots(identity)" :key="ch.index" class="flex items-center gap-3 rounded-xl border border-line-soft bg-raised/60 px-3.5 py-2.5">
           <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sunken text-xs font-semibold tabular-nums text-ink-2">{{ ch.index }}</span>
           <div class="min-w-0 flex-1">
@@ -126,12 +97,8 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
             </div>
           </div>
           <span v-if="ch.index === 0" class="max-w-44 text-right text-2xs leading-tight text-ink-3 max-sm:hidden">
-            {{ multi ? 'The default radio\'s primary · set in the identity editor' : 'Shared primary · set in Configuration → Radios' }}
+            {{ multi ? "The default radio's primary" : 'Shared primary · Configuration → Radios' }}
           </span>
-          <template v-else>
-            <button v-if="ch.role !== 'DISABLED'" class="btn btn-sm btn-ghost" @click="remove(ch)">Remove</button>
-            <button class="btn btn-sm" @click="slotDialog = ch.index">{{ ch.role === 'DISABLED' ? 'Add' : 'Edit' }}</button>
-          </template>
         </div>
       </div>
 
@@ -168,6 +135,5 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
         </section>
       </div>
     </div>
-    <ChannelSlotDialog :open="slotDialog !== null" :identity-id="identity?.node_id" :slot="slotDialog ?? undefined" :channels="siteChannels" @close="slotDialog = null" />
   </Drawer>
 </template>

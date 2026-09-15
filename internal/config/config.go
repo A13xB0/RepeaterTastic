@@ -173,10 +173,14 @@ func (c *Config) validateRadios() error {
 			}
 		}
 		if rc.Radio.Driver == "kiss" && rc.Radio.Device != "" {
-			if other, ok := seenDev[rc.Radio.Device]; ok {
+			dev := rc.Radio.Device
+			if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
+				dev = real
+			}
+			if other, ok := seenDev[dev]; ok {
 				return fmt.Errorf("radios %s and %s both use %s", other, rc.ID, rc.Radio.Device)
 			}
-			seenDev[rc.Radio.Device] = rc.ID
+			seenDev[dev] = rc.ID
 		}
 		for _, id := range rc.Identities {
 			if id.APIPort <= 0 {

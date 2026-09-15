@@ -4,6 +4,7 @@ import { onMounted, ref } from 'vue'
 import { FlaskConical } from '@lucide/vue'
 import { api } from '@/api/client'
 import Toggle from '@/components/ui/Toggle.vue'
+import { live, refreshAllIdentities, refreshIdentities } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 
@@ -42,6 +43,9 @@ async function setMultiRadio(on: boolean) {
   busy.value = true
   try {
     state.value = await api.put<Experimental>('/experimental', { ...state.value, multi_radio_identities: on })
+    live.multiRadioIdentities = state.value.multi_radio_identities // every page follows straight away
+    refreshIdentities().catch(() => {})
+    refreshAllIdentities()
     toast(on ? 'Identities on several radios: on' : 'Identities on several radios: off')
   } catch (e) {
     toastError(e)

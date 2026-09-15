@@ -195,20 +195,27 @@ async function save() {
   }
   saving.value = true
   error.value = ''
-  try {
-    for (const p of plan) {
-      const body: Record<string, unknown> = { name: c.name, psk, role: 'SECONDARY', uplink: uplink.value, downlink: downlink.value }
-      if (p.radio) body.radio = p.radio
+  const failed: string[] = []
+  let done = 0
+  for (const p of plan) {
+    const body: Record<string, unknown> = { name: c.name, psk, role: 'SECONDARY', uplink: uplink.value, downlink: downlink.value }
+    if (p.radio) body.radio = p.radio
+    try {
       upsertIdentity(await api.put<Identity>(`/identities/${enc(p.id.node_id)}/channels/${p.slot}`, body))
+      done++
+    } catch (e) {
+      failed.push(`${p.id.long_name}: ${(e as Error).message}`)
     }
-    const where = plan.length === 1 ? plan[0]!.id.long_name : `${plan.length} identities`
-    toast(`${c.name} ${editing.value ? 'saved on' : 'added to'} ${where}${skipped.length ? ` · no free slot on ${skipped.join(', ')}` : ''}`)
-    emit('close')
-  } catch (e) {
-    toastError(e)
-  } finally {
-    saving.value = false
   }
+  saving.value = false
+  if (failed.length) {
+    error.value = `${done ? `Saved on ${done}; ` : ''}not saved on ${failed.join('; ')}`
+    if (!done) toastError(new Error(failed[0]))
+    return
+  }
+  const where = plan.length === 1 ? plan[0]!.id.long_name : `${plan.length} identities`
+  toast(`${c.name} ${editing.value ? 'saved on' : 'added to'} ${where}${skipped.length ? ` · no free slot on ${skipped.join(', ')}` : ''}`)
+  emit('close')
 }
 </script>
 

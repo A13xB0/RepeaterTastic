@@ -47,7 +47,7 @@ watch(
     error.value = ''
     form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
       own_position: !!i.position, latitude: i.position?.latitude ?? 0, longitude: i.position?.longitude ?? 0, altitude: i.position?.altitude ?? 0,
-      position_secs: i.position_secs ?? 0, radio_id: i.radio_id ?? 'main', api_bind: i.api?.bind === '127.0.0.1' ? '127.0.0.1' : '' }
+      position_secs: i.position_secs ?? 0, radio_id: i.radio_id ?? 'main', api_bind: !i.api?.bind || i.api.bind === '0.0.0.0' ? '' : i.api.bind }
   },
 )
 
@@ -66,7 +66,7 @@ async function save() {
   if (f.role !== i.role) patch.role = f.role
   if (f.enabled !== i.enabled) patch.enabled = f.enabled
   if (i.api && f.api_port !== i.api.port) patch.api_port = f.api_port
-  if (i.api && f.api_bind !== (i.api.bind === '127.0.0.1' ? '127.0.0.1' : '')) patch.api_bind = f.api_bind
+  if (i.api && f.api_bind !== (!i.api.bind || i.api.bind === '0.0.0.0' ? '' : i.api.bind)) patch.api_bind = f.api_bind
   if (f.share_limit_pct !== (i.share_limit_pct ?? 25)) patch.share_limit_pct = f.share_limit_pct
   if (f.hop_limit !== (i.hop_limit ?? 0)) patch.hop_limit = f.hop_limit
   if (f.position_secs !== (i.position_secs ?? 0)) patch.position_secs = f.position_secs
@@ -135,6 +135,7 @@ async function save() {
         <select id="e-bind" v-model="form.api_bind" class="input">
           <option value="">Anyone on the LAN (0.0.0.0)</option>
           <option value="127.0.0.1">This host only (127.0.0.1)</option>
+          <option v-if="form.api_bind && form.api_bind !== '127.0.0.1'" :value="form.api_bind">Only {{ form.api_bind }} (set in the config)</option>
         </select>
         <p class="hint">“This host only” suits identities used by local software, such as a Reticulum interface. Connected apps reconnect when it changes.</p>
       </div>

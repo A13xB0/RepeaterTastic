@@ -30,6 +30,9 @@ func (s *Server) restartReasons() []string {
 		return nil
 	}
 	var out []string
+	if s.restorePending.Load() {
+		out = append(out, "restored backup")
+	}
 	b, c := s.booted, s.cfg
 	if b.Web.Bind != c.Web.Bind || b.Web.Port != c.Web.Port {
 		out = append(out, "web address")

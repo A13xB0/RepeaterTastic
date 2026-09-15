@@ -175,7 +175,11 @@ type Host struct {
 	started       time.Time
 	nextTelemetry time.Time // run loop only
 
-	fed          *Federation            // nil unless the site joins its radios (experimental)
+	fed          *Federation // nil unless the site joins its radios (experimental)
+	guestMu      sync.Mutex
+	guestList    []*Identity
+	guestGen     uint64
+	guestOK      bool
 	guestTimers  map[uint32]*guestTimer // run loop only
 	stateDir     string
 	radioOK      atomic.Bool
@@ -392,6 +396,9 @@ func (h *Host) ChannelsChanged() {
 	h.chanMu.Lock()
 	h.chanCache = nil
 	h.chanMu.Unlock()
+	if h.fed != nil {
+		h.fed.gen.Add(1) // other radios' guest lists may include this radio's identities
+	}
 }
 
 // Channels lists every distinct channel held by this host's identities.

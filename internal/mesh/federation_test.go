@@ -246,10 +246,14 @@ func TestMultiRadioFallback(t *testing.T) {
 	fed.Changed()
 	time.Sleep(100 * time.Millisecond)
 
-	remote.broadcastNodeInfo(zed)
-	mf.broadcastNodeInfo(alex) // Alex announced on mf, so Zed can read its PKI DMs
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
+	var lastAnnounce time.Time
 	for mf.peerKey(zed.NodeNum) == nil || remote.peerKey(alex.NodeNum) == nil {
+		if time.Since(lastAnnounce) > 1500*time.Millisecond { // the simulated air loses packets now and then
+			remote.broadcastNodeInfo(zed)
+			mf.broadcastNodeInfo(alex) // Alex announced on mf, so Zed can read its PKI DMs
+			lastAnnounce = time.Now()
+		}
 		if time.Now().After(deadline) {
 			t.Fatal("mf never heard Zed")
 		}
