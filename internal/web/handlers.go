@@ -588,10 +588,26 @@ func (s *Server) conversations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	convs := s.host.Messages.Conversations(id.NodeNum, id.NodeID())
+	// Every enabled channel is a conversation even before anything is said on it:
+	// the chat page only opens listed conversations, so a new identity could
+	// otherwise send DMs but never post in a channel.
+	listed := map[string]bool{}
+	for _, c := range convs {
+		listed[c.Key] = true
+	}
+	for i := 0; i < mesh.MaxChannels; i++ {
+		ch := id.ChannelCopy(i)
+		key := "ch:" + strconv.Itoa(i)
+		if ch == nil || ch.Role == pb.Channel_DISABLED || listed[key] {
+			continue
+		}
+		convs = append(convs, mesh.ConversationSummary{Key: key})
+	}
 	for i := range convs {
 		convs[i].Title = s.conversationTitle(id, convs[i].Key)
 	}
-	sort.Slice(convs, func(i, j int) bool { return convs[i].LastTime > convs[j].LastTime })
+	// Channels without history sort after every conversation that has some, in slot order.
+	sort.SliceStable(convs, func(i, j int) bool { return convs[i].LastTime > convs[j].LastTime })
 	writeJSON(w, http.StatusOK, convs)
 }
 

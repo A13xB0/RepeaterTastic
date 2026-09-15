@@ -67,6 +67,7 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 ## Messages (browser chat)
 
 - `GET /api/v1/identities/{node_id}/conversations` → `[{"key": "ch:0" | "dm:!5b9e2213", "title": "LongFast" | "Ops Desk", "last_text": "…", "last_time": 0, "unread": 2}]`
+  Every enabled channel of the identity is listed, with `last_time: 0` and an empty `last_text` until something is said on it, so a new identity can post in its channels straight away.
 - `GET /api/v1/identities/{node_id}/messages?conversation=ch:0&before=<ms>&limit=50` → `[Message]`
 - `POST /api/v1/identities/{node_id}/messages` `{"to": "!ffffffff", "channel": 0, "text": "hello", "want_ack": true}` → Message (202)
 
