@@ -16,10 +16,6 @@ function ensure(): MultiRadio {
   if (!model.value) model.value = {}
   return model.value
 }
-const defaultRadio = computed({
-  get: () => model.value?.default_radio || home.value,
-  set: (v: string) => (ensure().default_radio = v === home.value ? '' : v),
-})
 const dm = computed({
   get: () => model.value?.dm || 'auto',
   set: (v: string) => (ensure().dm = v),
@@ -34,22 +30,13 @@ watch(
 )
 const dmKind = computed({
   get: () => (dm.value === 'auto' || dm.value === 'default' ? dm.value : 'fixed'),
-  set: (k: string) => (dm.value = k === 'fixed' ? dmRadio.value || live.radios.find((r) => r.id !== defaultRadio.value)?.id || home.value : k),
+  set: (k: string) => (dm.value = k === 'fixed' ? dmRadio.value || live.radios.find((r) => r.id !== (model.value?.default_radio || home.value))?.id || home.value : k),
 })
 const fallback = computed({
   get: () => !!model.value?.fallback,
   set: (v: boolean) => (ensure().fallback = v),
 })
 
-const savedDefault = computed(() => props.identity.multi_radio?.default_radio || home.value)
-// Slots with no radio of their own follow the default radio when it changes.
-const following = computed(() =>
-  channelSlots(props.identity).filter((c) => c.index > 0 && c.role !== 'DISABLED' && !props.identity.multi_radio?.channels?.[String(c.index)]),
-)
-const primaryOf = (id: string) => {
-  const r = live.radios.find((x) => x.id === id)
-  return r?.phy.primary_channel || r?.phy.preset_name || id
-}
 const slotsByRadio = computed(() => {
   const out = new Map<string, string[]>()
   for (const c of channelSlots(props.identity))
@@ -80,18 +67,8 @@ async function runPreview() {
 
 <template>
   <div class="grid gap-3 rounded-xl border border-dashed border-line px-3.5 py-3">
-    <div class="flex items-center gap-2 text-[13px] font-medium"><FlaskConical class="size-4 text-ink-3" />Radios <span class="chip bg-ink-3/12 text-ink-3">experimental</span></div>
+    <div class="flex items-center gap-2 text-[13px] font-medium"><FlaskConical class="size-4 text-ink-3" />Channels and DMs across radios <span class="chip bg-ink-3/12 text-ink-3">experimental</span></div>
 
-    <div>
-      <label class="label" for="mr-default">Default radio</label>
-      <select id="mr-default" v-model="defaultRadio" class="input">
-        <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }}{{ r.id === home ? ' (home)' : '' }} · {{ r.phy.preset_name }}</option>
-      </select>
-      <p class="hint">Slot 0 is this radio's primary. New channels start here and DMs fall back to it.</p>
-      <p v-if="defaultRadio !== savedDefault" class="hint !text-warn">
-        Saving makes slot 0 {{ primaryOf(defaultRadio) }}<template v-if="following.length"> and moves {{ following.map((c) => c.display_name).join(', ') }} (they follow the default)</template>. Channels set to a radio stay where they are.
-      </p>
-    </div>
 
     <dl class="kv !grid-cols-[auto_1fr] text-xs">
       <dt>Lives on</dt>

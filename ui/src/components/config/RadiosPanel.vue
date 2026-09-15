@@ -89,6 +89,8 @@ async function saveSite() {
 
 // ---- add
 const adding = ref(false)
+/** Set when the form edits a radio that hasn't started yet. */
+const editingId = ref<string | null>(null)
 const busy = ref(false)
 const form = ref({ id: '', name: '', device: '', region: 'EU_868', preset: 'MEDIUM_FAST', tx_power_dbm: 22, relay_role: 'mute', copy_position: true })
 const addError = ref('')
@@ -101,7 +103,20 @@ function openAdd() {
   form.value = { id: '', name: '', device: '', region: main?.phy.region ?? 'EU_868', preset, tx_power_dbm: main?.phy.tx_power_dbm ?? 22, relay_role: 'mute', copy_position: true }
   addError.value = ''
   idTouched.value = false
+  editingId.value = null
   suggest(preset)
+  adding.value = true
+}
+
+function openEditPending(p: RadiosResponse['pending'][number]) {
+  const main = data.value?.radios[0]
+  form.value = {
+    id: p.id, name: p.name || '', device: p.device || '', region: p.region || main?.phy.region || 'EU_868', preset: p.preset || 'LONG_FAST',
+    tx_power_dbm: p.tx_power_dbm || main?.phy.tx_power_dbm || 22, relay_role: p.relay_role || 'mute', copy_position: true,
+  }
+  addError.value = ''
+  idTouched.value = true // keep the id and name as they are
+  editingId.value = p.id
   adding.value = true
 }
 // Suggest an id from the preset (mediumfast → mf) until the user types one.
@@ -133,6 +148,14 @@ async function add() {
   addError.value = ''
   busy.value = true
   try {
+    if (editingId.value) {
+      await api.put(`/radios/${enc(editingId.value)}`, { name: form.value.name, driver: 'kiss', device: form.value.device, region: form.value.region,
+        preset: form.value.preset, tx_power_dbm: form.value.tx_power_dbm, relay_role: form.value.relay_role })
+      adding.value = false
+      await load()
+      toast(`${form.value.name || editingId.value} saved. It starts with these settings at the next restart.`)
+      return
+    }
     await api.post('/radios', { ...form.value, id: form.value.id.trim().toLowerCase() })
     adding.value = false
     idTouched.value = false
@@ -203,6 +226,7 @@ function openSettings(id: string) {
             </div>
             <div class="mt-0.5 text-xs text-ink-3">{{ presetLabel(p.preset || 'LONG_FAST') }} · relay {{ p.relay_role }} <span class="mono"> · {{ p.device || p.driver }}</span></div>
           </div>
+          <button type="button" class="btn btn-sm" title="Change this radio before it starts" @click="openEditPending(p)"><Settings2 class="size-3.5" />Edit</button>
           <button type="button" class="icon-btn" :aria-label="`Remove ${p.name || p.id}`" title="Remove" @click="remove(p.id, p.name || p.id, false)"><Trash class="size-4" /></button>
         </li>
       </ul>
@@ -222,7 +246,7 @@ function openSettings(id: string) {
       </form>
     </template>
 
-    <Modal :open="adding" title="Add a radio" subtitle="Another Mesh KISS modem on this host, on its own preset." @close="adding = false">
+    <Modal :open="adding" :title="editingId ? `Edit ${form.name || editingId}` : 'Add a radio'" :subtitle="editingId ? 'Not started yet: these settings apply when it starts at the next restart.' : 'Another Mesh KISS modem on this host, on its own preset.'" @close="adding = false">
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="add">
         <div>
           <label class="label" for="ar-region">Region</label>
@@ -238,7 +262,7 @@ function openSettings(id: string) {
         </div>
         <div>
           <label class="label" for="ar-id">ID</label>
-          <input id="ar-id" v-model="form.id" class="input mono" placeholder="mf" maxlength="24" pattern="[a-z0-9-]{1,24}" required @input="idTouched = true" />
+          <input id="ar-id" v-model="form.id" class="input mono" placeholder="mf" maxlength="24" pattern="[a-z0-9-]{1,24}" required :readonly="!!editingId" @input="idTouched = true" />
           <p class="hint">Lowercase letters, digits, dashes. Names its state folder; can't be changed later.</p>
         </div>
         <div>
@@ -262,7 +286,7 @@ function openSettings(id: string) {
           </select>
           <p class="hint">Starts muted, so a new radio doesn't repeat until you decide it should.</p>
         </div>
-        <label class="flex items-center gap-2 text-[13px] sm:col-span-2"><input v-model="form.copy_position" type="checkbox" class="size-4 accent-[var(--brand)]" /> Same site position as the main radio</label>
+        <label v-if="!editingId" class="flex items-center gap-2 text-[13px] sm:col-span-2"><input v-model="form.copy_position" type="checkbox" class="size-4 accent-[var(--brand)]" /> Same site position as the main radio</label>
         <p v-if="preview" class="hint sm:col-span-2">
           {{ preview.frequency_mhz.toFixed(3) }} MHz · {{ num(preview.bw_khz) }} kHz · SF{{ preview.sf }}
           <span v-if="sharesWith.length" class="!text-warn"><TriangleAlert class="mx-1 inline size-3.5 align-[-2px]" />Same channel as {{ sharesWith.join(', ') }}: they'll take turns to transmit.</span>
@@ -270,7 +294,7 @@ function openSettings(id: string) {
         <p v-if="addError" class="hint !text-bad sm:col-span-2">{{ addError }}</p>
         <div class="flex justify-end gap-2 sm:col-span-2">
           <button type="button" class="btn" @click="adding = false">Cancel</button>
-          <button class="btn btn-primary" :disabled="busy || !form.id || !form.device"><Spinner v-if="busy" />Add radio</button>
+          <button class="btn btn-primary" :disabled="busy || !form.id || !form.device"><Spinner v-if="busy" />{{ editingId ? 'Save radio' : 'Add radio' }}</button>
         </div>
       </form>
     </Modal>

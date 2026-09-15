@@ -196,6 +196,22 @@ func TestAddRenameRemoveRadios(t *testing.T) {
 		t.Fatalf("pending = %v", list)
 	}
 
+	// a radio that hasn't started can be changed; a running one can't be changed this way
+	if code, res, _ := call(t, srv, "PUT", "/api/v1/radios/ls", tok, map[string]any{"name": "Long Slow", "driver": "none", "device": "",
+		"region": "EU_868", "preset": "SHORT_FAST", "tx_power_dbm": 14, "relay_role": "client"}); code != 200 {
+		t.Fatalf("edit pending radio %d %v", code, res)
+	}
+	_, list, _ = call(t, srv, "GET", "/api/v1/radios", tok, nil)
+	if p := list["pending"].([]any)[0].(map[string]any); p["preset"] != "SHORT_FAST" || p["name"] != "Long Slow" || p["relay_role"] != "client" || p["tx_power_dbm"] != float64(14) {
+		t.Fatalf("pending after edit = %v", p)
+	}
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/radios/ls", tok, map[string]any{"driver": "none", "preset": "NOPE"}); code != 400 {
+		t.Fatalf("bad preset accepted: %d", code)
+	}
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/radios/mf", tok, map[string]any{"preset": "LONG_FAST"}); code != 409 {
+		t.Fatalf("running radio edited through PUT /radios: %d", code)
+	}
+
 	if code, res, _ := call(t, srv, "PATCH", "/api/v1/radios/mf", tok, map[string]any{"name": "Medium Fast"}); code != 200 || res["name"] != "Medium Fast" {
 		t.Fatalf("rename mf %d %v", code, res)
 	}

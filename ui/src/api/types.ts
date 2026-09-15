@@ -46,7 +46,7 @@ export interface RadiosResponse {
   radios: RadioSummary[]
   site: { radios: number; duty_limit_pct: number; tx_pct: number } | null
   /** Radios added or removed in the config that start or stop at the next restart. */
-  pending: { id: string; name: string; device: string; driver?: string; region?: string; preset?: string; relay_role?: string; action: 'start' | 'remove' }[]
+  pending: { id: string; name: string; device: string; driver?: string; region?: string; preset?: string; tx_power_dbm?: number; relay_role?: string; action: 'start' | 'remove' }[]
   restart_required: boolean
 }
 

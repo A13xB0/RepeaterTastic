@@ -81,7 +81,8 @@ func (s *Server) pendingRadios() ([]map[string]any, bool) {
 		inConfig[ri.ID] = true
 		if s.radioByID(ri.ID) == nil {
 			pending = append(pending, map[string]any{"id": ri.ID, "name": ri.Name, "device": ri.Radio.Device, "driver": ri.Radio.Driver,
-				"region": ri.Mesh.Region, "preset": ri.Mesh.Preset, "relay_role": ri.Relay.Role, "action": "start"})
+				"region": ri.Mesh.Region, "preset": ri.Mesh.Preset, "tx_power_dbm": ri.Mesh.TxPowerDBm, "relay_role": ri.Relay.Role,
+				"action": "start"})
 		}
 	}
 	for _, rc := range s.radios {
@@ -197,6 +198,72 @@ func (s *Server) patchRadio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": name})
+}
+
+// putRadio is PUT /api/v1/radios/{id}: change a radio that was added but hasn't started yet (its
+// modem, preset, power and relay). A running radio is edited through /config?radio=<id>.
+func (s *Server) putRadio(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.radioByID(id) != nil {
+		writeError(w, http.StatusConflict, "that radio is running; edit it under its LoRa & modem settings")
+		return
+	}
+	var req struct {
+		Name       string `json:"name"`
+		Driver     string `json:"driver"`
+		Device     string `json:"device"`
+		Region     string `json:"region"`
+		Preset     string `json:"preset"`
+		TxPowerDBm int    `json:"tx_power_dbm"`
+		RelayRole  string `json:"relay_role"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	s.cfgMu.Lock()
+	whole := *s.cfg
+	whole.Radios = append([]config.RadioInstance(nil), s.cfg.Radios...)
+	s.cfgMu.Unlock()
+	found := false
+	for i := range whole.Radios {
+		ri := &whole.Radios[i]
+		if ri.ID != id {
+			continue
+		}
+		found = true
+		ri.Name = strings.TrimSpace(req.Name)
+		if req.Driver != "" {
+			ri.Radio.Driver = req.Driver
+		}
+		ri.Radio.Device = strings.TrimSpace(req.Device)
+		if req.Region != "" {
+			ri.Mesh.Region = strings.ToUpper(req.Region)
+		}
+		if req.Preset != "" {
+			ri.Mesh.Preset = strings.ToUpper(req.Preset)
+		}
+		ri.Mesh.TxPowerDBm = req.TxPowerDBm
+		if req.RelayRole != "" {
+			ri.Relay.Role = req.RelayRole
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "no radio "+id)
+		return
+	}
+	whole.FillRadioDefaults()
+	if err := whole.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.cfgMu.Lock()
+	s.cfg.Radios = whole.Radios
+	s.cfgMu.Unlock()
+	if err := s.saveIfPath(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "restart_required": true})
 }
 
 // deleteRadio is DELETE /api/v1/radios/{id}: remove an extra radio from the config. It stops at

@@ -6,6 +6,7 @@ import { api, radio } from '@/api/client'
 import type { Identity, KeyPreview } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import RadioFields from '@/components/identities/RadioFields.vue'
 import { live, nodeLabel, refreshAllIdentities, upsertIdentity } from '@/store/live'
 import { toast } from '@/composables/toast'
 
@@ -19,6 +20,12 @@ const port = ref(4403)
 // Only the relay persona repeats; other identities say so by default.
 const role = ref('CLIENT_MUTE')
 const radioId = ref(radio.value)
+// Follows the home radio until chosen separately.
+const defaultChosen = ref('')
+const defaultRadio = computed({
+  get: () => defaultChosen.value || radioId.value,
+  set: (v: string) => (defaultChosen.value = v === radioId.value ? '' : v),
+})
 const tab = ref<'generate' | 'import'>('generate')
 const importKey = ref('')
 const preview = ref<KeyPreview | null>(null)
@@ -48,6 +55,7 @@ watch(
     port.value = nextPort()
     role.value = 'CLIENT_MUTE'
     radioId.value = radio.value
+    defaultChosen.value = ''
     tab.value = props.mode === 'import' ? 'import' : 'generate'
     importKey.value = ''
     preview.value = null
@@ -119,6 +127,8 @@ async function save() {
       radio_id: live.radios.length > 1 ? radioId.value : undefined,
     })
     upsertIdentity(ident)
+    if (defaultChosen.value && live.multiRadioIdentities)
+      upsertIdentity(await api.patch<Identity>(`/identities/${encodeURIComponent(ident.node_id)}`, { multi_radio: { default_radio: defaultChosen.value, dm: 'auto', fallback: false } }))
     toast(`${ident.long_name} created as ${ident.node_id}`)
     emit('close')
   } catch (e) {
@@ -152,13 +162,7 @@ async function save() {
           <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
         </select>
       </div>
-      <div v-if="live.radios.length > 1" class="sm:col-span-2">
-        <label class="label" for="radio">Radio</label>
-        <select id="radio" v-model="radioId" class="input">
-          <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }} · {{ r.phy.preset_name }} · {{ r.phy.frequency_mhz.toFixed(3) }} MHz · relay {{ r.relay.role }}</option>
-        </select>
-        <p class="hint">An identity lives on one radio. You can move it later from Edit.</p>
-      </div>
+      <RadioFields v-model:home="radioId" v-model:default-radio="defaultRadio" creating class="sm:col-span-2" />
       <div>
         <label class="label" for="port">API port</label>
         <input id="port" v-model.number="port" type="number" min="1024" max="65535" class="input tabular-nums" />

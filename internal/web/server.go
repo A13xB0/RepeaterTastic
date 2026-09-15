@@ -237,6 +237,7 @@ func (s *Server) routes() {
 	priv("GET /api/v1/radios", s.listRadios)
 	priv("POST /api/v1/radios", s.addRadio)
 	priv("PATCH /api/v1/radios/{id}", s.patchRadio)
+	priv("PUT /api/v1/radios/{id}", s.putRadio)
 	priv("DELETE /api/v1/radios/{id}", s.deleteRadio)
 	priv("GET /api/v1/experimental", s.getExperimental)
 	priv("PUT /api/v1/experimental", s.putExperimental)
