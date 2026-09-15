@@ -75,7 +75,16 @@ function sample(s: Status) {
   if (live.history.length > HISTORY) live.history.splice(0, live.history.length - HISTORY)
 }
 
+// The daemon version this page was loaded against. When status reports another one the daemon
+// was updated, and the next navigation loads the new GUI instead of running the old one.
+let loadedVersion: string | null = null
+export const newBuild = { available: false }
+
 export function setStatus(s: Status) {
+  if (s.version) {
+    loadedVersion ??= s.version
+    if (s.version !== loadedVersion) newBuild.available = true
+  }
   live.status = s
   sample(s)
 }

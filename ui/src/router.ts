@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { api, setUnauthorizedHandler, token } from '@/api/client'
+import { newBuild } from '@/store/live'
 import AppShell from '@/components/layout/AppShell.vue'
 
 declare module 'vue-router' {
@@ -53,7 +54,12 @@ export function markSetupDone() {
   setupChecked = false
 }
 
-router.beforeEach(async (to) => {
+router.beforeEach(async (to, from) => {
+  // The daemon was updated while this tab was open: load the new GUI rather than keep running the old one.
+  if (newBuild.available && from.matched.length) {
+    window.location.assign(router.resolve(to).href)
+    return false
+  }
   const needed = await setupNeeded()
   if (needed) return to.name === 'setup' ? true : { name: 'setup' }
   if (to.name === 'setup') return { name: token.value ? 'dashboard' : 'login' }
