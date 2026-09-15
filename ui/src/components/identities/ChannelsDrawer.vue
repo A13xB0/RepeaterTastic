@@ -9,7 +9,7 @@ import Toggle from '@/components/ui/Toggle.vue'
 import QrCode from '@/components/ui/QrCode.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, upsertIdentity } from '@/store/live'
+import { live, radioName, upsertIdentity } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
 import { channelSlots } from '@/lib/channels'
 
@@ -19,7 +19,8 @@ const emit = defineEmits<{ close: [] }>()
 const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
 const tab = ref<'edit' | 'share'>('edit')
 const editing = ref<number | null>(null)
-const draft = ref<{ name: string; psk: string; role: ChannelRole; uplink: boolean; downlink: boolean }>({ name: '', psk: '', role: 'SECONDARY', uplink: false, downlink: false })
+const draft = ref<{ name: string; psk: string; role: ChannelRole; uplink: boolean; downlink: boolean; listen: string[]; send: string }>({ name: '', psk: '', role: 'SECONDARY', uplink: false, downlink: false, listen: [], send: '' })
+const routed = computed(() => (identity.value?.radios?.length ?? 1) > 1)
 const saving = ref(false)
 const shareUrl = ref('')
 const importUrl = ref('')
@@ -40,7 +41,9 @@ function startEdit(index: number) {
   const ch = identity.value ? channelSlots(identity.value)[index] : undefined
   if (!ch || ch.locked) return
   editing.value = index
-  draft.value = { name: ch.name, psk: ch.psk, role: ch.role === 'DISABLED' ? 'SECONDARY' : ch.role, uplink: ch.uplink, downlink: ch.downlink }
+  const home = identity.value?.radio_id ?? 'main'
+  draft.value = { name: ch.name, psk: ch.psk, role: ch.role === 'DISABLED' ? 'SECONDARY' : ch.role, uplink: ch.uplink, downlink: ch.downlink,
+    listen: ch.listen ?? [home], send: ch.send ?? home }
 }
 
 function randomPsk() {
@@ -139,6 +142,7 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
               <div v-if="ch.role !== 'DISABLED'" class="mt-0.5 text-xs text-ink-3">
                 {{ pskKind(ch.psk) }} · hash <span class="mono">0x{{ ch.hash.toString(16).padStart(2, '0') }}</span>
                 <template v-if="ch.uplink || ch.downlink"> · MQTT {{ [ch.uplink && 'up', ch.downlink && 'down'].filter(Boolean).join('/') }}</template>
+                <template v-if="ch.listen"> · hears on {{ ch.listen.map(radioName).join(', ') || 'no radio' }}, sends on {{ ch.send === 'all' ? 'every radio' : radioName(ch.send ?? '') }}</template>
               </div>
             </div>
             <template v-if="ch.locked">
@@ -170,12 +174,28 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
                 <button class="btn shrink-0" title="Meshtastic default key" @click="draft.psk = 'AQ=='">AQ==</button>
               </div>
             </div>
+            <div v-if="routed && identity.radios" class="grid gap-2 rounded-lg bg-raised px-3 py-2.5 sm:col-span-2">
+              <div class="text-xs font-medium">Radios <span class="font-normal text-ink-3">(experimental)</span></div>
+              <div class="flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
+                <span class="text-xs text-ink-3">Hear on</span>
+                <label v-for="r in identity.radios" :key="r" class="flex items-center gap-1.5">
+                  <input v-model="draft.listen" type="checkbox" :value="r" class="size-4 accent-[var(--brand)]" />{{ radioName(r) }}
+                </label>
+              </div>
+              <div class="flex items-center gap-2 text-[13px]">
+                <label class="text-xs text-ink-3" :for="`cs${ch.index}`">Send on</label>
+                <select :id="`cs${ch.index}`" v-model="draft.send" class="input !h-8 !py-0 text-xs sm:max-w-56">
+                  <option v-for="r in identity.radios" :key="r" :value="r">{{ radioName(r) }}{{ r === identity.radio_id ? ' (home)' : '' }}</option>
+                  <option value="all">Every radio</option>
+                </select>
+              </div>
+            </div>
             <div class="flex flex-wrap items-center gap-5 text-[13px] sm:col-span-2">
               <label class="flex items-center gap-2"><Toggle v-model="draft.uplink" label="MQTT uplink" />MQTT uplink</label>
               <label class="flex items-center gap-2"><Toggle v-model="draft.downlink" label="MQTT downlink" />MQTT downlink</label>
               <div class="ml-auto flex gap-2">
                 <button class="btn btn-sm" @click="editing = null">Cancel</button>
-                <button class="btn btn-sm btn-primary" :disabled="!draftValid || saving" @click="saveChannel(ch.index, { ...draft, name: draft.name.trim() })">
+                <button class="btn btn-sm btn-primary" :disabled="!draftValid || saving" @click="saveChannel(ch.index, routed ? { ...draft, name: draft.name.trim() } : { name: draft.name.trim(), psk: draft.psk, role: draft.role, uplink: draft.uplink, downlink: draft.downlink })">
                   <Spinner v-if="saving" />Save
                 </button>
               </div>

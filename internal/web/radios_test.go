@@ -408,3 +408,39 @@ func TestMultiRadioIdentityAPI(t *testing.T) {
 		t.Fatalf("clearing multi_radio: %d %v", code, res["multi_radio"])
 	}
 }
+
+func TestChannelsOnSeveralRadios(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+	call(t, srv, "PUT", "/api/v1/experimental", tok, map[string]any{"multi_radio_identities": true})
+	_, desk, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk", "api_port": 4480})
+	path := "/api/v1/identities/" + desk["node_id"].(string)
+
+	// routing on a slot needs the identity on several radios
+	if code, _, _ := call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Ops", "psk": "AQ==", "role": "SECONDARY", "send": "mf"}); code != 400 {
+		t.Fatalf("slot routing on a single-radio identity: %d", code)
+	}
+	call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{"radios": []string{"mf"}}})
+	code, res, _ := call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Ops", "psk": "AQ==", "role": "SECONDARY",
+		"listen": []string{"main", "mf"}, "send": "mf"})
+	if code != 200 {
+		t.Fatalf("add routed channel %d %v", code, res)
+	}
+	chans := res["channels"].([]any)
+	primary, ops := chans[0].(map[string]any), chans[1].(map[string]any)
+	if names := primary["display_names"].(map[string]any); names["main"] != "LongFast" || names["mf"] != "MediumFast" {
+		t.Fatalf("primary display names = %v", primary["display_names"])
+	}
+	if ops["send"] != "mf" || len(ops["listen"].([]any)) != 2 {
+		t.Fatalf("ops routing = listen %v send %v", ops["listen"], ops["send"])
+	}
+	// a different channel in the slot starts from the defaults (home only)
+	call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "", "psk": "", "role": "DISABLED"})
+	_, res, _ = call(t, srv, "PUT", path+"/channels/1", tok, map[string]any{"name": "Other", "psk": "AQ==", "role": "SECONDARY"})
+	other := res["channels"].([]any)[1].(map[string]any)
+	if other["send"] != "main" || len(other["listen"].([]any)) != 1 {
+		t.Fatalf("new channel inherited the old slot's routing: listen %v send %v", other["listen"], other["send"])
+	}
+}

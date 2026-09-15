@@ -103,6 +103,11 @@ export interface Channel {
   uplink: boolean
   downlink: boolean
   locked: boolean
+  /** Identity on several radios (experimental): radios this slot listens on and the radio it sends on ("all" = every radio). */
+  listen?: string[]
+  send?: string
+  /** An unnamed channel's name on each radio (each radio's preset). */
+  display_names?: Record<string, string>
 }
 
 export interface Identity {

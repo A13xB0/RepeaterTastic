@@ -3,12 +3,12 @@
 // slot). Pick a channel another identity already has, or make a new one.
 import { computed, ref, watch } from 'vue'
 import { Dices } from '@lucide/vue'
-import { api, enc } from '@/api/client'
+import { api, enc, radio as currentRadio } from '@/api/client'
 import type { Identity } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, upsertIdentity } from '@/store/live'
+import { live, radioName, upsertIdentity } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
 import { freeSlot } from '@/lib/channels'
 
@@ -42,7 +42,10 @@ const saving = ref(false)
 const error = ref('')
 
 const single = computed(() => !!props.identityId)
-const identity = computed(() => live.identities.find((i) => i.node_id === props.identityId))
+const identity = computed(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
+const routed = computed(() => single.value && (identity.value?.radios?.length ?? 1) > 1)
+const listen = ref<string[]>([])
+const send = ref('')
 
 watch(
   () => props.open,
@@ -56,6 +59,9 @@ watch(
     customPsk.value = ''
     uplink.value = downlink.value = false
     targets.value = []
+    const home = identity.value?.radio_id ?? 'main'
+    listen.value = [home]
+    send.value = home
   },
 )
 
@@ -83,6 +89,8 @@ const channel = computed<{ name: string; psk: string } | null>(() => {
 
 const has = (i: Identity, c: { name: string; psk: string }) => i.channels.some((x) => x.role === 'SECONDARY' && x.name === c.name && x.psk === c.psk)
 const candidates = computed(() => live.identities.filter((i) => !(channel.value && has(i, channel.value))))
+// identities on other radios that are also on this one can take channels here too
+const everyone = computed(() => [...candidates.value, ...live.allIdentities.filter((i) => !live.identities.some((x) => x.node_id === i.node_id) && (i.radios ?? []).includes(currentRadio.value) && !(channel.value && has(i, channel.value)))])
 
 async function save() {
   const c = channel.value
@@ -95,7 +103,7 @@ async function save() {
     plan.push({ id: identity.value, slot: props.slot })
   } else {
     for (const nodeId of targets.value) {
-      const i = live.identities.find((x) => x.node_id === nodeId)
+      const i = live.identities.find((x) => x.node_id === nodeId) ?? live.allIdentities.find((x) => x.node_id === nodeId)
       const slot = i && freeSlot(i)
       if (i && slot !== undefined) plan.push({ id: i, slot })
       else if (i) skipped.push(i.long_name)
@@ -109,7 +117,8 @@ async function save() {
   error.value = ''
   try {
     for (const p of plan) {
-      upsertIdentity(await api.put<Identity>(`/identities/${enc(p.id.node_id)}/channels/${p.slot}`, { name: c.name, psk, role: 'SECONDARY', uplink: uplink.value, downlink: downlink.value }))
+      const route = routed.value ? { listen: listen.value, send: send.value } : {}
+      upsertIdentity(await api.put<Identity>(`/identities/${enc(p.id.node_id)}/channels/${p.slot}`, { name: c.name, psk, role: 'SECONDARY', uplink: uplink.value, downlink: downlink.value, ...route }))
     }
     toast(`${c.name} added to ${plan.length === 1 ? plan[0]!.id.long_name : `${plan.length} identities`}${skipped.length ? ` · no free slot on ${skipped.join(', ')}` : ''}`)
     emit('close')
@@ -157,7 +166,7 @@ async function save() {
       <fieldset v-if="!single">
         <legend class="label">Identities</legend>
         <div class="grid gap-1 sm:grid-cols-2">
-          <label v-for="i in candidates" :key="i.node_id" class="flex items-center gap-2 text-[13px]">
+          <label v-for="i in (live.multiRadioIdentities ? everyone : candidates)" :key="i.node_id" class="flex items-center gap-2 text-[13px]">
             <input v-model="targets" type="checkbox" :value="i.node_id" class="size-4 accent-[var(--brand)]" :disabled="freeSlot(i) === undefined" />
             <span :class="freeSlot(i) === undefined ? 'text-ink-3' : ''">{{ i.long_name }}{{ i.is_relay ? ' (relay)' : '' }}{{ freeSlot(i) === undefined ? ' · full' : '' }}</span>
           </label>
@@ -165,6 +174,21 @@ async function save() {
         <p v-if="!candidates.length" class="hint">Every identity already has this channel.</p>
       </fieldset>
 
+      <div v-if="routed && identity?.radios" class="grid gap-2 rounded-lg bg-raised px-3 py-2.5">
+        <div class="text-xs font-medium">Radios <span class="font-normal text-ink-3">· {{ identity.long_name }} is on several (experimental)</span></div>
+        <div class="flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
+          <span class="text-xs text-ink-3">Hear on</span>
+          <label v-for="r in identity.radios" :key="r" class="flex items-center gap-1.5"><input v-model="listen" type="checkbox" :value="r" class="size-4 accent-[var(--brand)]" />{{ radioName(r) }}</label>
+        </div>
+        <div class="flex items-center gap-2 text-[13px]">
+          <label class="text-xs text-ink-3" for="ac-send">Send on</label>
+          <select id="ac-send" v-model="send" class="input !h-8 !py-0 text-xs">
+            <option v-for="r in identity.radios" :key="r" :value="r">{{ radioName(r) }}{{ r === identity.radio_id ? ' (home)' : '' }}</option>
+            <option value="all">Every radio</option>
+          </select>
+        </div>
+      </div>
+      <p v-else-if="!single && live.multiRadioIdentities" class="hint">Identities on several radios get this channel on their home radio; change that per slot afterwards.</p>
       <div class="flex flex-wrap gap-5 text-[13px]">
         <label class="flex items-center gap-2"><Toggle v-model="uplink" label="MQTT uplink" />MQTT uplink</label>
         <label class="flex items-center gap-2"><Toggle v-model="downlink" label="MQTT downlink" />MQTT downlink</label>

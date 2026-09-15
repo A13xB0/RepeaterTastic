@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // Identities × channel slots grid; the shared primary is locked for everyone.
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Lock, Plus, QrCode, X } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Channel, Identity } from '@/api/types'
-import { live, upsertIdentity } from '@/store/live'
+import { live, radioName, refreshAllIdentities, upsertIdentity } from '@/store/live'
+import { radio as currentRadio } from '@/api/client'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import ChannelsDrawer from '@/components/identities/ChannelsDrawer.vue'
 import AddChannelModal, { type SiteChannel } from '@/components/identities/AddChannelModal.vue'
@@ -14,7 +15,23 @@ import { toast, toastError } from '@/composables/toast'
 
 const open = ref<{ id: string; focus?: number } | null>(null)
 const slots = [0, 1, 2, 3, 4, 5, 6, 7]
-const list = computed(() => [...live.identities].sort((a, b) => Number(b.is_relay) - Number(a.is_relay) || (a.api?.port ?? 0) - (b.api?.port ?? 0)))
+// With identities on several radios, identities from other radios that are also on this one show
+// here too (as guests), since they use this radio's channels.
+const multi = computed(() => live.multiRadioIdentities && live.radios.length > 1)
+watch(multi, (m) => m && refreshAllIdentities(), { immediate: true })
+onMounted(() => multi.value && refreshAllIdentities())
+const guests = computed(() =>
+  multi.value ? live.allIdentities.filter((i) => i.radio_id !== currentRadio.value && (i.radios ?? []).includes(currentRadio.value)) : [],
+)
+const list = computed(() =>
+  [...live.identities.map((i) => live.allIdentities.find((x) => x.node_id === i.node_id) ?? i), ...guests.value].sort(
+    (a, b) => Number(b.is_relay) - Number(a.is_relay) || Number(!!a.radio_id && a.radio_id !== currentRadio.value) - Number(!!b.radio_id && b.radio_id !== currentRadio.value) || (a.api?.port ?? 0) - (b.api?.port ?? 0),
+  ),
+)
+const isGuest = (i: Identity) => !!i.radio_id && i.radio_id !== currentRadio.value
+const routeText = (c: Channel) =>
+  c.listen ? `hears on ${c.listen.map(radioName).join(', ') || 'no radio'} · sends on ${c.send === 'all' ? 'every radio' : radioName(c.send ?? '')}` : ''
+const shortRadio = (id: string) => radioName(id).replace(/[^A-Za-z0-9]/g, '').slice(0, 3)
 
 // Channels with the same name + key on several identities share a colour.
 const palette = ['var(--s1)', 'var(--s2)', 'var(--s5)', 'var(--s7)', 'var(--s4)', 'var(--s6)']
@@ -43,6 +60,15 @@ const siteChannels = computed<SiteChannel[]>(() => {
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
 })
 const keyKind = (psk: string) => (!psk ? 'no encryption' : psk === 'AQ==' ? 'default key' : atob(psk).length === 1 ? 'default key variant' : 'private key')
+
+// Radios any holder listens to this channel on (multi-radio identities), or this radio.
+function heardOn(ch: SiteChannel): string[] {
+  const out = new Set<string>()
+  for (const i of list.value)
+    for (const c of i.channels)
+      if (c.role === 'SECONDARY' && c.name === ch.name && c.psk === ch.psk) (c.listen ?? [i.radio_id ?? currentRadio.value]).forEach((r) => out.add(r))
+  return [...out]
+}
 
 const adding = ref<{ identityId?: string; slot?: number; preset?: SiteChannel | null } | null>(null)
 
@@ -91,6 +117,7 @@ async function removeEverywhere(ch: SiteChannel) {
         <h2 class="page-title">Channels</h2>
         <p class="page-sub">
           Slot 0 is the radio's primary channel <b class="font-medium text-ink-2">{{ primary?.display_name }}</b>, shared and locked for every identity. Slots 1–7 are per identity: press + to add, × to remove.
+          <template v-if="multi"> Identities on several radios show where each channel is heard and sent (e.g. <span class="mono">Lon·Med → Lon</span>).</template>
         </p>
       </div>
       <button class="btn btn-primary" @click="adding = {}"><Plus class="size-4" />Add channel to identities</button>
@@ -114,6 +141,9 @@ async function removeEverywhere(ch: SiteChannel) {
                   <div class="min-w-0 leading-tight">
                     <div class="truncate text-[13px] font-medium">{{ i.long_name }}</div>
                     <div class="mono text-2xs text-ink-3">{{ i.node_id }}</div>
+                    <div v-if="multi && (i.radios?.length ?? 1) > 1" class="mt-0.5 text-2xs" :class="isGuest(i) ? 'text-info' : 'text-ink-3'">
+                      {{ isGuest(i) ? `guest from ${i.radio_name}` : `also on ${i.radios!.slice(1).map(radioName).join(', ')}` }}
+                    </div>
                   </div>
                 </div>
               </td>
@@ -121,9 +151,9 @@ async function removeEverywhere(ch: SiteChannel) {
                 <div
                   v-if="c.locked"
                   class="mx-auto flex h-9 min-w-24 items-center justify-center gap-1 rounded-lg border border-brand/25 bg-brand/8 px-2 text-xs font-medium text-brand"
-                  :title="`Primary · hash 0x${c.hash.toString(16).padStart(2, '0')}`"
+                  :title="c.display_names ? `Primary · ${Object.entries(c.display_names).map(([r, n]) => `${n} on ${radioName(r)}`).join(', ')}${routeText(c) ? ' · ' + routeText(c) : ''}` : `Primary · hash 0x${c.hash.toString(16).padStart(2, '0')}`"
                 >
-                  <Lock class="size-3" />{{ c.display_name }}
+                  <Lock class="size-3" />{{ c.display_names ? [...new Set(Object.values(c.display_names))].join(' / ') : c.display_name }}
                 </div>
                 <div v-else-if="c.role !== 'DISABLED'" class="group relative mx-auto flex h-9 min-w-24 items-stretch rounded-lg border border-line bg-surface-solid text-xs font-medium">
                   <button
@@ -131,7 +161,11 @@ async function removeEverywhere(ch: SiteChannel) {
                     :title="`hash 0x${c.hash.toString(16).padStart(2, '0')} · edit`"
                     @click="open = { id: i.node_id, focus: c.index }"
                   >
-                    <span class="size-2 shrink-0 rounded-full" :style="{ background: groups.get(`${c.name}|${c.psk}`) }" /><span class="truncate">{{ c.display_name }}</span>
+                    <span class="size-2 shrink-0 rounded-full" :style="{ background: groups.get(`${c.name}|${c.psk}`) }" />
+                    <span class="min-w-0 leading-tight">
+                      <span class="block truncate">{{ c.display_name }}</span>
+                      <span v-if="c.listen" class="block truncate text-[10px] font-normal text-ink-3" :title="routeText(c)">{{ c.listen.map(shortRadio).join('·') }} → {{ c.send === 'all' ? 'all' : shortRadio(c.send ?? '') }}</span>
+                    </span>
                   </button>
                   <button class="flex w-6 shrink-0 items-center justify-center rounded-r-lg border-l border-line-soft text-ink-3 hover:bg-bad/10 hover:text-bad" :aria-label="`Remove ${c.display_name} from ${i.long_name}`" title="Remove from this identity" @click="removeSlot(i, c)">
                     <X class="size-3" />
@@ -165,7 +199,7 @@ async function removeEverywhere(ch: SiteChannel) {
         <li v-for="ch in siteChannels" :key="ch.key" class="flex flex-wrap items-center gap-3 px-4 py-2.5 sm:px-5">
           <span class="size-2.5 shrink-0 rounded-full" :style="{ background: groups.get(ch.key) }" />
           <div class="min-w-0 flex-1">
-            <div class="text-[13px] font-medium">{{ ch.name }} <span class="font-normal text-ink-3">· {{ keyKind(ch.psk) }}</span></div>
+            <div class="text-[13px] font-medium">{{ ch.name }} <span class="font-normal text-ink-3">· {{ keyKind(ch.psk) }}{{ multi && heardOn(ch).length ? ` · heard on ${heardOn(ch).map(radioName).join(', ')}` : '' }}</span></div>
             <div class="truncate text-xs text-ink-3">{{ list.filter((i) => ch.holders.includes(i.node_id)).map((i) => i.long_name).join(', ') }}</div>
           </div>
           <button class="btn btn-sm" :disabled="ch.holders.length >= list.length" @click="adding = { preset: ch }"><Plus class="size-3.5" />Add to…</button>

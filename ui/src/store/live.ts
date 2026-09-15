@@ -35,7 +35,14 @@ export const live = reactive({
   site: null as RadiosResponse['site'],
   /** Identities on every radio (only fetched when the host has more than one). */
   allIdentities: [] as Identity[],
+  /** Experimental: identities on several radios is switched on. */
+  multiRadioIdentities: false,
 })
+
+/** A radio's display name from its id. */
+export function radioName(id: string): string {
+  return live.radios.find((r) => r.id === id)?.name ?? id
+}
 
 export async function refreshAllIdentities() {
   if (live.radios.length < 2) {
@@ -54,6 +61,8 @@ export async function refreshRadios() {
     const r = await api.get<RadiosResponse>('/radios')
     live.radios = r.radios
     live.site = r.site
+    if (r.radios.length > 1)
+      api.get<{ multi_radio_identities: boolean }>('/experimental').then((x) => (live.multiRadioIdentities = x.multi_radio_identities), () => {})
     // A remembered radio that no longer exists falls back to the main one.
     if (radio.value !== 'main' && !r.radios.some((x) => x.id === radio.value)) setRadio('main')
   } catch {
@@ -104,9 +113,13 @@ export function setStatus(s: Status) {
 }
 
 export function upsertIdentity(i: Identity) {
+  // keep the cross-radio list current too
+  const ai = live.allIdentities.findIndex((x) => x.node_id === i.node_id)
+  if (ai >= 0) live.allIdentities[ai] = i
   const idx = live.identities.findIndex((x) => x.node_id === i.node_id)
   if (idx >= 0) live.identities[idx] = i
-  else live.identities.push(i)
+  // an identity from another radio (edited here as a guest) doesn't join this radio's list
+  else if (!i.radio_id || i.radio_id === radio.value) live.identities.push(i)
 }
 
 export function removeIdentity(id: string) {

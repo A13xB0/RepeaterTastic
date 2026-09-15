@@ -352,8 +352,17 @@ func (h *Host) SetChannel(id *Identity, ch *pb.Channel) error {
 		return errors.New("only channel 0 can be primary")
 	}
 	id.mu.Lock()
+	old := id.Channels[nc.Index]
 	id.Channels[nc.Index] = nc
+	// Routing across radios is kept per slot: a different channel in the slot starts from the defaults.
+	if mr := id.multiRadio; mr != nil && nc.Index > 0 && !sameChannel(old, nc) {
+		delete(mr.Listen, int(nc.Index))
+		delete(mr.Send, int(nc.Index))
+	}
 	id.mu.Unlock()
+	if h.fed != nil {
+		h.fed.Changed()
+	}
 	h.ChannelsChanged()
 	h.Bus.Publish(Event{Type: "identity", Data: id.NodeID()})
 	return nil
@@ -435,4 +444,41 @@ func (id *Identity) SetPositionInterval(secs uint32) {
 	id.mu.Lock()
 	id.PositionSecs = secs
 	id.mu.Unlock()
+}
+
+// sameChannel reports whether two channel slots hold the same channel (role, name and key).
+func sameChannel(a, b *pb.Channel) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Role == b.Role && a.GetSettings().GetName() == b.GetSettings().GetName() &&
+		string(a.GetSettings().GetPsk()) == string(b.GetSettings().GetPsk())
+}
+
+// SetChannelRoute sets which radios a channel slot listens on and the radio it sends on (nil
+// leaves that part unchanged). The identity must already have multi-radio routing.
+func (id *Identity) SetChannelRoute(index int, listen []string, send *string) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	mr := id.multiRadio
+	if mr == nil {
+		mr = &MultiRadio{}
+		id.multiRadio = mr
+	}
+	if listen != nil {
+		if mr.Listen == nil {
+			mr.Listen = map[int][]string{}
+		}
+		mr.Listen[index] = append([]string(nil), listen...)
+	}
+	if send != nil {
+		if mr.Send == nil {
+			mr.Send = map[int]string{}
+		}
+		if *send == "" {
+			delete(mr.Send, index)
+		} else {
+			mr.Send[index] = *send
+		}
+	}
 }

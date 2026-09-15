@@ -199,6 +199,8 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 	u := id.UserCopy()
 	rp := rc.host.RadioParams()
 	display := rp.PresetName()
+	radios := s.identityRadios(rc, id)
+	mr := id.MultiRadio()
 	var chans []map[string]any
 	for i := 0; i < mesh.MaxChannels; i++ {
 		ch := id.ChannelCopy(i)
@@ -212,9 +214,32 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 			dn = display
 		}
 		key := wire.ExpandPSK(st.GetPsk())
-		chans = append(chans, map[string]any{"index": i, "role": ch.Role.String(), "name": name, "display_name": dn,
+		c := map[string]any{"index": i, "role": ch.Role.String(), "name": name, "display_name": dn,
 			"psk": base64.StdEncoding.EncodeToString(st.GetPsk()), "hash": wire.ChannelHash(dn, key, st.GetUseAead()),
-			"uplink": st.GetUplinkEnabled(), "downlink": st.GetDownlinkEnabled(), "locked": i == 0})
+			"uplink": st.GetUplinkEnabled(), "downlink": st.GetDownlinkEnabled(), "locked": i == 0}
+		if len(radios) > 1 && mr != nil { // on several radios: where this slot listens and sends
+			listen := []string{}
+			names := map[string]string{}
+			for _, rid := range radios {
+				if mr.Listens(i, rid, rc.id) {
+					listen = append(listen, rid)
+				}
+				if name == "" {
+					if orc := s.radioByID(rid); orc != nil { // an unnamed channel takes each radio's preset name
+						if pc := orc.host.Config().PrimaryChannel; pc != "" && i == 0 {
+							names[rid] = pc
+						} else {
+							names[rid] = orc.host.RadioParams().PresetName()
+						}
+					}
+				}
+			}
+			c["listen"], c["send"] = listen, mr.SendRadio(i, rc.id)
+			if len(names) > 0 {
+				c["display_names"] = names
+			}
+		}
+		chans = append(chans, c)
 	}
 	txTotal, _ := rc.host.Air.HourTotals(now)
 	mine := rc.host.Air.IdentityHourMs(now, id.NodeNum)
@@ -660,9 +685,34 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 		Role     string `json:"role"`
 		Uplink   bool   `json:"uplink"`
 		Downlink bool   `json:"downlink"`
+		// Experimental multi-radio routing for this slot (omit to leave it as it is).
+		Listen *[]string `json:"listen"`
+		Send   *string   `json:"send"`
 	}
 	if !readJSON(w, r, &req) {
 		return
+	}
+	if req.Listen != nil || req.Send != nil {
+		attached := map[string]bool{}
+		for _, rid := range s.identityRadios(s.radioFor(r), id) {
+			attached[rid] = true
+		}
+		if len(attached) < 2 {
+			writeError(w, http.StatusBadRequest, "listen/send need the identity on several radios (Configuration → Experimental)")
+			return
+		}
+		if req.Listen != nil {
+			for _, rid := range *req.Listen {
+				if !attached[rid] {
+					writeError(w, http.StatusBadRequest, fmt.Sprintf("the identity isn't on radio %q", rid))
+					return
+				}
+			}
+		}
+		if req.Send != nil && *req.Send != "" && *req.Send != mesh.SendAll && !attached[*req.Send] {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("the identity isn't on radio %q", *req.Send))
+			return
+		}
 	}
 	psk, err := base64.StdEncoding.DecodeString(req.PSK)
 	if err != nil {
@@ -697,6 +747,10 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 	if err := s.hostFor(r).SetChannel(id, ch); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if role != pb.Channel_DISABLED && (req.Listen != nil || req.Send != nil) {
+		id.SetChannelRoute(idx, derefStrings(req.Listen), req.Send)
+		s.opt.Federation.Changed()
 	}
 	s.saveIdentities()
 	writeJSON(w, http.StatusOK, s.identityJSON(id))
@@ -1588,4 +1642,14 @@ func (s *Server) nodeSightings(w http.ResponseWriter, r *http.Request) {
 			"snr": sg.SNR, "rssi": sg.RSSI, "hops_away": sg.HopsAway, "via_mqtt": sg.ViaMQTT})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func derefStrings(p *[]string) []string {
+	if p == nil {
+		return nil
+	}
+	if *p == nil {
+		return []string{}
+	}
+	return *p
 }
