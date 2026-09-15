@@ -64,8 +64,11 @@ func run(cfgPath string) error {
 		return err
 	}
 	logs := logbuf.New(2000)
-	level := slog.LevelInfo
-	_ = level.UnmarshalText([]byte(strings.ToUpper(cfg.LogLevel)))
+	level := new(slog.LevelVar) // the web GUI changes it live
+	var l slog.Level
+	if l.UnmarshalText([]byte(strings.ToUpper(cfg.LogLevel))) == nil {
+		level.Set(l)
+	}
 	log := slog.New(logbuf.NewHandler(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}), logs))
 	slog.SetDefault(log)
 
@@ -129,7 +132,7 @@ func run(cfgPath string) error {
 		key, source := resolveMapAPIKey()
 		log.Info("map tiles", "api_key", source)
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
-			MapAPIKey: key,
+			MapAPIKey: key, MapKeySource: source, LogLevel: level,
 			Radios:    extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err

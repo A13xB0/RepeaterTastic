@@ -142,9 +142,10 @@ func (s *Server) statusJSON(r *http.Request) map[string]any {
 		"radio": map[string]any{"driver": info.Driver, "device": s.radioConfig(rc).Radio.Device, "firmware": info.Firmware, "name": info.Name,
 			"connected": st.Connected, "configured": h.RadioConfigured(), "reconnects": st.Reconnects, "rx": st.RxPackets,
 			"tx": st.TxPackets, "errors": st.Errors, "noise_floor_dbm": st.NoiseFloorDBm, "queue": h.QueueLen()},
-		"phy":   phyJSON(rp, primary),
-		"relay": relay,
-		"map":   map[string]any{"tile_url": withMapKey(mapTileURL(s.cfg.Web.MapTileURL), s.opt.MapAPIKey)},
+		"phy":             phyJSON(rp, primary),
+		"relay":           relay,
+		"map":             map[string]any{"tile_url": withMapKey(mapTileURL(s.cfg.Web.MapTileURL), s.opt.MapAPIKey)},
+		"restart_reasons": s.restartReasons(),
 		"airtime": map[string]any{"window_s": 3600, "tx_ms": txMs, "rx_ms": rxMs, "duty_limit_pct": duty,
 			"tx_pct": h.Air.TxPercent(now), "channel_util_pct": h.Air.ChannelUtilPercent(now)},
 		"counters": map[string]uint64{"rx": c.Rx.Load(), "rx_dupe": c.RxDupe.Load(), "rx_undecryptable": c.RxUndecryptable.Load(),
@@ -1230,7 +1231,9 @@ type backupFile struct {
 	Created    int64                 `json:"created"`
 	Version    string                `json:"version"`
 	Config     string                `json:"config_yaml"`
-	Identities []mesh.IdentityRecord `json:"identities"`
+	Identities []mesh.IdentityRecord `json:"identities"` // the main radio's
+	// RadioIdentities holds every other radio's identities by radio id.
+	RadioIdentities map[string][]mesh.IdentityRecord `json:"radio_identities,omitempty"`
 }
 
 func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
@@ -1238,8 +1241,19 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 	y, _ := yaml.Marshal(s.cfg)
 	s.cfgMu.Unlock()
 	b := backupFile{Format: "repeatertastic-backup-1", Created: time.Now().UnixMilli(), Version: s.opt.Version, Config: string(y)}
-	for _, id := range s.hostFor(r).Identities() {
-		b.Identities = append(b.Identities, id.Record())
+	for _, rc := range s.radios {
+		var recs []mesh.IdentityRecord
+		for _, id := range rc.host.Identities() {
+			recs = append(recs, id.Record())
+		}
+		if rc == s.radios[0] {
+			b.Identities = recs
+			continue
+		}
+		if b.RadioIdentities == nil {
+			b.RadioIdentities = map[string][]mesh.IdentityRecord{}
+		}
+		b.RadioIdentities[rc.id] = recs
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="repeatertastic-backup-%s.json"`, time.Now().Format("2006-01-02")))
 	writeJSON(w, http.StatusOK, b)
@@ -1254,16 +1268,36 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "not a RepeaterTastic backup file")
 		return
 	}
-	for _, rec := range b.Identities {
-		if _, err := mesh.IdentityFromRecord(rec); err != nil {
-			writeError(w, http.StatusBadRequest, "backup contains an invalid identity: "+err.Error())
+	sets := map[string][]mesh.IdentityRecord{config.MainRadioID: b.Identities}
+	for id, recs := range b.RadioIdentities {
+		if id == config.MainRadioID || !radioIDOK(id) {
+			writeError(w, http.StatusBadRequest, "backup names an invalid radio "+id)
 			return
 		}
+		sets[id] = recs
 	}
-	data, _ := json.MarshalIndent(b.Identities, "", "  ")
-	if err := os.WriteFile(filepath.Join(s.cfg.StateDir, "identities.json"), data, 0o600); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	for _, recs := range sets {
+		for _, rec := range recs {
+			if _, err := mesh.IdentityFromRecord(rec); err != nil {
+				writeError(w, http.StatusBadRequest, "backup contains an invalid identity: "+err.Error())
+				return
+			}
+		}
+	}
+	for id, recs := range sets {
+		dir := s.cfg.StateDir
+		if id != config.MainRadioID {
+			dir = filepath.Join(s.cfg.StateDir, "radios", id) // where RadioConfigs puts that radio's state
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		data, _ := json.MarshalIndent(recs, "", "  ")
+		if err := os.WriteFile(filepath.Join(dir, "identities.json"), data, 0o600); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if b.Config != "" && s.cfg.Path() != "" {
 		c := config.Default()
@@ -1384,3 +1418,40 @@ func withMapKey(u, key string) string {
 }
 
 var mapKeyParam = regexp.MustCompile(`\?[A-Za-z0-9_]+=\{api_key\}&|[?&][A-Za-z0-9_]+=\{api_key\}`)
+
+// radioIDOK reports whether a radio id is safe to use as a folder name.
+func radioIDOK(id string) bool {
+	if id == "" || len(id) > 24 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// getExperimental / putExperimental are Configuration → Experimental.
+func (s *Server) getExperimental(w http.ResponseWriter, r *http.Request) {
+	s.cfgMu.Lock()
+	e := s.cfg.Experimental
+	s.cfgMu.Unlock()
+	writeJSON(w, http.StatusOK, e)
+}
+
+func (s *Server) putExperimental(w http.ResponseWriter, r *http.Request) {
+	var req config.Experimental
+	if !readJSON(w, r, &req) {
+		return
+	}
+	s.cfgMu.Lock()
+	s.cfg.Experimental = req
+	s.cfgMu.Unlock()
+	if err := s.saveIfPath(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.log.Info("experimental settings changed", "multi_radio_identities", req.MultiRadioIdentities)
+	writeJSON(w, http.StatusOK, req)
+}

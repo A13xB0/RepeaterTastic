@@ -34,6 +34,8 @@ type Config struct {
 	// top-level radio/mesh/relay/airtime/links/identities above are the "main" radio.
 	Radios []RadioInstance `yaml:"radios,omitempty" json:"radios,omitempty"`
 	Site   Site            `yaml:"site,omitempty" json:"site,omitempty"`
+	// Experimental switches features that may change or go away. All off by default.
+	Experimental Experimental `yaml:"experimental,omitempty" json:"experimental,omitempty"`
 
 	path string
 }
@@ -61,6 +63,13 @@ type Position struct {
 	Interval      time.Duration `yaml:"interval" json:"interval"` // 0 = 3h, minimum 30m
 	// Identities is "relay" (default) or "all".
 	Identities string `yaml:"identities" json:"identities"`
+}
+
+// Experimental holds opt-in features that are still being proven.
+type Experimental struct {
+	// MultiRadioIdentities lets one identity send and receive on several radios, routed by
+	// channel and destination. Set in the web GUI only.
+	MultiRadioIdentities bool `yaml:"multi_radio_identities,omitempty" json:"multi_radio_identities"`
 }
 
 // Site holds settings shared by every radio on the mast.
@@ -212,6 +221,9 @@ type Airtime struct {
 	OverrideDutyCycle bool          `yaml:"override_duty_cycle" json:"override_duty_cycle"`
 	NodeInfoInterval  time.Duration `yaml:"nodeinfo_interval" json:"nodeinfo_interval"`
 	IdentitySharePct  float64       `yaml:"identity_share_percent" json:"identity_share_percent"`
+	// TelemetryInterval is how often the relay persona broadcasts device telemetry (uptime,
+	// channel and TX airtime use). 0 = off; at least 30 minutes.
+	TelemetryInterval time.Duration `yaml:"telemetry_interval,omitempty" json:"telemetry_interval,omitempty"`
 }
 
 type Links struct {
@@ -516,6 +528,15 @@ func (c *Config) Validate() error {
 	if err := c.validateOne(); err != nil {
 		return err
 	}
+	switch strings.ToLower(c.LogLevel) {
+	case "", "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("log_level must be debug, info, warn or error, not %q", c.LogLevel)
+	}
+	if u := c.Web.MapTileURL; u != "" && (!(strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://")) ||
+		!strings.Contains(u, "{z}") || !strings.Contains(u, "{x}") || !strings.Contains(u, "{y}")) {
+		return errors.New("web.map_tile_url must be an http(s) URL containing {z}, {x} and {y}")
+	}
 	if c.Site.DutyCyclePct < 0 || c.Site.DutyCyclePct > 100 {
 		return fmt.Errorf("site.duty_cycle_percent must be between 0 and 100")
 	}
@@ -529,6 +550,9 @@ func (c *Config) validateOne() error {
 	}
 	if _, ok := phy.Regions[strings.ToUpper(c.Mesh.Region)]; !ok {
 		return fmt.Errorf("unknown region %q", c.Mesh.Region)
+	}
+	if iv := c.Airtime.TelemetryInterval; iv != 0 && iv < 30*time.Minute {
+		return errors.New("airtime.telemetry_interval must be 0 (off) or at least 30m")
 	}
 	switch c.Relay.Role {
 	case mesh.RoleClient, mesh.RoleRouter, mesh.RoleMute:
@@ -586,7 +610,8 @@ func (c *Config) MeshConfig() mesh.Config {
 		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: c.Relay.Role,
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
-		OKToMQTT: c.Links.MQTT.OKToMQTT(), IgnoreMQTT: !c.Links.MQTT.RelayMQTT(),
+		TelemetryInterval: c.Airtime.TelemetryInterval,
+		OKToMQTT:          c.Links.MQTT.OKToMQTT(), IgnoreMQTT: !c.Links.MQTT.RelayMQTT(),
 		HwModel: c.hwModel(),
 		Position: mesh.FixedPosition{Latitude: c.Position.Latitude, Longitude: c.Position.Longitude,
 			Altitude: int32(c.Position.Altitude), PrecisionBits: uint32(c.Position.PrecisionBits),

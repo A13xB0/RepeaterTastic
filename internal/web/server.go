@@ -39,6 +39,10 @@ type Options struct {
 	Log     *slog.Logger
 	// MapAPIKey fills {api_key} in the map tile URL (empty drops the api_key parameter).
 	MapAPIKey string
+	// MapKeySource says where the key came from ("built in", "environment", "none"), never the key.
+	MapKeySource string
+	// LogLevel is the daemon's live log level; nil when the caller doesn't share it.
+	LogLevel *slog.LevelVar
 }
 
 // Radio is an additional radio served by the same web GUI.
@@ -81,6 +85,10 @@ type Server struct {
 
 	radios []*radioCtx // main first
 	traces traceWait
+
+	// booted is the configuration the daemon started with, to tell which saved changes still
+	// need a restart.
+	booted *config.Config
 }
 
 func (rc *radioCtx) stats(ctx context.Context) radio.Stats {
@@ -155,6 +163,7 @@ func New(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opt: o, cfg: o.Config, host: o.Host, auth: a, log: o.Log.With("component", "web"), mux: http.NewServeMux()}
+	s.booted = cloneConfig(o.Config)
 	s.radios = append(s.radios, &radioCtx{id: config.MainRadioID, name: o.Config.RadioConfigs()[0].Name, host: o.Host, api: o.API, udp: o.UDP, mqtt: o.MQTT})
 	for _, x := range o.Radios {
 		s.radios = append(s.radios, &radioCtx{id: x.ID, name: x.Name, cfg: x.Config, host: x.Host, api: x.API, udp: x.UDP, mqtt: x.MQTT})
@@ -227,6 +236,8 @@ func (s *Server) routes() {
 	priv("POST /api/v1/radios", s.addRadio)
 	priv("PATCH /api/v1/radios/{id}", s.patchRadio)
 	priv("DELETE /api/v1/radios/{id}", s.deleteRadio)
+	priv("GET /api/v1/experimental", s.getExperimental)
+	priv("PUT /api/v1/experimental", s.putExperimental)
 	priv("GET /api/v1/site", s.getSite)
 	priv("PUT /api/v1/site", s.putSite)
 	priv("POST /api/v1/restart", s.restartDaemon)

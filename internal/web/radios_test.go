@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
@@ -286,5 +288,72 @@ func TestMoveIdentityBetweenRadios(t *testing.T) {
 	_, other, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Other", "api_port": 4461})
 	if code, _, _ := call(t, srv, "PATCH", "/api/v1/identities/"+other["node_id"].(string), tok, map[string]any{"api_port": 4460}); code != 409 {
 		t.Fatalf("port clash across radios accepted: %d", code)
+	}
+}
+
+func TestConfigurationGaps(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+
+	_, cfg, _ := call(t, srv, "GET", "/api/v1/config", tok, nil)
+	air := cfg["airtime"].(map[string]any)
+	if air["telemetry_interval"] != "off" || air["cw_min"] != float64(3) || cfg["radio"].(map[string]any)["hop_limit"] != float64(3) {
+		t.Fatalf("config = %v", cfg)
+	}
+	if _, has := air["position"]; has {
+		t.Fatal("the unsaved airtime.position control is still in the config")
+	}
+	code, res, _ := call(t, srv, "PUT", "/api/v1/config", tok, map[string]any{
+		"airtime": map[string]any{"duty_cycle_percent": 10, "identity_share_percent": 25, "nodeinfo_interval": "3h", "telemetry_interval": "3h", "override_duty_cycle": false},
+		"radio":   map[string]any{"type": "none", "port": "", "region": "EU_868", "preset": "LONG_FAST", "tx_power_dbm": 22, "hop_limit": 2, "baud": 115200},
+		"web":     map[string]any{"bind": "0.0.0.0", "port": 8080, "session_ttl": "24h", "log_level": "debug", "mdns": false, "map_tile_url": "https://tiles.example/{z}/{x}/{y}.png"},
+	})
+	if code != 200 {
+		t.Fatalf("put %d %v", code, res)
+	}
+	out := res["config"].(map[string]any)
+	if out["airtime"].(map[string]any)["telemetry_interval"] != "3h" || out["radio"].(map[string]any)["hop_limit"] != float64(2) ||
+		out["web"].(map[string]any)["log_level"] != "debug" || out["web"].(map[string]any)["map_tile_url"] != "https://tiles.example/{z}/{x}/{y}.png" {
+		t.Fatalf("after put = %v", out)
+	}
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/config", tok, map[string]any{"airtime": map[string]any{"telemetry_interval": "5m", "duty_cycle_percent": 10, "identity_share_percent": 25, "nodeinfo_interval": "3h"}}); code != 400 {
+		t.Fatalf("5 minute telemetry accepted: %d", code)
+	}
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/config", tok, map[string]any{"web": map[string]any{"bind": "0.0.0.0", "port": 8080, "session_ttl": "24h", "map_tile_url": "ftp://nope"}}); code != 400 {
+		t.Fatalf("bad tile URL accepted: %d", code)
+	}
+
+	// UDP multicast is per radio now, and a pending change shows up as a restart reason
+	if code, l, _ := call(t, srv, "PATCH", "/api/v1/links/udp?radio=mf", tok, map[string]any{"enabled": true, "group": "239.0.0.70:4403"}); code != 200 || l["group"] != "239.0.0.70:4403" || l["restart_required"] != true {
+		t.Fatalf("udp on mf %d %v", code, l)
+	}
+	if _, _, main := call(t, srv, "GET", "/api/v1/links", tok, nil); main[0].(map[string]any)["enabled"] != false {
+		t.Fatalf("mf's UDP change landed on the main radio: %v", main[0])
+	}
+	if code, _, _ := call(t, srv, "PATCH", "/api/v1/links/udp", tok, map[string]any{"group": "10.0.0.1:4403"}); code != 400 {
+		t.Fatalf("non-multicast group accepted: %d", code)
+	}
+	_, st, _ := call(t, srv, "GET", "/api/v1/status", tok, nil)
+	reasons := fmt.Sprint(st["restart_reasons"])
+	if !strings.Contains(reasons, "MediumFast UDP multicast") || !strings.Contains(reasons, "mDNS") || strings.Contains(reasons, "MQTT") {
+		t.Fatalf("restart reasons = %v", reasons)
+	}
+
+	// experimental switch
+	if code, e, _ := call(t, srv, "PUT", "/api/v1/experimental", tok, map[string]any{"multi_radio_identities": true}); code != 200 || e["multi_radio_identities"] != true {
+		t.Fatalf("experimental %d %v", code, e)
+	}
+
+	// a backup carries every radio's identities
+	call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "MF Desk", "radio_id": "mf"})
+	_, b, _ := call(t, srv, "GET", "/api/v1/backup", tok, nil)
+	if len(b["identities"].([]any)) != 1 || len(b["radio_identities"].(map[string]any)["mf"].([]any)) != 2 {
+		t.Fatalf("backup = identities %v radio_identities %v", b["identities"], b["radio_identities"])
+	}
+	b["radio_identities"].(map[string]any)["../evil"] = []any{}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/restore", tok, b); code != 400 {
+		t.Fatalf("restore with a path-like radio id accepted: %d", code)
 	}
 }

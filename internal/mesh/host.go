@@ -52,6 +52,8 @@ type Config struct {
 	DutyCyclePct      float64 // 0 = region default
 	OverrideDutyCycle bool
 	NodeInfoInterval  time.Duration
+	// TelemetryInterval is how often the relay persona broadcasts DeviceMetrics; 0 = off.
+	TelemetryInterval time.Duration
 	LocalDMOverRF     bool
 	StateDir          string
 	// RadioID names this radio when a site runs several ("main" for the first).
@@ -169,10 +171,11 @@ type Host struct {
 	linkMu sync.RWMutex
 	links  []Link
 
-	started      time.Time
-	stateDir     string
-	radioOK      atomic.Bool
-	nodeInfoAsks sync.Map // uint32 → time.Time
+	started       time.Time
+	nextTelemetry time.Time // run loop only
+	stateDir      string
+	radioOK       atomic.Bool
+	nodeInfoAsks  sync.Map // uint32 → time.Time
 
 	gateMu sync.RWMutex
 	gate   TxGate
@@ -542,6 +545,7 @@ func (h *Host) timerLoop(ctx context.Context) {
 			h.doRetransmissions(now)
 			h.periodicNodeInfo(now)
 			h.periodicPosition(now)
+			h.periodicTelemetry(now)
 			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
 				lastSave = now
 				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {

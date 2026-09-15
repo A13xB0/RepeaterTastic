@@ -5,15 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
+	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/kiss"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
 )
@@ -157,6 +159,10 @@ type configDTO struct {
 		PrimaryChannel     string  `json:"primary_channel"`
 		TxPowerDBm         int     `json:"tx_power_dbm"`
 		FrequencyOffsetMHz float64 `json:"frequency_offset_mhz"`
+		Baud               int     `json:"baud"`
+		HopLimit           uint32  `json:"hop_limit"`
+		ChannelNum         int     `json:"channel_num"`            // 0 = from the primary channel name
+		OverrideFreqMHz    float64 `json:"override_frequency_mhz"` // 0 = from the region and preset
 	} `json:"radio"`
 	Relay struct {
 		Role      string `json:"role"`
@@ -168,15 +174,19 @@ type configDTO struct {
 		DutyCyclePercent     float64 `json:"duty_cycle_percent"`
 		IdentitySharePercent float64 `json:"identity_share_percent"`
 		NodeInfoInterval     string  `json:"nodeinfo_interval"`
-		Position             string  `json:"position"`
-		Telemetry            string  `json:"telemetry"`
-		CWMin                int     `json:"cw_min"`
+		TelemetryInterval    string  `json:"telemetry_interval"` // "off" or a duration of at least 30m
+		OverrideDutyCycle    bool    `json:"override_duty_cycle"`
+		CWMin                int     `json:"cw_min"` // read-only: the firmware's contention window
 		CWMax                int     `json:"cw_max"`
 	} `json:"airtime"`
 	Web struct {
-		Bind       string `json:"bind"`
-		Port       int    `json:"port"`
-		SessionTTL string `json:"session_ttl"`
+		Bind         string `json:"bind"`
+		Port         int    `json:"port"`
+		SessionTTL   string `json:"session_ttl"`
+		MapTileURL   string `json:"map_tile_url"`   // "" = the built-in default
+		MapKeySource string `json:"map_key_source"` // read-only: built in, environment or none
+		MDNS         bool   `json:"mdns"`
+		LogLevel     string `json:"log_level"`
 	} `json:"web"`
 	Position struct {
 		Latitude      float64 `json:"latitude"`
@@ -201,6 +211,10 @@ func toDTO(c *config.Config, h *mesh.Host) configDTO {
 	d.Radio.Type, d.Radio.Port = c.Radio.Driver, c.Radio.Device
 	d.Radio.Region, d.Radio.Preset, d.Radio.PrimaryChannel = c.Mesh.Region, c.Mesh.Preset, c.Mesh.PrimaryChannel
 	d.Radio.TxPowerDBm, d.Radio.FrequencyOffsetMHz = c.Mesh.TxPowerDBm, c.Mesh.FreqOffsetMHz
+	d.Radio.Baud, d.Radio.HopLimit, d.Radio.ChannelNum, d.Radio.OverrideFreqMHz = c.Radio.Baud, c.Mesh.HopLimit, c.Mesh.ChannelNum, c.Mesh.OverrideFreqMHz
+	if d.Radio.HopLimit == 0 {
+		d.Radio.HopLimit = 3
+	}
 	d.Relay.Role, d.Relay.LongName, d.Relay.ShortName = c.Relay.Role, c.Relay.LongName, c.Relay.ShortName
 	if r := h.Relay(); r != nil {
 		u := r.UserCopy()
@@ -216,8 +230,16 @@ func toDTO(c *config.Config, h *mesh.Host) configDTO {
 	}
 	d.Airtime.IdentitySharePercent = c.Airtime.IdentitySharePct
 	d.Airtime.NodeInfoInterval = shortDuration(c.Airtime.NodeInfoInterval)
-	d.Airtime.Position, d.Airtime.Telemetry, d.Airtime.CWMin, d.Airtime.CWMax = "off", "off", 3, 8
+	d.Airtime.TelemetryInterval, d.Airtime.OverrideDutyCycle = "off", c.Airtime.OverrideDutyCycle
+	if c.Airtime.TelemetryInterval > 0 {
+		d.Airtime.TelemetryInterval = shortDuration(c.Airtime.TelemetryInterval)
+	}
+	d.Airtime.CWMin, d.Airtime.CWMax = phy.CWMin, phy.CWMax
 	d.Web.Bind, d.Web.Port, d.Web.SessionTTL = c.Web.Bind, c.Web.Port, shortDuration(c.Web.SessionTTL)
+	d.Web.MapTileURL, d.Web.MDNS, d.Web.LogLevel = c.Web.MapTileURL, c.MDNS.Enabled, strings.ToLower(c.LogLevel)
+	if d.Web.LogLevel == "" {
+		d.Web.LogLevel = "info"
+	}
 	p := c.Position
 	d.Position.Latitude, d.Position.Longitude, d.Position.Altitude = p.Latitude, p.Longitude, p.Altitude
 	d.Position.PrecisionBits, d.Position.Identities = p.PrecisionBits, p.Identities
@@ -314,6 +336,26 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	next.Radio.Driver, next.Radio.Device = d.Radio.Type, d.Radio.Port
 	next.Mesh.Region, next.Mesh.Preset, next.Mesh.PrimaryChannel = strings.ToUpper(d.Radio.Region), strings.ToUpper(d.Radio.Preset), d.Radio.PrimaryChannel
 	next.Mesh.TxPowerDBm, next.Mesh.FreqOffsetMHz = d.Radio.TxPowerDBm, d.Radio.FrequencyOffsetMHz
+	if d.Radio.Baud > 0 {
+		next.Radio.Baud = d.Radio.Baud
+	}
+	if d.Radio.HopLimit < 1 || d.Radio.HopLimit > 7 {
+		writeError(w, http.StatusBadRequest, "radio.hop_limit must be 1-7")
+		return
+	}
+	next.Mesh.HopLimit, next.Mesh.ChannelNum, next.Mesh.OverrideFreqMHz = d.Radio.HopLimit, d.Radio.ChannelNum, d.Radio.OverrideFreqMHz
+	next.Airtime.OverrideDutyCycle = d.Airtime.OverrideDutyCycle
+	switch d.Airtime.TelemetryInterval {
+	case "", "off", "0", "0s":
+		next.Airtime.TelemetryInterval = 0
+	default:
+		iv, err := time.ParseDuration(d.Airtime.TelemetryInterval)
+		if err != nil || iv < 30*time.Minute {
+			writeError(w, http.StatusBadRequest, "airtime.telemetry_interval must be off or a duration of at least 30m, e.g. 3h")
+			return
+		}
+		next.Airtime.TelemetryInterval = iv
+	}
 	next.Relay.Role, next.Relay.LongName, next.Relay.ShortName = d.Relay.Role, d.Relay.LongName, d.Relay.ShortName
 	next.Links.LocalDMOverRF = d.Relay.LocalDM == "also_rf"
 	if d.Airtime.DutyCyclePercent != rc.host.RadioParams().Region.DutyCyclePct {
@@ -327,6 +369,12 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next.Web.Bind, next.Web.Port = d.Web.Bind, d.Web.Port
+	if main {
+		next.Web.MapTileURL, next.MDNS.Enabled, next.LogLevel = strings.TrimSpace(d.Web.MapTileURL), d.Web.MDNS, strings.ToLower(d.Web.LogLevel)
+		if next.LogLevel == "info" && old.LogLevel == "" {
+			next.LogLevel = ""
+		}
+	}
 	if ttl, err := time.ParseDuration(d.Web.SessionTTL); err == nil && ttl >= time.Minute {
 		next.Web.SessionTTL = ttl
 	}
@@ -364,8 +412,13 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		rel.SetOwner(next.Relay.LongName, next.Relay.ShortName)
 		s.saveIdentities()
 	}
-	restart := old.Radio != next.Radio || old.Web.Bind != next.Web.Bind || old.Web.Port != next.Web.Port ||
-		!reflect.DeepEqual(old.Links.MQTT, next.Links.MQTT)
+	if main && s.opt.LogLevel != nil && next.LogLevel != old.LogLevel {
+		var l slog.Level
+		if l.UnmarshalText([]byte(strings.ToUpper(next.LogLevel))) == nil || next.LogLevel == "" {
+			s.opt.LogLevel.Set(l) // "" leaves l at info
+		}
+	}
+	restart := len(s.restartReasons()) > 0
 	s.cfgMu.Lock()
 	out := toDTO(s.radioConfig(rc), rc.host)
 	s.cfgMu.Unlock()
@@ -710,11 +763,14 @@ func (s *Server) expectTraceroute(from, target string) {
 
 // -------------------------------------------------------------------------------------- links
 
-func (s *Server) linkJSON() map[string]any { return s.udpLinkJSON(s.radios[0]) }
-
 func (s *Server) udpLinkJSON(rc *radioCtx) map[string]any {
-	u := map[string]any{"name": "udp", "type": "udp_multicast", "enabled": s.radioConfig(rc).Links.UDPMulticast.Enabled,
-		"connected": false, "rx": 0, "tx": 0, "detail": "239.0.0.69:4403 + 224.0.0.69:4403"}
+	uc := s.radioConfig(rc).Links.UDPMulticast
+	group := uc.Group
+	if group == "" {
+		group = "239.0.0.69:4403"
+	}
+	u := map[string]any{"name": "udp", "type": "udp_multicast", "enabled": uc.Enabled, "group": uc.Group,
+		"connected": false, "rx": 0, "tx": 0, "detail": group + " + 224.0.0.69:4403"}
 	if l := rc.udp; l != nil {
 		u["connected"], u["rx"], u["tx"] = l.Connected(), l.Rx.Load(), l.Tx.Load()
 	}
@@ -760,21 +816,51 @@ func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Enabled *bool `json:"enabled"`
+		Enabled *bool   `json:"enabled"`
+		Group   *string `json:"group"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Enabled != nil {
-		s.cfgMu.Lock()
-		s.cfg.Links.UDPMulticast.Enabled = *req.Enabled
-		s.cfgMu.Unlock()
-		if err := s.saveConfigFile(); err != nil {
-			s.log.Warn("saving config", "err", err)
+	rc := s.radioFor(r)
+	if req.Group != nil {
+		g := strings.TrimSpace(*req.Group)
+		if g != "" {
+			host, port, err := net.SplitHostPort(g)
+			ip := net.ParseIP(host)
+			if err != nil || ip == nil || !ip.IsMulticast() || port == "" {
+				writeError(w, http.StatusBadRequest, "group must be a multicast address and port, e.g. 239.0.0.69:4403")
+				return
+			}
+		}
+		req.Group = &g
+	}
+	s.cfgMu.Lock()
+	set := func(u *config.UDPMulticast) {
+		if req.Enabled != nil {
+			u.Enabled = *req.Enabled
+		}
+		if req.Group != nil {
+			u.Group = *req.Group
 		}
 	}
-	out := s.linkJSON()
-	running := s.radioFor(r).udp != nil
-	out["restart_required"] = running != s.cfg.Links.UDPMulticast.Enabled
+	if rc == s.radios[0] {
+		set(&s.cfg.Links.UDPMulticast)
+	} else {
+		for i := range s.cfg.Radios { // the radio's entry in the file, and its live view
+			if s.cfg.Radios[i].ID == rc.id {
+				set(&s.cfg.Radios[i].Links.UDPMulticast)
+			}
+		}
+		if rc.cfg != nil {
+			set(&rc.cfg.Links.UDPMulticast)
+		}
+	}
+	s.cfgMu.Unlock()
+	if err := s.saveIfPath(); err != nil {
+		s.log.Warn("saving config", "err", err)
+	}
+	out := s.udpLinkJSON(rc)
+	out["restart_required"] = len(s.restartReasons()) > 0
 	writeJSON(w, http.StatusOK, out)
 }
