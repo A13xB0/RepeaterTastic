@@ -29,6 +29,31 @@ sudo ./deploy/install.sh dist/repeatertastic-linux-arm64 dist/kisstool-linux-arm
 
 The configuration reference is [`deploy/repeatertastic.example.yaml`](deploy/repeatertastic.example.yaml).
 
+## Several radios on one host
+
+Add radios under `radios:` in the config: each gets its own modem, preset, relay persona,
+identities, node DB and airtime budget, so one host can serve LongFast and MediumFast side by side.
+The top-level radio stays the **main** radio and existing configs keep working unchanged.
+
+- **Overlapping channels:** radios whose channels overlap in frequency take turns to transmit. In
+  EU_868, LongFast, MediumFast, MediumSlow and ShortFast all sit on 869.525 MHz.
+- **Site airtime cap:** `site.duty_cycle_percent` caps the summed airtime of all radios.
+- **Web GUI:** a radio switcher appears once there is more than one radio.
+- **API:** `?radio=<id>` selects a radio (see [`docs/api.md`](docs/api.md)).
+- **EU_868 notes:** LongTurbo's 500 kHz doesn't fit the 250 kHz sub-band, and LongSlow sits on 869.4625 MHz.
+
+## MQTT
+
+`links.mqtt` makes a radio a Meshtastic MQTT gateway (the relay persona is the gateway node):
+
+- **Topics and payloads:** encrypted ServiceEnvelopes on `<root>/2/e/<channel>/<!gateway>`, as the firmware sends them.
+- **Uplink:** set per identity channel. Packets go up only when their sender set OK_TO_MQTT, and DMs never go up.
+- **Downlink:** set per channel and rate limited. Downlinked packets reach our identities, but the relay never rebroadcasts them unless `relay_mqtt` is set.
+- **Map reports:** optional, with the position coarsened to `position_precision` bits.
+
+Recommended for a node that's on the air: uplink the default channel only, keep downlink off
+(or on one gateway per mesh), never bridge a private channel, and leave `relay_mqtt` off.
+
 ## How it fits together
 
 ```
