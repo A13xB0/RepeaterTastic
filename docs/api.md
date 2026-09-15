@@ -37,7 +37,7 @@ are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are 
 }
 ```
 
-`PUT /api/v1/relay` `{"role": "client" | "router" | "mute"}` → status.relay
+`PUT /api/v1/relay` `{"role": "client" | "router" | "mute" | "monitor" | "off"}` → status.relay. Monitor never transmits; off ignores the radio. Sends in either mode fail with routing error `NO_INTERFACE`.
 
 ## Radios
 

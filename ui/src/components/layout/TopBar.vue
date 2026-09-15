@@ -8,7 +8,9 @@ import type { RelayRole, Status } from '@/api/types'
 import { live } from '@/store/live'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
 import { cycleTheme, themeMode } from '@/composables/theme'
-import { toastError } from '@/composables/toast'
+import { toast, toastError } from '@/composables/toast'
+import { confirmDialog } from '@/composables/confirm'
+import { relayModes } from '@/lib/relay'
 import { num } from '@/lib/format'
 
 const emit = defineEmits<{ menu: [] }>()
@@ -16,20 +18,28 @@ const route = useRoute()
 const s = computed(() => live.status)
 const busy = ref(false)
 
-const roles: { id: RelayRole; label: string; title: string }[] = [
-  { id: 'client', label: 'Client', title: 'Rebroadcast like a normal client (after routers, cancel if someone else relays)' },
-  { id: 'router', label: 'Router', title: 'Rebroadcast with router priority' },
-  { id: 'mute', label: 'Mute', title: 'Never rebroadcast; identities still transmit' },
-]
-
 async function setRole(role: RelayRole) {
   if (!s.value || s.value.relay.role === role || busy.value) return
+  if (role === 'off' || role === 'monitor') {
+    const off = role === 'off'
+    const ok = await confirmDialog({
+      title: off ? 'Turn the radio off?' : 'Listen only?',
+      body: off
+        ? 'RepeaterTastic ignores the radio: nothing is received, relayed or sent, and queued messages fail. Identities and links stay up.'
+        : 'The radio keeps receiving, but nothing is transmitted: no relaying, and messages from identities and apps fail. Queued messages fail now.',
+      confirm: off ? 'Turn off' : 'Listen only',
+      danger: off,
+    })
+    if (!ok || !s.value) return
+  }
   busy.value = true
   const prev = s.value.relay.role
   s.value.relay.role = role
   try {
     const relay = await api.put<Status['relay']>('/relay', { role })
     if (live.status) live.status.relay = relay
+    if (role === 'off') toast('Radio off')
+    else if (role === 'monitor') toast('Listening only')
   } catch (e) {
     if (live.status) live.status.relay.role = prev
     toastError(e)
@@ -105,9 +115,12 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
       <div class="ml-auto flex items-center gap-2">
         <span class="eyebrow hidden md:inline">Relay</span>
         <div class="seg" role="group" aria-label="Relay mode">
-          <button v-for="r in roles" :key="r.id" :title="r.title" :aria-pressed="s.relay.role === r.id" :disabled="busy" @click="setRole(r.id)">
-            <span :class="s.relay.role === r.id ? (r.id === 'mute' ? 'text-bad' : r.id === 'router' ? 'text-warn' : 'text-brand') : ''">{{ r.label }}</span>
-          </button>
+          <template v-for="(r, i) in relayModes" :key="r.id">
+            <span v-if="i === 3" class="mx-0.5 my-1 w-px bg-line" aria-hidden="true" />
+            <button :title="r.title" :aria-pressed="s.relay.role === r.id" :disabled="busy" @click="setRole(r.id)">
+              <span :class="s.relay.role === r.id ? r.tone : ''">{{ r.label }}</span>
+            </button>
+          </template>
         </div>
         <button class="icon-btn max-lg:hidden" :title="`Theme: ${themeMode}`" @click="cycleTheme">
           <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />

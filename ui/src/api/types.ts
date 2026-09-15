@@ -1,7 +1,7 @@
 // Types for the RepeaterTastic HTTP API — see docs/api.md (including "Proposed additions").
 // Shared by the SPA and the dev mock, so keep this file free of runtime imports.
 
-export type RelayRole = 'client' | 'router' | 'mute'
+export type RelayRole = 'client' | 'router' | 'mute' | 'monitor' | 'off'
 export type ChannelRole = 'PRIMARY' | 'SECONDARY' | 'DISABLED'
 export type PacketKind = 'ours' | 'relayed' | 'dup' | 'undecryptable' | 'delivered' | 'local'
 export type MessageStatus = 'queued' | 'sent' | 'acked' | 'failed' | 'received'

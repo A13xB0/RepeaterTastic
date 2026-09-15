@@ -15,6 +15,7 @@ import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { num, relTime } from '@/lib/format'
+import { relayModes } from '@/lib/relay'
 
 type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
@@ -242,9 +243,9 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
           <div class="sm:col-span-2">
             <span class="label">Role</span>
             <div class="seg">
-              <button v-for="r in ['client', 'router', 'mute'] as const" :key="r" :aria-pressed="form.relay.role === r" class="capitalize" @click="form.relay.role = r">{{ r }}</button>
+              <button v-for="r in relayModes" :key="r.id" :title="r.title" :aria-pressed="form.relay.role === r.id" @click="form.relay.role = r.id">{{ r.label }}</button>
             </div>
-            <p class="hint">Same switch as in the top bar. Router rebroadcasts first; client waits and cancels if someone else relays; mute never relays.</p>
+            <p class="hint">Same switch as in the top bar. Router rebroadcasts first; client waits and cancels if someone else relays; mute never relays. Monitor only listens (nothing is transmitted); off ignores the radio.</p>
           </div>
           <div>
             <label class="label" for="c-rln">Relay long name</label>

@@ -76,12 +76,21 @@ Each radio has one relay persona, the only identity that repeats other nodes' pa
 
 ```yaml
 relay:
-    role: client          # client: repeat like a normal node · router: repeat first · mute: never repeat
+    role: client          # client · router · mute · monitor · off
     long_name: RepeaterTastic Relay
     short_name: RPTR
 ```
 
-GUI: **Configuration → Relay**, or the role switch in the top bar.
+| Role | The relay persona | Identities |
+| --- | --- | --- |
+| `client` | Repeats like a normal node: after routers, and cancels if another node relays first | Send and receive |
+| `router` | Repeats first; for a well-placed site the mesh relies on | Send and receive |
+| `mute` | Never repeats | Send and receive |
+| `monitor` | Never repeats | Receive only: **nothing is transmitted** (no messages, ACKs, NodeInfo or telemetry); sends fail |
+| `off` | The radio is ignored: nothing received or sent (the modem stays powered) | Local DMs, links and apps still work |
+
+Switching to monitor or off fails anything still queued. GUI: **Configuration → Relay**, or the
+switch in the top bar.
 
 ### `airtime`: duty cycle and background traffic
 

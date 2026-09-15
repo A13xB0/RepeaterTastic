@@ -606,10 +606,8 @@ func (c *Config) validateOne() error {
 	if iv := c.Airtime.TelemetryInterval; iv != 0 && iv < 30*time.Minute {
 		return errors.New("airtime.telemetry_interval must be 0 (off) or at least 30m")
 	}
-	switch c.Relay.Role {
-	case mesh.RoleClient, mesh.RoleRouter, mesh.RoleMute:
-	default:
-		return fmt.Errorf("relay.role must be client, router or mute, not %q", c.Relay.Role)
+	if !mesh.ValidRelayRole(c.Relay.Role) {
+		return fmt.Errorf("relay.role must be client, router, mute, monitor or off, not %q", c.Relay.Role)
 	}
 	switch c.Radio.Driver {
 	case "kiss", "sim", "none":

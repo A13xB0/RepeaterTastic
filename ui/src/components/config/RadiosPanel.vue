@@ -30,7 +30,7 @@ async function load() {
 onMounted(() => load().catch(toastError))
 
 const presetLabel = (p: string) => p.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join('')
-const roleLabel: Record<string, string> = { mute: 'mute (never repeats)', client: 'client (repeats)', router: 'router' }
+const roleLabel: Record<string, string> = { mute: 'mute (never repeats)', client: 'client (repeats)', router: 'router', monitor: 'monitor (listens only)', off: 'off' }
 const usedDevices = computed(() => new Set([...(data.value?.radios ?? []).map((r) => r.device), ...(data.value?.pending ?? []).map((p) => p.device)]))
 
 // ---- rename

@@ -52,6 +52,8 @@ function stateOf(i: Identity): State {
   const budgetPct = (i.airtime_ms_1h / budgetMs.value) * 100
   if (i.is_relay) {
     const role = live.status?.relay.role
+    if (role === 'off') return { label: 'Radio off', cls: 'bg-bad/12 text-bad', title: 'The radio is off: nothing is received or sent' }
+    if (role === 'monitor') return { label: 'Listening', cls: 'bg-info/12 text-info', title: 'Monitor mode: the radio only listens' }
     return role === 'mute'
       ? { label: 'Muted', cls: 'bg-bad/12 text-bad', title: 'Relay mode is mute: nothing is rebroadcast' }
       : { label: 'Relaying', cls: 'bg-brand/14 text-brand', title: `Relay mode ${role}` }

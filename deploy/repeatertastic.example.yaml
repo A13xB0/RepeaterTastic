@@ -28,7 +28,7 @@ position:
   identities: relay       # relay (the relay persona only) or all
 
 relay:
-  role: client            # client (relay like a normal node) | router (relay first) | mute (never relay)
+  role: client            # client (relay like a normal node) | router (relay first) | mute (never relay) | monitor (listen only, never transmit) | off (ignore the radio)
   long_name: RepeaterTastic Relay
   short_name: RPTR
 
