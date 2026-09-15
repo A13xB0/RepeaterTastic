@@ -716,7 +716,12 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 
 func nodeJSON(e mesh.NodeEntry, knownBy []string) map[string]any {
 	n := map[string]any{"node_id": wire.NodeID(e.Num), "node_num": e.Num, "has_public_key": e.PublicKey() != nil,
-		"snr": e.SNR, "rssi": e.RSSI, "via_mqtt": e.ViaMQTT, "local": e.Local, "favorite": e.Favorite, "ignored": e.Ignored}
+		"snr": nil, "rssi": nil, "via_mqtt": e.ViaMQTT, "local": e.Local, "favorite": e.Favorite, "ignored": e.Ignored}
+	// Signal is only measured for nodes heard directly (as in the firmware); for relayed,
+	// MQTT and local nodes 0/0 means "unknown", not a 0 dB link.
+	if !e.Local && e.HopsAway == 0 && e.RSSI != 0 {
+		n["snr"], n["rssi"] = e.SNR, e.RSSI
+	}
 	if e.User != nil {
 		n["long_name"], n["short_name"], n["hw_model"], n["role"] = e.User.LongName, e.User.ShortName, e.User.HwModel.String(), e.User.Role.String()
 		n["has_user"] = true

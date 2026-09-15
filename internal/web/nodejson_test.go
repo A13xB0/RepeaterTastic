@@ -18,3 +18,14 @@ func TestNodeJSONWithoutUserHasFirmwareDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeJSONSignalOnlyForDirectNodes(t *testing.T) {
+	relayed := nodeJSON(mesh.NodeEntry{Num: 1, HopsAway: 3, SNR: 0, RSSI: 0}, nil)
+	if relayed["snr"] != nil || relayed["rssi"] != nil {
+		t.Errorf("relayed node signal = %v/%v, want unknown", relayed["snr"], relayed["rssi"])
+	}
+	direct := nodeJSON(mesh.NodeEntry{Num: 2, HopsAway: 0, SNR: -7.5, RSSI: -118}, nil)
+	if direct["snr"] != float32(-7.5) || direct["rssi"] != int32(-118) {
+		t.Errorf("direct node signal = %v/%v, want -7.5/-118", direct["snr"], direct["rssi"])
+	}
+}
