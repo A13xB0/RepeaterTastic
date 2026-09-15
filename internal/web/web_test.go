@@ -35,8 +35,9 @@ func testWeb(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = h.Run(ctx) }()
+	done := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-done }) // let the host write its final state before TempDir is removed
+	go func() { _ = h.Run(ctx); close(done) }()
 	s, err := New(Options{Config: cfg, Host: h, API: phoneapi.NewManager(h, log), Logs: logbuf.New(10), Version: "test", Log: log})
 	if err != nil {
 		t.Fatal(err)
