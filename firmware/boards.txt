@@ -1,0 +1,123 @@
+# RepeaterTastic KISS modem build targets.
+#
+# Format (pipe-separated, whitespace around fields ignored):
+#   pio env | friendly name | MCU | radio | flash format [| options]
+#
+# options: core=pioarduino  build with a separate PlatformIO core dir (ESP32-C6 envs use the
+#                           pioarduino espressif32 fork, which cannot share ~/.platformio with
+#                           platformio/espressif32@6.11.0)
+#
+# flash format: esp32  -> <env>-factory.bin (esptool, 0x0) + <env>-app.bin (0x10000)
+#               nrf52  -> <env>.uf2 (UF2 bootloader drag & drop) + <env>-dfu.zip (adafruit-nrfutil)
+#               rp2040 -> <env>.uf2 (BOOTSEL drag & drop)
+#               stm32  -> <env>.bin / <env>.hex (STM32CubeProgrammer / SWD)
+#
+# `build.sh all` builds every line; `build.sh <env> [<env> ...]` builds a subset.
+
+# ---- Heltec -------------------------------------------------------------------------------
+Heltec_v3_kiss_modem               | Heltec WiFi LoRa 32 V3                  | ESP32-S3  | SX1262 | esp32
+heltec_v4_kiss_modem               | Heltec WiFi LoRa 32 V4                  | ESP32-S3  | SX1262 | esp32
+heltec_v4_r8_kiss_modem            | Heltec WiFi LoRa 32 V4 (R8)             | ESP32-S3  | SX1262 | esp32
+heltec_v4_r8_tft_kiss_modem        | Heltec WiFi LoRa 32 V4 (R8, TFT)        | ESP32-S3  | SX1262 | esp32
+Heltec_v2_kiss_modem               | Heltec WiFi LoRa 32 V2                  | ESP32     | SX1276 | esp32
+Heltec_t114_kiss_modem             | Heltec Mesh Node T114                   | nRF52840  | SX1262 | nrf52
+Heltec_Wireless_Tracker_kiss_modem | Heltec Wireless Tracker                 | ESP32-S3  | SX1262 | esp32
+heltec_tracker_v2_kiss_modem       | Heltec Wireless Tracker V2              | ESP32-S3  | SX1262 | esp32
+Heltec_Wireless_Paper_kiss_modem   | Heltec Wireless Paper                   | ESP32-S3  | SX1262 | esp32
+Heltec_E213_kiss_modem             | Heltec Vision Master E213               | ESP32-S3  | SX1262 | esp32
+Heltec_E290_kiss_modem             | Heltec Vision Master E290               | ESP32-S3  | SX1262 | esp32
+Heltec_T190_kiss_modem             | Heltec Vision Master T190               | ESP32-S3  | SX1262 | esp32
+Heltec_ct62_kiss_modem             | Heltec HT-CT62                          | ESP32-C3  | SX1262 | esp32
+heltec_rc32_kiss_modem             | Heltec RC32                             | ESP32-S3  | SX1262 | esp32
+Heltec_mesh_solar_kiss_modem       | Heltec MeshSolar                        | nRF52840  | SX1262 | nrf52
+Heltec_tower_v2_kiss_modem         | Heltec Mesh Tower V2                    | nRF52840  | SX1262 | nrf52
+Heltec_t1_kiss_modem               | Heltec T1                               | nRF52840  | SX1262 | nrf52
+Heltec_t096_kiss_modem             | Heltec T096                             | nRF52840  | SX1262 | nrf52
+Mesh_pocket_kiss_modem             | Heltec MeshPocket                       | nRF52840  | SX1262 | nrf52
+
+# ---- Seeed --------------------------------------------------------------------------------
+Xiao_nrf52_kiss_modem              | Seeed XIAO nRF52840 + Wio-SX1262 kit    | nRF52840  | SX1262 | nrf52
+Xiao_S3_WIO_kiss_modem             | Seeed XIAO ESP32-S3 + Wio-SX1262 kit    | ESP32-S3  | SX1262 | esp32
+Xiao_S3_kiss_modem                 | Seeed XIAO ESP32-S3 (generic SX1262 wiring) | ESP32-S3 | SX1262 | esp32
+Xiao_C3_kiss_modem                 | Seeed XIAO ESP32-C3 + SX1262            | ESP32-C3  | SX1262 | esp32
+Xiao_C6_kiss_modem                 | Seeed XIAO ESP32-C6 + Wio-SX1262        | ESP32-C6  | SX1262 | esp32 | core=pioarduino
+Xiao_rp2040_kiss_modem             | Seeed XIAO RP2040 + SX1262              | RP2040    | SX1262 | rp2040
+t1000e_kiss_modem                  | Seeed SenseCAP T1000-E                  | nRF52840  | LR1110 | nrf52
+WioTrackerL1_kiss_modem            | Seeed Wio Tracker L1                    | nRF52840  | SX1262 | nrf52
+WioTrackerL1Eink_kiss_modem        | Seeed Wio Tracker L1 E-Ink              | nRF52840  | SX1262 | nrf52
+wio_wm1110_kiss_modem              | Seeed Wio-WM1110 dev kit                | nRF52840  | LR1110 | nrf52
+SenseCap_Solar_kiss_modem          | Seeed SenseCAP Solar Node P1            | nRF52840  | SX1262 | nrf52
+MeshTracker_X1_kiss_modem          | Seeed Mesh Tracker X1                   | nRF52840  | LR2021 | nrf52
+wio-e5_kiss_modem                  | Seeed LoRa-E5 dev board                 | STM32WLE5 | STM32WL (SX126x) | stm32
+wio-e5-mini_kiss_modem             | Seeed LoRa-E5 mini                      | STM32WLE5 | STM32WL (SX126x) | stm32
+
+# ---- RAK ----------------------------------------------------------------------------------
+RAK_4631_kiss_modem                | RAK WisBlock RAK4631                    | nRF52840  | SX1262 | nrf52
+RAK_3401_kiss_modem                | RAK WisBlock RAK3401 (1W)               | nRF52840  | SX1262 | nrf52
+RAK_3112_kiss_modem                | RAK WisBlock RAK3112                    | ESP32-S3  | SX1262 | esp32
+RAK_WisMesh_Tag_kiss_modem         | RAK WisMesh Tag                         | nRF52840  | SX1262 | nrf52
+RAK_11310_kiss_modem               | RAK WisBlock RAK11310                   | RP2040    | SX1262 | rp2040
+RAK_3x72_kiss_modem                | RAK3172 / RAK3272                       | STM32WLE5 | STM32WL (SX126x) | stm32
+
+# ---- LilyGo -------------------------------------------------------------------------------
+Tbeam_SX1262_kiss_modem            | LilyGo T-Beam (SX1262)                  | ESP32     | SX1262 | esp32
+Tbeam_SX1276_kiss_modem            | LilyGo T-Beam (SX1276)                  | ESP32     | SX1276 | esp32
+T_Beam_S3_Supreme_SX1262_kiss_modem| LilyGo T-Beam Supreme (SX1262)          | ESP32-S3  | SX1262 | esp32
+LilyGo_TBeam_1W_kiss_modem         | LilyGo T-Beam 1W                        | ESP32-S3  | SX1262 | esp32
+LilyGo_T3S3_sx1262_kiss_modem      | LilyGo T3-S3 (SX1262)                   | ESP32-S3  | SX1262 | esp32
+LilyGo_T3S3_sx1276_kiss_modem      | LilyGo T3-S3 (SX1276)                   | ESP32-S3  | SX1276 | esp32
+LilyGo_TLora_V2_1_1_6_kiss_modem   | LilyGo T-LoRa V2.1-1.6                  | ESP32     | SX1276 | esp32
+LilyGo_Tlora_C6_kiss_modem         | LilyGo T-LoRa C6                        | ESP32-C6  | SX1262 | esp32 | core=pioarduino
+LilyGo_T-Echo_kiss_modem           | LilyGo T-Echo                           | nRF52840  | SX1262 | nrf52
+LilyGo_T-Echo-Lite_kiss_modem      | LilyGo T-Echo Lite                      | nRF52840  | SX1262 | nrf52
+LilyGo_T-Echo_Card_kiss_modem      | LilyGo T-Echo Card                      | nRF52840  | SX1262 | nrf52
+LilyGo_TDeck_kiss_modem            | LilyGo T-Deck                           | ESP32-S3  | SX1262 | esp32
+LilyGo_TETH_Elite_sx1262_kiss_modem| LilyGo T-ETH Elite (SX1262)             | ESP32-S3  | SX1262 | esp32
+LilyGo_T_Impulse_Plus_kiss_modem   | LilyGo T-Impulse Plus                   | nRF52840  | SX1262 | nrf52
+
+# ---- Elecrow ThinkNode --------------------------------------------------------------------
+ThinkNode_M1_kiss_modem            | Elecrow ThinkNode M1                    | nRF52840  | SX1262 | nrf52
+ThinkNode_M2_kiss_modem            | Elecrow ThinkNode M2                    | ESP32-S3  | SX1262 | esp32
+ThinkNode_M3_kiss_modem            | Elecrow ThinkNode M3                    | nRF52840  | LR1110 | nrf52
+ThinkNode_M5_kiss_modem            | Elecrow ThinkNode M5                    | ESP32-S3  | SX1262 | esp32
+ThinkNode_M6_kiss_modem            | Elecrow ThinkNode M6                    | nRF52840  | SX1262 | nrf52
+ThinkNode_M7_kiss_modem            | Elecrow ThinkNode M7                    | ESP32-S3  | LR1110 | esp32
+ThinkNode_M8_kiss_modem            | Elecrow ThinkNode M8                    | nRF52840  | SX1262 | nrf52
+ThinkNode_M9_kiss_modem            | Elecrow ThinkNode M9                    | ESP32-S3  | LR1110 | esp32
+
+# ---- Raspberry Pi RP2040 ------------------------------------------------------------------
+waveshare_rp2040_lora_kiss_modem   | Waveshare RP2040-LoRa                   | RP2040    | SX1262 | rp2040
+PicoW_kiss_modem                   | Raspberry Pi Pico W + SX1262            | RP2040    | SX1262 | rp2040
+
+# ---- Other nRF52 --------------------------------------------------------------------------
+ProMicro_kiss_modem                | ProMicro nRF52840 (Faketec) + SX1262    | nRF52840  | SX1262 | nrf52
+Nano_G2_Ultra_kiss_modem           | B&Q Nano G2 Ultra                       | nRF52840  | SX1262 | nrf52
+Meshtiny_kiss_modem                | Meshtiny                                | nRF52840  | SX1262 | nrf52
+R1Neo_kiss_modem                   | muzi works R1 Neo                       | nRF52840  | SX1262 | nrf52
+Minewsemi_me25ls01_kiss_modem      | Minewsemi ME25LS01                      | nRF52840  | LR1110 | nrf52
+KeepteenLT1_kiss_modem             | Keepteen LT1                            | nRF52840  | SX1262 | nrf52
+ikoka_stick_nrf_22dbm_kiss_modem   | ikoka Stick nRF (22 dBm)                | nRF52840  | SX1262 | nrf52
+ikoka_stick_nrf_30dbm_kiss_modem   | ikoka Stick nRF (30 dBm)                | nRF52840  | SX1262 | nrf52
+ikoka_stick_nrf_33dbm_kiss_modem   | ikoka Stick nRF (33 dBm)                | nRF52840  | SX1262 | nrf52
+ikoka_nano_nrf_22dbm_kiss_modem    | ikoka Nano nRF (22 dBm)                 | nRF52840  | SX1262 | nrf52
+ikoka_nano_nrf_30dbm_kiss_modem    | ikoka Nano nRF (30 dBm)                 | nRF52840  | SX1262 | nrf52
+ikoka_nano_nrf_33dbm_kiss_modem    | ikoka Nano nRF (33 dBm)                 | nRF52840  | SX1262 | nrf52
+ikoka_handheld_nrf_kiss_modem      | ikoka Handheld nRF                      | nRF52840  | SX1262 | nrf52
+GAT562_30S_Mesh_Kit_kiss_modem     | GAT562 30S Mesh Kit                     | nRF52840  | SX1262 | nrf52
+GAT562_Mesh_EVB_Pro_kiss_modem     | GAT562 Mesh EVB Pro                     | nRF52840  | SX1262 | nrf52
+GAT562_Mesh_Tracker_Pro_kiss_modem | GAT562 Mesh Tracker Pro                 | nRF52840  | SX1262 | nrf52
+GAT562_Mesh_Watch13_kiss_modem     | GAT562 Mesh Watch13                     | nRF52840  | SX1262 | nrf52
+
+# ---- Other ESP32 / STM32 --------------------------------------------------------------------
+Station_G2_kiss_modem              | B&Q Station G2                          | ESP32-S3  | SX1262 | esp32
+Station_G3_ESP32_kiss_modem        | B&Q Station G3 (ESP32)                  | ESP32-S3  | SX1262 | esp32
+Tenstar_C3_sx1262_kiss_modem       | Tenstar ESP32-C3 (SX1262)               | ESP32-C3  | SX1262 | esp32
+Tenstar_C3_sx1268_kiss_modem       | Tenstar ESP32-C3 (SX1268)               | ESP32-C3  | SX1268 | esp32
+Meshadventurer_sx1262_kiss_modem   | MeshAdventurer (SX1262)                 | ESP32     | SX1262 | esp32
+Meshadventurer_sx1268_kiss_modem   | MeshAdventurer (SX1268)                 | ESP32     | SX1268 | esp32
+Generic_E22_kiss_modem             | Generic ESP32 + Ebyte E22               | ESP32     | SX1262 | esp32
+Ebyte_EoRa-S3_kiss_modem           | Ebyte EoRa-S3                           | ESP32-S3  | SX1262 | esp32
+meshnology_w12_kiss_modem          | Meshnology W12                          | ESP32-S3  | LR2021 | esp32
+nibble_screen_connect_kiss_modem_  | Nibble Screen Connect                   | ESP32-S3  | SX1262 | esp32
+M5Stack_Unit_C6L_kiss_modem        | M5Stack Unit C6L                        | ESP32-C6  | SX1262 | esp32 | core=pioarduino
+Tiny_Relay_kiss_modem              | Tiny Relay                              | STM32WLE5 | STM32WL (SX126x) | stm32

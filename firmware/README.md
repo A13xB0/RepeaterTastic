@@ -64,29 +64,43 @@ reboot or reconnect.
 ## Building
 
 ```
-./build.sh                          # Heltec_v3_kiss_modem
-./build.sh RAK_4631_kiss_modem      # any *_kiss_modem env
-MESHCORE_DIR=~/src/MeshCore ./build.sh   # build in an existing checkout (patch applied if needed)
+./build.sh                                   # Heltec_v3_kiss_modem
+./build.sh Xiao_nrf52_kiss_modem RAK_4631_kiss_modem   # any envs listed in boards.txt
+PARALLEL=3 PIO_JOBS=3 ./build.sh all         # every board in boards.txt (~92 envs)
+CLEAN=1 ./build.sh all                       # delete per-env build dirs/libdeps after each success
+MESHCORE_DIR=~/src/MeshCore ./build.sh       # build in an existing checkout (patch applied if needed)
 ```
 
-Without `MESHCORE_DIR` the script clones upstream MeshCore into `firmware/work/MeshCore` (gitignored),
-checks out the base commit (`e0031870`, meshcore-dev/MeshCore `dev`), applies the patch and
-runs PlatformIO. Results land in `out/`:
-`<env>-firmware.bin` (app only, flash at `0x10000` on ESP32) and, for ESP32,
-`<env>-factory.bin` (bootloader + partition table + boot_app0 + app, flash at `0x0`).
-A `<env>.sha256` checksum file is written next to them.
+Without `MESHCORE_DIR` the script clones upstream MeshCore into `firmware/work/MeshCore`
+(gitignored), checks out the base commit (`e0031870`, meshcore-dev/MeshCore `dev`), applies the
+patch and runs PlatformIO (`pip install platformio`, or `~/.local/bin/pio`).
 
-**Binaries are not in git**: `firmware/out/*.bin` is gitignored, so a fresh checkout has
-no images. Run `./build.sh` (needs PlatformIO, `pip install platformio` or
-`~/.local/bin/pio`) to produce `firmware/out/Heltec_v3_kiss_modem-firmware.bin` and
-`firmware/out/Heltec_v3_kiss_modem-factory.bin`; the flash commands below assume you run
-them from `firmware/`.
+`boards.txt` is the target list (`env | friendly name | MCU | radio | flash format`), and
+`boards.md` is the per-board table: what to flash, how, and the last build status. A full
+`all` build needs about 20 GB for `.pio` unless `CLEAN=1` is set.
 
-Build-tested: `Heltec_v3_kiss_modem` (ESP32-S3/SX1262), `heltec_v4_kiss_modem` (ESP32-S3, native USB),
-`Heltec_v2_kiss_modem` (ESP32/SX1276), `RAK_4631_kiss_modem` (nRF52840/SX1262),
-`t1000e_kiss_modem` (nRF52840/LR1110), `meshnology_w12_kiss_modem` (LR2021).
+**Where the binaries go (not in git)**: build products are written to `firmware/out/`:
+
+```
+out/<env>/<env>-factory.bin   ESP32: full image, flash at 0x0
+out/<env>/<env>-app.bin       ESP32: app only, flash at 0x10000 (keeps identity)
+out/<env>/<env>.uf2           nRF52840 / RP2040: drag & drop onto the bootloader drive
+out/<env>/<env>-dfu.zip       nRF52840: adafruit-nrfutil serial DFU package
+out/<env>/<env>.bin|.hex      STM32WL (and extra copies for nRF52/RP2040)
+out/<env>/SHA256SUMS
+out/logs/<env>.log            build log
+out/status.tsv                env, OK/FAILED, artifacts or first error line
+```
+
+A fresh checkout has no images: run `./build.sh` first. The repo `.gitignore` currently
+covers only `/firmware/out/*.bin`, so ignore the whole `/firmware/out/` directory.
+
+`.github-workflow-example.yml` is a ready-to-copy GitHub Actions workflow (not enabled) that
+builds the `boards.txt` matrix and attaches per-board zips to a `fw-v*` tag release.
 
 ## Flashing a Heltec V3
+
+See `boards.md` for other boards (esptool / UF2 / nrfutil / STM32 SWD).
 
 The V3 has a CP2102 USB-UART bridge, usually `/dev/ttyUSB0` on Linux. If the port does
 not respond, hold **PRG**, tap **RST**, release **PRG** to enter the ROM bootloader.
@@ -95,20 +109,25 @@ Fresh install (erases identity and any other firmware):
 
 ```
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 erase_flash
-esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash 0x0 out/Heltec_v3_kiss_modem-factory.bin
+esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash 0x0 out/Heltec_v3_kiss_modem/Heltec_v3_kiss_modem-factory.bin
 ```
 
 Update over an existing MeshCore ESP32 install (keeps partition table and SPIFFS identity):
 
 ```
-esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash 0x10000 out/Heltec_v3_kiss_modem-firmware.bin
+esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash 0x10000 out/Heltec_v3_kiss_modem/Heltec_v3_kiss_modem-app.bin
 ```
 
 Use `esptool.py` from `pip install esptool` (newer releases name the command `esptool`),
 or PlatformIO's copy: `python3 ~/.platformio/packages/tool-esptoolpy/esptool.py`.
 Serial link afterwards: 115200 8N1.
 
-The images in `out/` were produced by `./build.sh` against upstream `e0031870` + this patch.
+## Flashing a Seeed XIAO nRF52840 + Wio-SX1262 kit
+
+Double-tap the tiny RESET button on the XIAO; a `XIAO-SENSE` USB drive appears. Copy
+`out/Xiao_nrf52_kiss_modem/Xiao_nrf52_kiss_modem.uf2` onto it. It reboots into the modem and
+shows up as `/dev/ttyACM0` (115200 8N1). Alternatively:
+`adafruit-nrfutil dfu serial --package out/Xiao_nrf52_kiss_modem/Xiao_nrf52_kiss_modem-dfu.zip -p /dev/ttyACM0 -b 115200 --singlebank --touch 1200`.
 
 ## Host session init: Meshtastic LongFast, EU_868
 

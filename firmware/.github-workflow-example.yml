@@ -1,0 +1,123 @@
+# Example CI for the RepeaterTastic KISS modem firmware. NOT active.
+# To enable: copy to .github/workflows/firmware.yml in the repository root.
+#
+# - Builds every env in firmware/boards.txt (one matrix job per board) using firmware/build.sh
+# - Uploads each board's artifacts (out/<env>/) as a workflow artifact
+# - On a tag like `fw-v1`, attaches one zip per board plus status.tsv to a GitHub release
+name: firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      envs:
+        description: "Space-separated envs to build (empty = all of boards.txt)"
+        required: false
+        default: ""
+  push:
+    tags: ["fw-v*"]
+    paths: ["firmware/**"]
+  pull_request:
+    paths: ["firmware/**"]
+
+permissions:
+  contents: write   # needed to create the release
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.list.outputs.envs }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.envs }}" ]]; then
+            envs=$(printf '%s\n' ${{ github.event.inputs.envs }})
+          else
+            envs=$(grep -v '^[[:space:]]*#' firmware/boards.txt | grep '|' | cut -d'|' -f1 | tr -d ' ')
+          fi
+          echo "envs=$(printf '%s\n' $envs | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        env: ${{ fromJSON(needs.matrix.outputs.envs) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            ~/.platformio/.cache
+          key: pio-${{ matrix.env }}-${{ hashFiles('firmware/build.sh', 'firmware/0001-*.patch') }}
+          restore-keys: pio-${{ matrix.env }}-
+
+      - name: Build
+        shell: bash
+        env:
+          CLEAN: "1"
+        run: firmware/build.sh "${{ matrix.env }}"
+
+      - name: Upload status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: status-${{ matrix.env }}
+          path: |
+            firmware/out/status.tsv
+            firmware/out/logs/${{ matrix.env }}.log
+          if-no-files-found: ignore
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: fw-${{ matrix.env }}
+          path: firmware/out/${{ matrix.env }}/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: always() && startsWith(github.ref, 'refs/tags/fw-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package per-board zips and combined status
+        shell: bash
+        run: |
+          mkdir -p release
+          for d in artifacts/fw-*/; do
+            env=$(basename "$d"); env=${env#fw-}
+            (cd "$d" && zip -qr "$GITHUB_WORKSPACE/release/$env.zip" .)
+          done
+          cat artifacts/status-*/status.tsv 2>/dev/null | sort > release/status.tsv || true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.zip
+            release/status.tsv
+          body: |
+            MeshCore KISS modem + RepeaterTastic sync word / preamble patch.
+            See firmware/boards.md for which file to flash on each board.
