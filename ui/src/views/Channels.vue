@@ -9,6 +9,7 @@ import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import ChannelsDrawer from '@/components/identities/ChannelsDrawer.vue'
 import AddChannelModal, { type SiteChannel } from '@/components/identities/AddChannelModal.vue'
 import { confirmDialog } from '@/composables/confirm'
+import { channelSlots } from '@/lib/channels'
 import { toast, toastError } from '@/composables/toast'
 
 const open = ref<{ id: string; focus?: number } | null>(null)
@@ -27,7 +28,7 @@ const groups = computed(() => {
       }
   return map
 })
-const primary = computed(() => live.identities[0]?.channels[0])
+const primary = computed(() => live.identities[0]?.channels.find((c) => c.index === 0))
 
 // Every secondary channel on this radio (same name and key = one channel), with who holds it.
 const siteChannels = computed<SiteChannel[]>(() => {
@@ -116,7 +117,7 @@ async function removeEverywhere(ch: SiteChannel) {
                   </div>
                 </div>
               </td>
-              <td v-for="c in i.channels" :key="c.index" class="!px-1 text-center">
+              <td v-for="c in channelSlots(i)" :key="c.index" class="!px-1 text-center">
                 <div
                   v-if="c.locked"
                   class="mx-auto flex h-9 min-w-24 items-center justify-center gap-1 rounded-lg border border-brand/25 bg-brand/8 px-2 text-xs font-medium text-brand"

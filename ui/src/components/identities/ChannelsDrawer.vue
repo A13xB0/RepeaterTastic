@@ -11,6 +11,7 @@ import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { live, upsertIdentity } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
+import { channelSlots } from '@/lib/channels'
 
 const props = defineProps<{ identityId: string | null; focus?: number }>()
 const emit = defineEmits<{ close: [] }>()
@@ -36,7 +37,7 @@ watch(
 )
 
 function startEdit(index: number) {
-  const ch = identity.value?.channels[index]
+  const ch = identity.value ? channelSlots(identity.value)[index] : undefined
   if (!ch || ch.locked) return
   editing.value = index
   draft.value = { name: ch.name, psk: ch.psk, role: ch.role === 'DISABLED' ? 'SECONDARY' : ch.role, uplink: ch.uplink, downlink: ch.downlink }
@@ -123,7 +124,7 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
 
       <div v-if="tab === 'edit'" class="space-y-2">
         <div
-          v-for="ch in identity.channels"
+          v-for="ch in channelSlots(identity)"
           :key="ch.index"
           :class="['rounded-xl border transition-colors', editing === ch.index ? 'border-brand/50 bg-brand/5' : 'border-line-soft bg-raised/60']"
         >

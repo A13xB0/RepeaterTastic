@@ -10,6 +10,7 @@ import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { live, upsertIdentity } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
+import { freeSlot } from '@/lib/channels'
 
 export interface SiteChannel {
   key: string
@@ -81,7 +82,6 @@ const channel = computed<{ name: string; psk: string } | null>(() => {
 })
 
 const has = (i: Identity, c: { name: string; psk: string }) => i.channels.some((x) => x.role === 'SECONDARY' && x.name === c.name && x.psk === c.psk)
-const freeSlot = (i: Identity) => i.channels.find((c) => c.index > 0 && c.role === 'DISABLED')?.index
 const candidates = computed(() => live.identities.filter((i) => !(channel.value && has(i, channel.value))))
 
 async function save() {
