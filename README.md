@@ -46,9 +46,31 @@ The top-level radio stays the **main** radio and existing configs keep working u
 - **Overlapping channels:** radios whose channels overlap in frequency take turns to transmit. In
   EU_868, LongFast, MediumFast, MediumSlow and ShortFast all sit on 869.525 MHz.
 - **Site airtime cap:** `site.duty_cycle_percent` caps the summed airtime of all radios.
-- **Web GUI:** a radio switcher appears once there is more than one radio.
+- **Web GUI:** Configuration → Site radios adds, renames and removes radios; a radio switcher
+  appears once there is more than one. Configuration shows a restart banner when a change
+  (a new radio, MQTT, the web port) waits for a restart.
+- **Identities:** each lives on one radio. Move one from its editor: key, node ID, app port and
+  chats go with it, and its primary channel follows the new preset. A key can't be imported onto a
+  second radio.
 - **API:** `?radio=<id>` selects a radio (see [`docs/api.md`](docs/api.md)).
 - **EU_868 notes:** LongTurbo's 500 kHz doesn't fit the 250 kHz sub-band, and LongSlow sits on 869.4625 MHz.
+
+### Experimental: identities on several radios
+
+Off by default (Configuration → Experimental, or `experimental.multi_radio_identities`). When on,
+an identity's editor can attach it to extra radios:
+
+- **Receive:** each channel listens on the radios you tick (by default the primary channel on every
+  attached radio, other channels on the home radio). A packet heard on two radios is delivered once,
+  into the home radio's chats.
+- **Send:** each channel sends on one radio or all of them; DMs go on the radio where the
+  destination was last heard best in the last day (or always home, or a fixed radio); ACKs and
+  replies leave on the radio the request arrived on. An optional fallback retries a failed DM once on
+  another radio that heard the destination.
+- **App:** one app port, the home radio's LoRa settings and every attached radio's nodes. Routing is
+  only set in the web GUI.
+- **Safety:** relays never rebroadcast the site's own identities, MQTT publishes a packet heard on two
+  radios once, and turning the switch off detaches every identity at once.
 
 ## Position and hardware
 

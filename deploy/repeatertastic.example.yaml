@@ -109,3 +109,7 @@ identities:
   - long_name: Base Camp
     short_name: BASE
     api_port: 4403
+
+# Features still being proven; all off by default.
+# experimental:
+#     multi_radio_identities: false   # identities on several radios, routed by channel and destination (set in the web GUI)
