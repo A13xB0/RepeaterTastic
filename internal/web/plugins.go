@@ -132,7 +132,7 @@ func (s *Server) listPlugins(w http.ResponseWriter, r *http.Request) {
 				"radio_id": rc.id, "radio_name": rc.name, "is_relay": id.IsRelay})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "plugins": list, "permissions": perms, "identities": identities,
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "error": m.StartError(), "plugins": list, "permissions": perms, "identities": identities,
 		"attach_address": m.Listening(), "allow_url_install": pc.AllowURLInstall, "folder": m.InboxDir(),
 		"messages_per_hour": pc.MessagesPerHour, "traceroutes_per_hour": pc.TraceroutesPerHour})
 }

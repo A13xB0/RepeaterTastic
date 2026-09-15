@@ -530,6 +530,7 @@ func (h *Host) radioConfig() radio.Config {
 }
 
 func (h *Host) configureLoop(ctx context.Context) {
+	failures := 0
 	for {
 		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := h.radio.Configure(cctx, h.radioConfig())
@@ -541,7 +542,11 @@ func (h *Host) configureLoop(ctx context.Context) {
 				"bw_khz", rp.BwKHz, "sync", fmt.Sprintf("0x%02x", rp.SyncWord), "power_dbm", rp.TxPowerDBm)
 			return
 		}
-		h.log.Error("radio configuration failed, retrying in 10s", "err", err)
+		// Without a modem this fails every 10 s: say so once, then every 5 minutes.
+		if failures%30 == 0 {
+			h.log.Warn("radio not configured yet, retrying every 10s", "err", err)
+		}
+		failures++
 		select {
 		case <-ctx.Done():
 			return

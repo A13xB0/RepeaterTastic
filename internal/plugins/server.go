@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -115,6 +116,9 @@ func (m *Manager) serve(ctx context.Context) (*grpc.Server, error) {
 	pluginv1.RegisterPluginHostServer(srv, &hostServer{m: m})
 
 	sock := m.socketPath()
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		return nil, fmt.Errorf("plugin socket: %w", err)
+	}
 	_ = os.Remove(sock)
 	ul, err := net.Listen("unix", sock)
 	if err != nil {

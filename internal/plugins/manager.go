@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -60,6 +61,7 @@ type Manager struct {
 
 	notifyMu      sync.Mutex
 	notifyPending map[string]bool
+	startErr      string // why Start failed, shown in the GUI
 }
 
 // plugin is an installed (or attached) plugin and what it is doing now. Guarded by Manager.mu.
@@ -117,7 +119,17 @@ func (m *Manager) installedDir() string { return filepath.Join(m.opt.Dir, "insta
 func (m *Manager) dataRoot() string     { return filepath.Join(m.opt.Dir, "data") }
 func (m *Manager) inboxDir() string     { return filepath.Join(m.opt.Dir, "inbox") }
 func (m *Manager) statePath() string    { return filepath.Join(m.opt.Dir, "state.json") }
-func (m *Manager) socketPath() string   { return filepath.Join(m.opt.Dir, "host.sock") }
+
+// socketPath is <dir>/host.sock, or a private folder under the system temp dir when that path is
+// too long for a Unix socket (about 108 bytes).
+func (m *Manager) socketPath() string {
+	p := filepath.Join(m.opt.Dir, "host.sock")
+	if len(p) < 100 {
+		return p
+	}
+	sum := sha256.Sum256([]byte(m.opt.Dir))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("repeatertastic-%d-%x", os.Getuid(), sum[:4]), "host.sock")
+}
 
 // InboxDir is the folder bundles can be dropped into.
 func (m *Manager) InboxDir() string { return m.inboxDir() }
@@ -330,6 +342,9 @@ func (m *Manager) Run(ctx context.Context) error {
 func (m *Manager) Start(ctx context.Context) error {
 	srv, err := m.serve(ctx)
 	if err != nil {
+		m.mu.Lock()
+		m.startErr = err.Error()
+		m.mu.Unlock()
 		return err
 	}
 	for _, r := range m.opt.Radios {
@@ -770,6 +785,13 @@ func (m *Manager) SetLimits(l Limits) error {
 	m.mu.Unlock()
 	m.log.Info("plugin send limits changed", "messages_per_hour", l.MessagesPerHour, "traceroutes_per_hour", l.TraceroutesPerHour)
 	return nil
+}
+
+// StartError is why plugins couldn't start ("" = they did, or Start hasn't run).
+func (m *Manager) StartError() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.startErr
 }
 
 // Listening is the TCP address for attached plugins ("" = attaching is off).

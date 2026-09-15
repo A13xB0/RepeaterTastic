@@ -12,10 +12,11 @@ import (
 )
 
 type Radio struct {
-	open  func(ctx context.Context) (radio.Radio, error)
-	info  radio.Info
+	open  func(ctx context.Context, device string) (radio.Radio, error)
+	info  radio.Info // info.Device is the device being tried
 	logf  func(string, ...any)
 	every time.Duration
+	wake  chan struct{}
 
 	mu      sync.Mutex
 	inner   radio.Radio
@@ -27,11 +28,11 @@ type Radio struct {
 	done   chan struct{}
 }
 
-// New starts opening in the background. info describes the radio until it is open.
-func New(open func(ctx context.Context) (radio.Radio, error), info radio.Info, every time.Duration,
+// New starts opening info.Device in the background. info describes the radio until it is open.
+func New(open func(ctx context.Context, device string) (radio.Radio, error), info radio.Info, every time.Duration,
 	logf func(string, ...any)) *Radio {
 	r := &Radio{open: open, info: info, logf: logf, every: every, frames: make(chan radio.Frame, 64),
-		done: make(chan struct{})}
+		done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	go r.loop()
 	return r
@@ -40,7 +41,10 @@ func New(open func(ctx context.Context) (radio.Radio, error), info radio.Info, e
 func (r *Radio) loop() {
 	defer close(r.done)
 	for {
-		inner, err := r.open(r.ctx)
+		r.mu.Lock()
+		device := r.info.Device
+		r.mu.Unlock()
+		inner, err := r.open(r.ctx, device)
 		if err == nil {
 			r.mu.Lock()
 			r.inner, r.lastErr = inner, nil
@@ -63,9 +67,32 @@ func (r *Radio) loop() {
 		select {
 		case <-r.ctx.Done():
 			return
+		case <-r.wake:
 		case <-time.After(r.every):
 		}
 	}
+}
+
+// Retarget switches to another device while the radio still isn't open, and tries it at once.
+// It reports false once a device is open: changing it then needs a restart.
+func (r *Radio) Retarget(device string) bool {
+	r.mu.Lock()
+	if r.inner != nil {
+		r.mu.Unlock()
+		return false
+	}
+	changed := r.info.Device != device
+	r.info.Device = device
+	r.lastErr = nil // log the next failure: it's about the new device
+	r.mu.Unlock()
+	if changed {
+		r.logf("trying radio on %s", device)
+		select {
+		case r.wake <- struct{}{}:
+		default:
+		}
+	}
+	return true
 }
 
 func (r *Radio) get() radio.Radio {
@@ -101,6 +128,8 @@ func (r *Radio) Info() radio.Info {
 	if in := r.get(); in != nil {
 		return in.Info()
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.info
 }
 

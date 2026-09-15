@@ -21,9 +21,48 @@ func cloneConfig(c *config.Config) *config.Config {
 	return out
 }
 
+// followUnopenedDevices points a radio whose modem hasn't opened yet at its saved device straight
+// away, so choosing the port (in setup or Configuration) needs no restart until a modem has
+// connected.
+func (s *Server) followUnopenedDevices() {
+	type retargeter interface{ Retarget(device string) bool }
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	if s.booted == nil {
+		return
+	}
+	saved := map[string]config.RadioConfig{}
+	for _, rc := range s.cfg.RadioConfigs() {
+		saved[rc.ID] = rc
+	}
+	for _, rc := range s.radios {
+		cur, ok := saved[rc.id]
+		rt, canRetarget := rc.host.Radio().(retargeter)
+		if !ok || !canRetarget {
+			continue
+		}
+		was := &s.booted.Radio
+		if rc.id != config.MainRadioID {
+			was = nil
+			for i := range s.booted.Radios {
+				if s.booted.Radios[i].ID == rc.id {
+					was = &s.booted.Radios[i].Radio
+				}
+			}
+		}
+		if was == nil || was.Device == cur.Radio.Device || was.Driver != cur.Radio.Driver || was.Baud != cur.Radio.Baud {
+			continue
+		}
+		if rt.Retarget(cur.Radio.Device) {
+			was.Device = cur.Radio.Device
+		}
+	}
+}
+
 // restartReasons lists saved changes that only take effect when the daemon restarts: what the
 // running daemon started with against what is saved now.
 func (s *Server) restartReasons() []string {
+	s.followUnopenedDevices()
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	if s.booted == nil {

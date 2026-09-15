@@ -94,6 +94,9 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <div v-if="data?.error" class="mb-4 rounded-xl bg-bad/10 px-4 py-3 text-[13px] text-bad">
+      Plugins couldn't start: <span class="mono">{{ data.error }}</span>. Installed plugins won't run until this is fixed and RepeaterTastic restarts.
+    </div>
     <div v-if="!data" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <div v-for="n in 3" :key="n" class="card h-40 animate-pulse" />
     </div>

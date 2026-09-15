@@ -45,8 +45,15 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		Preset    string `json:"preset"`
 		Device    string `json:"device"`
 		RelayRole string `json:"relay_role"`
+		// PrimaryChannel names the primary channel ("" = the preset's name), which picks the slot.
+		PrimaryChannel *string `json:"primary_channel"`
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.Password) < 8 {
+		// Checked before anything is saved, so a bad password leaves setup to be tried again.
+		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
 	s.cfgMu.Lock()
@@ -60,10 +67,11 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	if req.RelayRole != "" {
 		next.Relay.Role = req.RelayRole
 	}
-	restart := false
-	if req.Device != "" && req.Device != next.Radio.Device {
+	if req.PrimaryChannel != nil {
+		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
+	}
+	if req.Device != "" {
 		next.Radio.Device = req.Device
-		restart = true
 	}
 	if err := next.Validate(); err != nil {
 		s.cfgMu.Unlock()
@@ -71,16 +79,19 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cfgMu.Unlock()
-	if err := s.auth.SetPassword(req.Password); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+	// The radio settings first: if they can't be applied, no password is set and setup can be
+	// run again.
 	if err := s.applyConfig(r, &next); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := s.auth.SetPassword(req.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	tok, exp := s.auth.IssueJWT()
-	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expires": exp.UnixMilli(), "restart_required": restart})
+	// A modem that hasn't opened yet switches to the chosen port at once (see followUnopenedDevices).
+	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expires": exp.UnixMilli(), "restart_required": len(s.restartReasons()) > 0})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

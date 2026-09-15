@@ -478,6 +478,8 @@ export interface Plugin {
 
 export interface PluginsResponse {
   enabled: boolean
+  /** Why plugins couldn't start ("" when they did). */
+  error?: string
   plugins: Plugin[]
   permissions?: Record<string, string>
   attach_address?: string

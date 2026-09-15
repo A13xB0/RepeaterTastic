@@ -118,7 +118,9 @@ async function finish() {
   finishing.value = true
   error.value = ''
   try {
-    const r = await post<{ token: string }>('/setup', { password: password.value, region: region.value, preset: preset.value, device: device.value, relay_role: role.value })
+    const r = await post<{ token: string }>('/setup', {
+      password: password.value, region: region.value, preset: preset.value, primary_channel: primary.value, device: device.value, relay_role: role.value,
+    })
     setToken(r.token)
     markSetupDone()
     router.replace('/')
@@ -256,7 +258,10 @@ async function finish() {
           <!-- 3. Relay -->
           <section v-else-if="step === 2">
             <h2 class="text-base font-semibold tracking-tight">Relay role</h2>
-            <p class="mt-1 text-[13px] text-ink-3">The relay persona rebroadcasts other people's packets. You can change this any time from the top bar.</p>
+            <p class="mt-1 text-[13px] text-ink-3">
+              The relay persona rebroadcasts other people's packets. You can change this any time from the top bar, which also has
+              Monitor (listen only, never transmit) and Off.
+            </p>
             <div class="mt-4 grid gap-2 sm:grid-cols-3">
               <button
                 v-for="r in roles"

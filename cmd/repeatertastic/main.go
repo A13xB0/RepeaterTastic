@@ -179,8 +179,9 @@ func run(cfgPath string) error {
 		if err != nil {
 			return fmt.Errorf("plugins: %w", err)
 		}
+		// A repeater keeps repeating even if plugins can't start: say why in the log and the GUI.
 		if err := pm.Start(ctx); err != nil {
-			return fmt.Errorf("plugins: %w", err)
+			log.Error("plugins couldn't start", "err", err)
 		}
 		defer func() { stop(); pm.Wait() }() // plugins stop before the radios close
 	}
@@ -252,8 +253,10 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 	switch rc.Radio.Driver {
 	case "kiss":
 		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "kiss") }
-		opts := kiss.Options{Device: rc.Radio.Device, Baud: rc.Radio.Baud, Logf: logf}
-		r = lazy.New(func(ctx context.Context) (radio.Radio, error) { return kiss.Open(ctx, opts) },
+		baud := rc.Radio.Baud
+		r = lazy.New(func(ctx context.Context, device string) (radio.Radio, error) {
+			return kiss.Open(ctx, kiss.Options{Device: device, Baud: baud, Logf: logf})
+		},
 			radio.Info{Driver: "kiss", Device: rc.Radio.Device}, 5*time.Second, logf)
 	default:
 		r = null.New()
