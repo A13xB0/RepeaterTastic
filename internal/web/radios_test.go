@@ -440,6 +440,19 @@ func TestMultiRadioIdentityAPI(t *testing.T) {
 		t.Fatalf("bad dm accepted: %d", code)
 	}
 
+	// a radio that hasn't started yet can be chosen; the slot waits on the default radio until then
+	call(t, srv, "POST", "/api/v1/radios", tok, map[string]any{"id": "ls", "driver": "none", "region": "EU_868", "preset": "LONG_SLOW"})
+	code, res, _ = call(t, srv, "PUT", path+"/channels/4", tok, map[string]any{"name": "Slow", "psk": "AQ==", "role": "SECONDARY", "radio": "ls"})
+	if code != 200 {
+		t.Fatalf("slot on a radio that hasn't started %d %v", code, res)
+	}
+	for _, x := range res["channels"].([]any) {
+		if c := x.(map[string]any); c["index"] == float64(4) && (c["radio_pending"] != "ls" || c["radio_removed"] != nil) {
+			t.Fatalf("slot 4 = %v, want radio_pending ls", c)
+		}
+	}
+	call(t, srv, "PUT", path+"/channels/4", tok, map[string]any{"name": "", "psk": "", "role": "DISABLED"})
+
 	// a different channel in slot 2 goes back to the default radio (mf here); default back to main
 	call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{"default_radio": ""}})
 	call(t, srv, "PUT", path+"/channels/2", tok, map[string]any{"name": "", "psk": "", "role": "DISABLED"})

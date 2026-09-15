@@ -9,7 +9,7 @@ import type { Channel, Identity } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, radioName, upsertIdentity } from '@/store/live'
+import { live, multiRadioActive, radioChoices, radioName, upsertIdentity } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
 import { channelSlots, freeSlot } from '@/lib/channels'
 import { num } from '@/lib/format'
@@ -43,7 +43,8 @@ const existing = computed<Channel | undefined>(() => (single.value ? channelSlot
 const editing = computed(() => !!existing.value && existing.value.role !== 'DISABLED')
 
 // Radios are only chosen with the experimental switch on and more than one radio; never for relays.
-const multi = computed(() => live.multiRadioIdentities && live.radios.length > 1)
+const multi = computed(() => multiRadioActive())
+const choices = computed(() => radioChoices())
 const showRadio = computed(() => multi.value && !(single.value && identity.value?.is_relay))
 /** An identity's default radio: where its slot 0 lives. */
 const defaultRadioOf = (i?: Identity) => (i ? (channelSlots(i)[0]?.radio ?? i.radio_id ?? 'main') : 'main')
@@ -64,7 +65,7 @@ const error = ref('')
 const offered = computed<SiteChannel[]>(() => {
   const list = [...props.channels]
   if (multi.value)
-    for (const r of live.radios) {
+    for (const r of live.radios) { // ready-made primaries need a running radio's PHY
       const n = r.phy.primary_channel || r.phy.preset_name
       if (!list.some((c) => c.name === n && c.psk === 'AQ==' && c.radio === r.id))
         list.push({ key: `primary|${r.id}`, name: n, psk: 'AQ==', radio: r.id, holders: [], primary: true })
@@ -140,6 +141,19 @@ const candidates = computed(() => {
     seen.add(i.node_id)
     return !(channel.value && has(i, channel.value, bulkRadio.value === 'one' ? radio.value : undefined))
   })
+})
+
+// Why the radio can't be chosen, when it can't.
+const radioWhy = computed(() => {
+  if (single.value && identity.value?.is_relay) return 'A relay persona keeps its channels on its own radio.'
+  if (choices.value.length < 2) return 'Add a second radio under Configuration → Radios to choose another.'
+  if (!live.multiRadioIdentities) return 'Turn on Configuration → Experimental → Identities on several radios to choose another.'
+  return ''
+})
+const fixedRadio = computed(() => {
+  const id = single.value ? (existing.value?.radio ?? identity.value?.radio_id ?? 'main') : (live.radios[0]?.id ?? 'main')
+  const r = live.radios.find((x) => x.id === id)
+  return r ? `${r.name} · ${r.phy.preset_name} · ${num(r.phy.frequency_mhz, 3)} MHz` : radioName(id)
 })
 
 const airtimeNote = computed(() => {
@@ -244,15 +258,21 @@ async function save() {
           <span class="text-[13px] font-medium">Radio</span>
           <span class="text-xs text-ink-3">the one radio this slot hears and sends on</span>
         </div>
-        <label v-for="r in live.radios" :key="r.id" class="flex flex-wrap items-center gap-2 text-[13px]">
+        <label v-for="r in choices" :key="r.id" class="flex flex-wrap items-center gap-2 text-[13px]">
           <input v-model="radio" type="radio" :value="r.id" class="accent-[var(--brand)]" />
           {{ r.name }}
           <span v-if="r.id === defaultRadioOf(identity)" class="chip bg-ink-3/12 text-ink-3">default</span>
-          <span class="text-xs text-ink-3">{{ r.phy.preset_name }} · {{ num(r.phy.frequency_mhz, 3) }} MHz</span>
+          <span :class="['text-xs', r.pending ? 'text-warn' : 'text-ink-3']">{{ r.detail }}</span>
         </label>
+        <p v-if="choices.find((r) => r.id === radio)?.pending" class="hint !mt-0 !text-warn">That radio starts at the next restart; until then this channel runs on the default radio.</p>
         <p class="hint !mt-0">Want it on another radio too? Add the same channel to another slot and choose that radio.</p>
       </div>
       <p v-else-if="showRadio && single && slot === 0" class="hint">Slot 0 is the primary channel of {{ identity?.long_name }}'s default radio. Change the default radio in the identity editor.</p>
+      <div v-else-if="single" class="grid gap-1 rounded-xl border border-line-soft bg-raised px-3.5 py-3">
+        <span class="text-[13px] font-medium">Radio</span>
+        <span class="text-[13px]">{{ fixedRadio }}</span>
+        <p class="hint !mt-0">{{ radioWhy }}</p>
+      </div>
 
       <fieldset v-if="!single">
         <legend class="label">Identities</legend>
@@ -265,13 +285,18 @@ async function save() {
         <p v-if="!candidates.length" class="hint">Every identity already has this channel.</p>
       </fieldset>
 
+      <div v-if="!showRadio && !single" class="grid gap-1 rounded-xl border border-line-soft bg-raised px-3.5 py-3">
+        <span class="text-[13px] font-medium">Radio</span>
+        <span class="text-[13px]">Each identity's own radio</span>
+        <p class="hint !mt-0">{{ radioWhy }}</p>
+      </div>
       <div v-if="showRadio && !single" class="grid gap-2 rounded-xl border border-line-soft bg-raised px-3.5 py-3 text-[13px]">
         <span class="font-medium">Radio</span>
         <label class="flex items-center gap-2"><input v-model="bulkRadio" type="radio" value="default" class="accent-[var(--brand)]" /> Each identity's default radio</label>
         <label class="flex flex-wrap items-center gap-2">
           <input v-model="bulkRadio" type="radio" value="one" class="accent-[var(--brand)]" /> One radio for all:
           <select v-model="radio" class="input !h-8 !w-auto !py-0 text-xs" aria-label="Radio for all" @focus="bulkRadio = 'one'">
-            <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }}</option>
+            <option v-for="r in choices" :key="r.id" :value="r.id">{{ r.name }}{{ r.pending ? ' (starts at restart)' : '' }}</option>
           </select>
           <span v-if="bulkRadio === 'one'" class="text-xs text-ink-3">{{ airtimeNote }}</span>
         </label>

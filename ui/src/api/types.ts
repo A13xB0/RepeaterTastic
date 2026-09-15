@@ -108,6 +108,8 @@ export interface Channel {
   radio_name?: string
   /** Set when the slot's chosen radio left the site; it runs on the default radio meanwhile. */
   radio_removed?: string
+  /** Set when the slot's radio was added but hasn't started; it runs on the default radio until the restart. */
+  radio_pending?: string
 }
 
 export interface Identity {

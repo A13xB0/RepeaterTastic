@@ -199,7 +199,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 	u := id.UserCopy()
 	rp := rc.host.RadioParams()
 	display := rp.PresetName()
-	multi := s.opt.Federation.Enabled() && len(s.radios) > 1 && !id.IsRelay
+	multi := s.opt.Federation.Enabled() && s.siteRadioCount() > 1 && !id.IsRelay
 	mr := id.MultiRadio()
 	var chans []map[string]any
 	for i := 0; i < mesh.MaxChannels; i++ {
@@ -233,7 +233,11 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 			c["radio"], c["radio_name"] = slotRC.id, slotRC.name
 			if mr != nil && i > 0 {
 				if want := mr.Channels[i]; want != "" && s.radioByID(want) == nil {
-					c["radio_removed"] = want // its radio left the site; running on the default radio
+					if s.radioConfigured(want) {
+						c["radio_pending"] = want // added but not started: on the default radio until the restart
+					} else {
+						c["radio_removed"] = want // its radio left the site; running on the default radio
+					}
 				}
 			}
 		}
@@ -703,7 +707,7 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Radio != nil && *req.Radio != "" {
 		switch {
-		case !s.opt.Federation.Enabled() || len(s.radios) < 2:
+		case !s.opt.Federation.Enabled() || s.siteRadioCount() < 2:
 			writeError(w, http.StatusBadRequest, "a channel's radio can only be chosen with identities on several radios switched on (Configuration → Experimental)")
 			return
 		case idx == 0:
@@ -712,7 +716,7 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 		case id.IsRelay:
 			writeError(w, http.StatusBadRequest, "a relay persona's channels stay on its radio")
 			return
-		case s.radioByID(*req.Radio) == nil:
+		case s.radioByID(*req.Radio) == nil && !s.radioConfigured(*req.Radio):
 			writeError(w, http.StatusBadRequest, "no radio "+*req.Radio)
 			return
 		}
@@ -1563,7 +1567,7 @@ func (s *Server) parseMultiRadio(home *radioCtx, id *mesh.Identity, raw json.Raw
 	if mr == nil {
 		mr = &mesh.MultiRadio{}
 	}
-	exists := func(r string) bool { return s.radioByID(r) != nil }
+	exists := func(r string) bool { return s.radioByID(r) != nil || s.radioConfigured(r) }
 	if req.DefaultRadio != "" && !exists(req.DefaultRadio) {
 		return nil, fmt.Errorf("multi_radio: no radio %q", req.DefaultRadio)
 	}
@@ -1644,4 +1648,27 @@ func (s *Server) nodeSightings(w http.ResponseWriter, r *http.Request) {
 			"snr": sg.SNR, "rssi": sg.RSSI, "hops_away": sg.HopsAway, "via_mqtt": sg.ViaMQTT})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// radioConfigured reports whether a radio id is in the saved config (running or starting at the
+// next restart).
+func (s *Server) radioConfigured(id string) bool {
+	if id == config.MainRadioID {
+		return true
+	}
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	for _, ri := range s.cfg.Radios {
+		if ri.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// siteRadioCount counts the site's radios, running or added and waiting for a restart.
+func (s *Server) siteRadioCount() int {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	return 1 + len(s.cfg.Radios)
 }

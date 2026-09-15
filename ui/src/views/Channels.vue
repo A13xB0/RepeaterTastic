@@ -6,7 +6,7 @@ import { computed, ref, watch } from 'vue'
 import { Lock, Plus, QrCode, TriangleAlert, X } from '@lucide/vue'
 import { api, enc, radio as currentRadio } from '@/api/client'
 import type { Channel, Identity } from '@/api/types'
-import { live, radioName, refreshAllIdentities, upsertIdentity } from '@/store/live'
+import { multiRadioActive, live, radioName, refreshAllIdentities, upsertIdentity } from '@/store/live'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import ChannelsDrawer from '@/components/identities/ChannelsDrawer.vue'
 import ChannelSlotDialog, { type SiteChannel } from '@/components/identities/ChannelSlotDialog.vue'
@@ -14,7 +14,7 @@ import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { channelSlots } from '@/lib/channels'
 
-const multi = computed(() => live.multiRadioIdentities && live.radios.length > 1)
+const multi = computed(() => multiRadioActive())
 watch(multi, (m) => m && refreshAllIdentities(), { immediate: true })
 
 const here = computed(() => currentRadio.value || 'main')
@@ -149,6 +149,7 @@ async function removeEverywhere(ch: SiteChannel) {
                     <span class="min-w-0 leading-tight">
                       <span class="block truncate">{{ c.display_name }}</span>
                       <span v-if="c.radio_removed" class="block truncate text-[10px] font-normal text-bad">radio removed</span>
+                      <span v-else-if="c.radio_pending" class="block truncate text-[10px] font-normal text-warn">{{ radioName(c.radio_pending) }} · after restart</span>
                       <span v-else-if="multi" class="block truncate text-[10px] font-normal text-ink-3">{{ slotRadio(i, c) === here ? radioName(here) : `on ${radioName(slotRadio(i, c))}` }}</span>
                     </span>
                   </button>

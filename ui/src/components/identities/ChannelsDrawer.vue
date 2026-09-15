@@ -10,7 +10,7 @@ import QrCode from '@/components/ui/QrCode.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import ChannelSlotDialog, { type SiteChannel } from '@/components/identities/ChannelSlotDialog.vue'
-import { live, radioName, upsertIdentity } from '@/store/live'
+import { multiRadioActive, live, radioName, upsertIdentity } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { channelSlots } from '@/lib/channels'
@@ -19,7 +19,7 @@ const props = defineProps<{ identityId: string | null; focus?: number }>()
 const emit = defineEmits<{ close: [] }>()
 
 const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
-const multi = computed(() => live.multiRadioIdentities && live.radios.length > 1)
+const multi = computed(() => multiRadioActive())
 const tab = ref<'edit' | 'share'>('edit')
 const slotDialog = ref<number | null>(null)
 const shareUrl = ref('')
@@ -118,7 +118,7 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
               <span :class="['truncate text-[13px] font-medium', ch.role === 'DISABLED' && 'text-ink-3']">{{ ch.role === 'DISABLED' ? 'Unused' : ch.display_name }}</span>
               <span :class="['chip', roleCls(ch.role)]">{{ ch.role.toLowerCase() }}</span>
               <Lock v-if="ch.index === 0" class="size-3.5 text-ink-3" />
-              <span v-if="multi && ch.role !== 'DISABLED'" :class="['chip', ch.radio_removed ? 'bg-bad/12 text-bad' : 'bg-ink-3/12 text-ink-2']">{{ ch.radio_removed ? 'radio removed' : radioName(ch.radio ?? identity.radio_id ?? 'main') }}</span>
+              <span v-if="multi && ch.role !== 'DISABLED'" :class="['chip', ch.radio_removed ? 'bg-bad/12 text-bad' : 'bg-ink-3/12 text-ink-2']">{{ ch.radio_removed ? 'radio removed' : ch.radio_pending ? `${radioName(ch.radio_pending)} after restart` : radioName(ch.radio ?? identity.radio_id ?? 'main') }}</span>
             </div>
             <div v-if="ch.role !== 'DISABLED'" class="mt-0.5 text-xs text-ink-3">
               {{ pskKind(ch.psk) }} · hash <span class="mono">0x{{ ch.hash.toString(16).padStart(2, '0') }}</span>

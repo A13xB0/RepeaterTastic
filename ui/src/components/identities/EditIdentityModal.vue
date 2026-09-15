@@ -5,7 +5,7 @@ import type { Identity } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, refreshAllIdentities, refreshIdentities, upsertIdentity } from '@/store/live'
+import { multiRadioActive, live, refreshAllIdentities, refreshIdentities, upsertIdentity } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import MultiRadioSection from '@/components/identities/MultiRadioSection.vue'
 import RadioFields from '@/components/identities/RadioFields.vue'
@@ -156,7 +156,7 @@ async function save() {
           </select>
         </div>
       </div>
-      <MultiRadioSection v-if="live.multiRadioIdentities && live.radios.length > 1 && !identity.is_relay" v-model="multi" :identity="identity" class="sm:col-span-2" />
+      <MultiRadioSection v-if="multiRadioActive() && !identity.is_relay" v-model="multi" :identity="identity" class="sm:col-span-2" />
       <div class="sm:col-span-2">
         <label class="label" for="e-hops">Hop limit cap</label>
         <select id="e-hops" v-model.number="form.hop_limit" class="input">

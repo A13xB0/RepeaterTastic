@@ -2,7 +2,7 @@
 // Home radio and default radio of an identity, always visible. Each is a choice only when it can
 // actually be changed; otherwise it's shown as text with the reason.
 import { computed } from 'vue'
-import { live, radioName } from '@/store/live'
+import { live, multiRadioActive, radioChoices, radioName } from '@/store/live'
 import { num } from '@/lib/format'
 
 const props = defineProps<{ relay?: boolean; creating?: boolean; savedHome?: string; savedDefault?: string }>()
@@ -11,14 +11,15 @@ const defaultRadio = defineModel<string>('defaultRadio', { required: true })
 
 const several = computed(() => live.radios.length > 1)
 const canMove = computed(() => several.value && !props.relay)
-const canChooseDefault = computed(() => several.value && live.multiRadioIdentities && !props.relay)
+const canChooseDefault = computed(() => multiRadioActive() && !props.relay)
+const choices = computed(() => radioChoices())
 const describe = (id: string) => {
   const r = live.radios.find((x) => x.id === id)
   return r ? `${r.name} · ${r.phy.preset_name} · ${num(r.phy.frequency_mhz, 3)} MHz` : radioName(id)
 }
 const defaultWhy = computed(() => {
   if (props.relay) return 'A relay persona always uses its own radio.'
-  if (!several.value) return 'Add a second radio under Configuration → Radios to choose another.'
+  if (radioChoices().length < 2) return 'Add a second radio under Configuration → Radios to choose another.'
   if (!live.multiRadioIdentities) return 'Turn on Configuration → Experimental → Identities on several radios to choose another.'
   return ''
 })
@@ -38,7 +39,7 @@ const defaultWhy = computed(() => {
     <div>
       <label class="label" for="rf-default">Default radio</label>
       <select v-if="canChooseDefault" id="rf-default" v-model="defaultRadio" class="input">
-        <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ describe(r.id) }}{{ r.id === home ? ' (home)' : '' }}</option>
+        <option v-for="r in choices" :key="r.id" :value="r.id">{{ r.name }} · {{ r.detail }}{{ r.id === home ? ' (home)' : '' }}</option>
       </select>
       <div v-else id="rf-default" class="input !h-auto min-h-9 !cursor-default py-2 text-[13px]">{{ describe(home) }} <span class="text-ink-3">(same as home)</span></div>
       <p v-if="defaultWhy" class="hint">{{ defaultWhy }}</p>

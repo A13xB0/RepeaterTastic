@@ -5,7 +5,7 @@ import { computed, ref, watch } from 'vue'
 import { FlaskConical } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Identity, MultiRadio } from '@/api/types'
-import { live, radioName } from '@/store/live'
+import { live, radioChoices, radioName } from '@/store/live'
 import { channelSlots } from '@/lib/channels'
 
 const props = defineProps<{ identity: Identity }>()
@@ -30,7 +30,7 @@ watch(
 )
 const dmKind = computed({
   get: () => (dm.value === 'auto' || dm.value === 'default' ? dm.value : 'fixed'),
-  set: (k: string) => (dm.value = k === 'fixed' ? dmRadio.value || live.radios.find((r) => r.id !== (model.value?.default_radio || home.value))?.id || home.value : k),
+  set: (k: string) => (dm.value = k === 'fixed' ? dmRadio.value || radioChoices().find((r) => r.id !== (model.value?.default_radio || home.value))?.id || home.value : k),
 })
 const fallback = computed({
   get: () => !!model.value?.fallback,
@@ -88,7 +88,7 @@ async function runPreview() {
         <label class="flex flex-wrap items-center gap-2">
           <input v-model="dmKind" type="radio" value="fixed" class="accent-[var(--brand)]" /> Always
           <select v-model="dmRadio" class="input !h-8 !w-auto !py-0 text-xs" aria-label="DM radio" :disabled="dmKind !== 'fixed'" @change="dm = dmRadio">
-            <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }}</option>
+            <option v-for="r in radioChoices()" :key="r.id" :value="r.id">{{ r.name }}{{ r.pending ? ' (starts at restart)' : '' }}</option>
           </select>
         </label>
       </div>
