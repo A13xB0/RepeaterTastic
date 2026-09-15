@@ -199,7 +199,7 @@ async function remove(i: Identity) {
               <td>
                 <div class="flex items-center justify-end gap-0.5">
                   <Toggle v-if="!i.is_relay" class="mr-2" :model-value="i.enabled" :label="`${i.enabled ? 'Disable' : 'Enable'} ${i.long_name}`" @update:model-value="setEnabled(i, $event)" />
-                  <RouterLink v-if="!i.is_relay" :to="`/chat/${i.node_id}`" class="icon-btn" title="Open chat"><MessagesSquare class="size-4" /></RouterLink>
+                  <RouterLink :to="`/chat/${i.node_id}`" class="icon-btn" :title="i.is_relay ? 'Chat as the relay persona' : 'Open chat'"><MessagesSquare class="size-4" /></RouterLink>
                   <button class="icon-btn" title="Edit" @click="editing = i"><Pencil class="size-4" /></button>
                   <button class="icon-btn lg:hidden" title="Channels" @click="channelsFor = i.node_id"><Layers class="size-4" /></button>
                   <button class="icon-btn" title="Show key" @click="keyFor = i"><KeyRound class="size-4" /></button>
