@@ -16,10 +16,12 @@ import { BROADCAST, clock, dayLabel, relTime, utf8Len } from '@/lib/format'
 const route = useRoute()
 const router = useRouter()
 
-const chatIdentities = computed(() => live.identities.filter((i) => !i.is_relay))
+// Every identity can chat, the relay persona too (e.g. to DM a service that verifies the node);
+// ordinary identities come first.
+const chatIdentities = computed(() => [...live.identities].sort((a, b) => Number(a.is_relay) - Number(b.is_relay)))
 const identityId = computed(() => {
   const p = route.params.identity as string | undefined
-  return p || chatIdentities.value.find((i) => i.enabled)?.node_id || ''
+  return p || chatIdentities.value.find((i) => i.enabled && !i.is_relay)?.node_id || chatIdentities.value[0]?.node_id || ''
 })
 const identity = computed(() => live.identities.find((i) => i.node_id === identityId.value))
 const convKey = computed(() => (route.params.conversation as string | undefined) || '')
@@ -259,7 +261,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
           <div class="flex gap-2">
             <select id="chat-ident" class="input" :value="identityId" @change="selectIdentity(($event.target as HTMLSelectElement).value)">
               <option v-for="i in chatIdentities" :key="i.node_id" :value="i.node_id">
-                {{ i.long_name }} ({{ i.short_name }}){{ i.enabled ? '' : ' · disabled' }}{{ i.unread ? ` · ${i.unread} unread` : '' }}
+                {{ i.long_name }} ({{ i.short_name }}){{ i.is_relay ? ' · relay persona' : '' }}{{ i.enabled ? '' : ' · disabled' }}{{ i.unread ? ` · ${i.unread} unread` : '' }}
               </option>
             </select>
             <button class="btn shrink-0 px-2.5" title="New direct message" @click="newDm = true"><MessageCirclePlus class="size-4" /></button>

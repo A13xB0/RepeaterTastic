@@ -16,7 +16,7 @@ defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const router = useRouter()
 
-const unread = computed(() => live.identities.reduce((s, i) => s + (i.is_relay ? 0 : (i.unread ?? 0)), 0))
+const unread = computed(() => live.identities.reduce((s, i) => s + (i.unread ?? 0), 0))
 const nodeCount = computed(() => Object.values(live.nodes).filter((n) => !n.local).length)
 
 const groups = computed(() => [
