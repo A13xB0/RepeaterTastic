@@ -114,7 +114,8 @@ identities:
     api_port: 4403
 
 # Plugins: separate programs that extend RepeaterTastic (docs/plugins.md). Install them from the
-# GUI (Plugins), by copying a bundle into <state_dir>/plugins/inbox, or with `repeatertastic plugin`.
+# GUI (Plugins), by copying a bundle into <state_dir>/plugins/inbox (or <dir>/inbox), or with
+# `repeatertastic plugin`. Changes here need a restart.
 plugins:
     enabled: true
     listen: ""                    # e.g. 127.0.0.1:4450 to let plugins running elsewhere attach

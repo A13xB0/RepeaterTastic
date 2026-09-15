@@ -32,6 +32,7 @@ func packetEvent(r Radio, rec mesh.PacketRecord) *pluginv1.HostMessage {
 		return nil
 	}
 	p := proto.Clone(rec.Mesh).(*pb.MeshPacket)
+	p.PkiEncrypted = rec.PKI
 	if p.RxTime == nil && rec.Direction == "rx" {
 		t := uint32(rec.Time / 1000)
 		p.RxTime = &t

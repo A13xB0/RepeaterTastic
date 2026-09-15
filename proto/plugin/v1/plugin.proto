@@ -144,15 +144,17 @@ message Node {
 message PacketEvent {
   string radio_id = 1;
   string direction = 2;       // "rx" or "tx"
-  // How RepeaterTastic handled it: heard, delivered, relayed, dup, undecryptable, ours, echo, ...
+  // How RepeaterTastic handled it. rx: heard (decoded, not for us), delivered (to one of our
+  // identities), relayed, dup (seen before), echo (our own packet repeated back), legacy
+  // (pre-2.3 firmware, ignored), undecryptable, bad. tx: ours, relayed.
   string kind = 3;
   // meshtastic.MeshPacket protobuf. Decoded (payload variant "decoded") when a channel or PKI key
   // this radio holds could read it, otherwise encrypted exactly as heard. rx_time, rx_snr,
   // rx_rssi, hop_limit, hop_start, via_mqtt, relay_node and next_hop are filled.
   bytes mesh_packet = 4;
   bool decoded = 5;
-  uint32 channel_hash = 6;    // the on-air channel hash (mesh_packet.channel is the index when decoded)
-  string channel_name = 7;    // when decoded on a named channel
+  uint32 channel_hash = 6;    // the on-air channel hash (0 for a PKI DM)
+  string channel_name = 7;    // the channel it decoded on, "PKI" for a DM, "" when undecoded
   int64 time_ms = 8;
   // The node that reports this packet: the radio's relay persona.
   uint32 reporter_node_num = 9;

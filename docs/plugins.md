@@ -23,8 +23,8 @@ off**.
 | How | What to do |
 | --- | --- |
 | GUI | **Plugins → Install plugin**, then drop the .zip or paste a URL |
-| Folder | Copy the .zip into `<state_dir>/plugins/inbox/`. It installs within a few seconds; a bundle that can't be used moves to `inbox/.rejected/` next to a `.error.txt` giving the reason |
-| Command line | `sudo -u repeatertastic repeatertastic plugin install hello-plugin.zip` (a file or an `https://` URL) |
+| Folder | Copy the .zip into the plugins folder's `inbox/` (`<state_dir>/plugins/inbox/`, or `<plugins.dir>/inbox/` when `plugins.dir` is set). It installs within a few seconds; a bundle that can't be used moves to `inbox/.rejected/` next to a `.error.txt` giving the reason |
+| Command line | `sudo -u repeatertastic repeatertastic plugin install hello-plugin.zip` (a file or an `http(s)://` URL) |
 | Docker | `docker cp hello-plugin.zip repeatertastic:/data/plugins/inbox/` |
 
 Installing a bundle with the same `id` upgrades the plugin. The upgrade keeps the plugin's
@@ -53,9 +53,12 @@ for a permission it wasn't granted gets a "permission denied" error.
 
 Plugins act as the **relay persona** of each radio: the node the site already is on the mesh.
 Transmissions go through the normal transmit queue and duty cycle. Each plugin also has a budget,
-30 messages and 12 traceroutes an hour by default. `plugins.messages_per_hour` and
-`traceroutes_per_hour` change the budget; `0` stops plugins sending at all. Every send is written
-to the plugin's log.
+30 messages and 12 traceroutes an hour by default. A plugin may send a sixth of its hourly budget
+at once (at least one), then the budget refills evenly: with 12 traceroutes an hour, that's 2
+straight away and then one every 5 minutes. `plugins.messages_per_hour` and
+`traceroutes_per_hour` set the budgets (restart to apply); `0` stops plugins sending at all.
+Every send is written to the plugin's log. The radio's own limits still apply too, such as one
+traceroute per identity every 30 seconds.
 
 A plugin's `network` list (shown before you enable it) names the services it talks to. It is a
 declaration, not a firewall: a plugin is a program running as the RepeaterTastic user, so only
@@ -70,7 +73,7 @@ Settings and grants are kept in `<state_dir>/plugins/state.json` (mode 0600).
 ## Status, log and panel
 
 - **Status**: a one-line summary on the plugin's card, for example "Uploading · 1,204 packets
-  today", plus label/value fields on its page.
+  today", plus up to 40 label/value fields on its page (a status with more is ignored).
 - **Log**: what the plugin printed or reported, and what RepeaterTastic did with it (started,
   crashed, sent a message). The last 1000 lines are kept.
 - **Panel**: a plugin may ship its own page. It runs in a sandboxed frame on the plugin's page. It
@@ -87,10 +90,20 @@ container.
 
 1. Set `plugins.listen` (for example `127.0.0.1:4450`, or a LAN address) and restart.
 2. **Plugins → Attach**: give its id, name and permissions. The token is shown **once**.
-3. Start the plugin with `RT_PLUGIN_ID`, `RT_PLUGIN_ADDR=<host>:4450` and `RT_PLUGIN_TOKEN`.
+3. Start the plugin with `RT_PLUGIN_ID` (exactly the id you attached), `RT_PLUGIN_ADDR=<host>:4450`
+   and `RT_PLUGIN_TOKEN`.
 
-The TCP connection isn't encrypted. Keep it on localhost, a private network or a VPN.
-**New token** on the plugin's page replaces the token and disconnects the old one.
+What to expect:
+
+- The id in `Hello`, and in the `plugin.yaml` the plugin sends, must match the attached id, or
+  the session is refused.
+- The first time it connects, the plugin sends its `plugin.yaml`, and its settings form and
+  permissions appear. RepeaterTastic then **refuses the session** until required settings are
+  filled in and any permissions it asks for beyond the ones granted at attach are reviewed. An
+  attached plugin should keep retrying with a backoff.
+- Attached plugins get no data folder (`Welcome.data_dir` is empty); they keep their own state.
+- The TCP connection isn't encrypted. Keep it on localhost, a private network or a VPN.
+- **New token** on the plugin's page replaces the token and disconnects the old one.
 
 ## Configuration
 
@@ -110,7 +123,8 @@ plugins:
               api_key: ${MY_PLUGIN_API_KEY}  # ${VAR} is read from the environment
 ```
 
-Pinned entries still need the plugin installed. The folder looks like this:
+Pinned entries still need the plugin installed. Changes to the `plugins:` section need a restart
+(the GUI's restart banner lists them). The folder looks like this:
 
 ```
 plugins/
@@ -124,8 +138,9 @@ plugins/
 ### Command line
 
 ```
+repeatertastic plugin [-config <file>] <command>     -config defaults to /etc/repeatertastic/repeatertastic.yaml ($REPEATERTASTIC_CONFIG)
 repeatertastic plugin list                          installed plugins, on or off, granted permissions
-repeatertastic plugin install <bundle.zip | URL>
+repeatertastic plugin install <bundle.zip | http(s) URL>
 repeatertastic plugin enable <id> [permission ...]  "all" grants everything the plugin asks for
 repeatertastic plugin disable <id>
 repeatertastic plugin remove <id> [-keep-data]
@@ -216,9 +231,8 @@ is `pluginapi/v1`. Every call carries `authorization: Bearer <token>` metadata.
 2. Receive `Welcome`, which carries the granted permissions, settings as JSON, the radios (each
    with its relay persona) and the data folder.
 3. Events follow, filtered by what was granted:
-   - `PacketEvent`: a `meshtastic.MeshPacket` protobuf, with the payload decoded when a channel
-     or key on that radio could read it; `reporter_node_num` is the radio's relay persona;
-   - `NodeEvent`;
+   - `PacketEvent` (see [Packet events](#packet-events));
+   - `NodeEvent`: a node in that radio's node database changed;
    - `TextMessageEvent`: relay persona messages;
    - `TracerouteEvent`;
    - `SettingsChanged`;
@@ -229,6 +243,27 @@ is `pluginapi/v1`. Every call carries `authorization: Bearer <token>` metadata.
 
 A slow plugin loses events rather than holding up the radio. The dropped count shows on its page.
 
+### Packet events
+
+A `PacketEvent` is one packet a radio heard or sent.
+
+| Field | |
+| --- | --- |
+| `direction` | `rx` or `tx` |
+| `kind` | rx: `heard` (decoded, not for our identities), `delivered` (to one of our identities), `relayed`, `dup` (seen before), `echo` (our own packet repeated back), `legacy` (pre-2.3 firmware, ignored), `undecryptable`, `bad`. tx: `ours`, `relayed` |
+| `mesh_packet` | A `meshtastic.MeshPacket` protobuf. `decoded` when any channel or key on that radio could read it, otherwise encrypted as heard. Received packets have `rx_time` set. `pki_encrypted` marks a DM |
+| `decoded` | Whether the payload is decoded |
+| `channel_hash`, `channel_name` | The on-air channel hash (0 for DMs); the channel it decoded on, `PKI` for a DM, empty when undecoded |
+| `relay_channel_index` | The channel's index (0–7) on the radio's relay persona, or `-1`. Set when the relay persona holds the channel, or for a DM addressed to the relay persona. When set, `mesh_packet.channel` is that index; otherwise it's the on-air hash |
+| `reporter_node_num` | The radio's relay persona |
+
+Decoding uses every identity's channels and keys, not just the relay persona's. A plugin that
+reports **as the relay persona** should keep only what that node would hear itself:
+`relay_channel_index >= 0`, and `to` either broadcast or the relay persona.
+
+The node database (`ListNodes`, `NodeEvent`) is shared by all of a radio's identities. It can hold
+names, positions and metrics learned on channels or in DMs the relay persona can't read.
+
 ### Go SDK
 
 ```go
@@ -237,8 +272,12 @@ if err != nil { log.Fatal(err) }
 defer c.Close()
 _ = c.Status("connected", "ok", nil)
 for msg := range c.Events() {
-    if t := msg.GetText(); t != nil && t.Text == "ping" {
-        c.Host.SendText(c.Context(), &pluginv1.SendTextRequest{RadioId: t.RadioId, Channel: t.Channel, Text: "pong"})
+    if t := msg.GetText(); t != nil && t.Direction == "in" && t.Text == "ping" {
+        req := &pluginv1.SendTextRequest{RadioId: t.RadioId, Channel: t.Channel, Text: "pong"}
+        if t.Direct {
+            req.To, req.Channel = fmt.Sprintf("!%08x", t.From), 0 // answer a DM with a DM
+        }
+        c.Host.SendText(c.Context(), req)
     }
 }
 ```

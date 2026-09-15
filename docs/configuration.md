@@ -36,7 +36,7 @@ with a **Restart now** button:
 - MQTT connections and UDP multicast
 - `web.bind`, `web.port` and `mdns`
 - turning a site airtime cap on for a single radio
-- `plugins.enabled`, `plugins.dir`, `plugins.listen` and `plugins.entries`
+- anything in `plugins:` (enabled, dir, listen, URL installs, send budgets, entries)
 - a restored backup
 
 The GUI's restart shuts down cleanly and exits with status 75, so the service manager starts it again

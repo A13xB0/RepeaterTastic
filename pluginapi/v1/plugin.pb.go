@@ -1139,15 +1139,17 @@ type PacketEvent struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	RadioId   string                 `protobuf:"bytes,1,opt,name=radio_id,json=radioId,proto3" json:"radio_id,omitempty"`
 	Direction string                 `protobuf:"bytes,2,opt,name=direction,proto3" json:"direction,omitempty"` // "rx" or "tx"
-	// How RepeaterTastic handled it: heard, delivered, relayed, dup, undecryptable, ours, echo, ...
+	// How RepeaterTastic handled it. rx: heard (decoded, not for us), delivered (to one of our
+	// identities), relayed, dup (seen before), echo (our own packet repeated back), legacy
+	// (pre-2.3 firmware, ignored), undecryptable, bad. tx: ours, relayed.
 	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	// meshtastic.MeshPacket protobuf. Decoded (payload variant "decoded") when a channel or PKI key
 	// this radio holds could read it, otherwise encrypted exactly as heard. rx_time, rx_snr,
 	// rx_rssi, hop_limit, hop_start, via_mqtt, relay_node and next_hop are filled.
 	MeshPacket  []byte `protobuf:"bytes,4,opt,name=mesh_packet,json=meshPacket,proto3" json:"mesh_packet,omitempty"`
 	Decoded     bool   `protobuf:"varint,5,opt,name=decoded,proto3" json:"decoded,omitempty"`
-	ChannelHash uint32 `protobuf:"varint,6,opt,name=channel_hash,json=channelHash,proto3" json:"channel_hash,omitempty"` // the on-air channel hash (mesh_packet.channel is the index when decoded)
-	ChannelName string `protobuf:"bytes,7,opt,name=channel_name,json=channelName,proto3" json:"channel_name,omitempty"`  // when decoded on a named channel
+	ChannelHash uint32 `protobuf:"varint,6,opt,name=channel_hash,json=channelHash,proto3" json:"channel_hash,omitempty"` // the on-air channel hash (0 for a PKI DM)
+	ChannelName string `protobuf:"bytes,7,opt,name=channel_name,json=channelName,proto3" json:"channel_name,omitempty"`  // the channel it decoded on, "PKI" for a DM, "" when undecoded
 	TimeMs      int64  `protobuf:"varint,8,opt,name=time_ms,json=timeMs,proto3" json:"time_ms,omitempty"`
 	// The node that reports this packet: the radio's relay persona.
 	ReporterNodeNum uint32 `protobuf:"varint,9,opt,name=reporter_node_num,json=reporterNodeNum,proto3" json:"reporter_node_num,omitempty"`

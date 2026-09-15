@@ -200,7 +200,7 @@ See [Plugins](plugins.md). A Plugin is `{"id", "name", "version", "description",
 - `GET /api/v1/plugins/{id}/panel-data` → the plugin's panel JSON (`null` if none); `POST …/panel-action` `{"name", "payload"}` → 202
 - `GET /plugin-assets/{id}/{key}/logo` and `/plugin-assets/{id}/{key}/panel/…`: no bearer token needed, since `logo_url` and `panel_url` carry the key; served with a sandbox Content-Security-Policy.
 
-A plugin whose settings are pinned by `plugins.entries` answers 409 to enable, disable, settings and remove.
+A plugin whose settings are pinned by `plugins.entries` answers 409 to enable, disable, settings and remove. `…/restart` answers 409 while the plugin can't run (it needs settings or a permission review). With `plugins.enabled: false`, `GET /api/v1/plugins` returns `{"enabled": false, "plugins": []}` and the other endpoints return 503.
 
 ## Proposed additions (from the web GUI)
 
