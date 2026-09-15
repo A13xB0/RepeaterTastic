@@ -51,11 +51,12 @@ The GUI's restart shuts down cleanly and exits with status 75, so the service ma
 ```yaml
 radio:
     driver: kiss          # kiss (a Mesh KISS modem), sim (tests), none (no radio: UDP link only)
-    device: /dev/serial/by-id/usb-…-if00-port0
+    device: /dev/serial/by-id/usb-…-if00-port0   # or tcp://127.0.0.1:4405 for meshtasticd's raw modem mode
     baud: 115200
 ```
 
-See [Hardware and modems](hardware.md) for device paths and permissions.
+See [Hardware and modems](hardware.md) for device paths and permissions, and
+[meshtasticd as the modem](meshtasticd-raw-modem.md) to use a LoRa HAT or CH341 stick through meshtasticd.
 
 ### `mesh`: how the radio joins the mesh
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
@@ -210,7 +211,9 @@ func (c *Config) validateRadios() error {
 		}
 		if rc.Radio.Driver == "kiss" && rc.Radio.Device != "" {
 			dev := rc.Radio.Device
-			if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
+			if addr, ok, _ := kiss.TCPAddr(dev); ok {
+				dev = kiss.TCPScheme + strings.ToLower(addr) // one meshtasticd serves one client
+			} else if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
 				dev = real
 			}
 			if other, ok := seenDev[dev]; ok {
@@ -613,6 +616,11 @@ func (c *Config) validateOne() error {
 	case "kiss", "sim", "none":
 	default:
 		return fmt.Errorf("radio.driver must be kiss or none, not %q", c.Radio.Driver)
+	}
+	if c.Radio.Driver == "kiss" {
+		if _, _, err := kiss.TCPAddr(c.Radio.Device); err != nil {
+			return fmt.Errorf("radio.device: %w", err)
+		}
 	}
 	if name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel)); name != "" && name != "AUTO" {
 		if _, ok := pb.HardwareModel_value[name]; !ok {

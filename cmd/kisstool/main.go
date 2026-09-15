@@ -31,7 +31,7 @@ commands:
   listen                   configure Meshtastic PHY and print received frames
   send-text [flags] TEXT   broadcast a text message on the preset's default channel
 
-common flags: --dev /dev/ttyUSB0 --baud 115200
+common flags: --dev /dev/ttyUSB0 (or tcp://host:port) --baud 115200
 PHY flags (listen, send-text): --region EU_868 --preset LONG_FAST --power 10
 send-text flags: --from !xxxxxxxx (default random)
 `
@@ -44,7 +44,7 @@ func main() {
 	cmd := os.Args[1]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	dev := fs.String("dev", "/dev/ttyUSB0", "serial device")
+	dev := fs.String("dev", "/dev/ttyUSB0", "serial device, or tcp://host:port for meshtasticd's raw modem mode")
 	baud := fs.Int("baud", 115200, "baud rate")
 	region := fs.String("region", "EU_868", "Meshtastic region")
 	preset := fs.String("preset", "LONG_FAST", "Meshtastic modem preset")

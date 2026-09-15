@@ -8,6 +8,9 @@ RepeaterTastic doesn't run Meshtastic firmware on the radio. It drives a plain L
 that lets the host set Meshtastic's sync word (`0x2B`) and 16-symbol preamble. The board becomes a
 dumb modem: it sends and receives frames, and all the Meshtastic logic runs on the host.
 
+A Linux LoRa HAT or CH341 USB stick can be the modem too, through meshtasticd's raw modem mode: see
+[meshtasticd as the modem](meshtasticd-raw-modem.md).
+
 ## Boards
 
 About 85 boards build, including:
