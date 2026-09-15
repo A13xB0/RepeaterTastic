@@ -15,6 +15,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -83,21 +84,33 @@ func (m *Manager) serve(ctx context.Context) (*grpc.Server, error) {
 		}
 		return nil, status.Error(codes.Unauthenticated, "unknown plugin token")
 	}
+	// A bug in a handler must not take the daemon (and its radios) down with it.
+	recovered := func(err *error) {
+		if v := recover(); v != nil {
+			m.log.Error("plugin API handler panicked", "panic", v)
+			*err = status.Error(codes.Internal, "internal error")
+		}
+	}
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
-			ctx, err := auth(ctx)
+		grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
+			defer recovered(&err)
+			ctx, err = auth(ctx)
 			if err != nil {
 				return nil, err
 			}
 			return h(ctx, req)
 		}),
-		grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, h grpc.StreamHandler) error {
+		grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, h grpc.StreamHandler) (err error) {
+			defer recovered(&err)
 			ctx, err := auth(ss.Context())
 			if err != nil {
 				return err
 			}
 			return h(srv, &authedStream{ServerStream: ss, ctx: ctx})
 		}),
+		// Notice attached plugins whose connection died without closing (a half-open TCP link).
+		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}),
 	)
 	pluginv1.RegisterPluginHostServer(srv, &hostServer{m: m})
 
@@ -308,6 +321,23 @@ func (h *hostServer) receive(stream pluginv1.PluginHost_SessionServer, p *plugin
 }
 
 // pump forwards one radio's bus events the plugin may see.
+// tracesFor: traceroute results reach a plugin for the identity it sends them from.
+func (m *Manager) tracesFor(p *plugin, r Radio, identity string) bool {
+	m.mu.Lock()
+	_, _, settings := p.effective()
+	var schema []Setting
+	if p.manifest != nil {
+		schema = p.manifest.Settings
+	}
+	m.mu.Unlock()
+	chosen := chosenIdentities(schema, settings, r.Host)
+	if len(chosen) == 0 {
+		relay := r.Host.Relay()
+		return relay != nil && relay.NodeID() == identity
+	}
+	return slices.ContainsFunc(chosen, func(id *mesh.Identity) bool { return id.NodeID() == identity })
+}
+
 func (m *Manager) pump(ctx context.Context, sess *session, p *plugin, r Radio, granted []string) {
 	has := func(perm string) bool { return slices.Contains(granted, perm) }
 	if !has("packets.read") && !has("nodes.read") && !has("messages.read") && !has("traceroute.send") {
@@ -345,7 +375,7 @@ func (m *Manager) pump(ctx context.Context, sess *session, p *plugin, r Radio, g
 				}
 			case "traceroute":
 				if tr, ok := e.Data.(mesh.TracerouteResult); ok && (has("traceroute.send") || has("nodes.read")) {
-					if relay := r.Host.Relay(); relay != nil && tr.Identity == relay.NodeID() {
+					if m.tracesFor(p, r, tr.Identity) {
 						msg = &pluginv1.HostMessage{Msg: &pluginv1.HostMessage_Traceroute{Traceroute: &pluginv1.TracerouteEvent{
 							RadioId: r.ID, IdentityNodeId: tr.Identity, TargetNodeId: tr.Target, Route: tr.Route,
 							SnrTowards: tr.SNRTowards, RouteBack: tr.RouteBack, SnrBack: tr.SNRBack}}}
@@ -397,11 +427,20 @@ func (h *hostServer) SendText(ctx context.Context, req *pluginv1.SendTextRequest
 			return nil, status.Error(codes.InvalidArgument, "to must be a node id like !a1c40e07")
 		}
 	}
+	if n := len(req.Text); n == 0 || n > 200 {
+		return nil, status.Error(codes.InvalidArgument, "text must be 1-200 bytes")
+	}
+	if !r.Host.Transmits() {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
+	}
 	if ok, wait := p.msgBudget.take(); !ok {
 		return nil, budgetError("messages", p.msgBudget.rate(), wait)
 	}
 	relay := r.Host.Relay()
 	pid, err := r.Host.SendText(relay, to, int(req.Channel), req.Text, req.WantAck)
+	if errors.Is(err, mesh.ErrNotTransmitting) {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
+	}
 	if err != nil && pid == 0 {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -445,6 +484,9 @@ func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteReq
 			return nil, status.Errorf(codes.PermissionDenied, "%s isn't the identity chosen in the plugin's settings for %s", req.From, r.ID)
 		}
 		from = r.Host.Identity(num)
+	}
+	if !r.Host.Transmits() {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
 	}
 	if ok, wait := p.trBudget.take(); !ok {
 		return nil, budgetError("traceroutes", p.trBudget.rate(), wait)

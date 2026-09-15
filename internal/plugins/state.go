@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -60,6 +61,9 @@ func saveState(path string, st stateFile) error {
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
+	}
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, b) {
+		return nil // unchanged: don't touch the file (the daemon and CLI watch its mtime)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {

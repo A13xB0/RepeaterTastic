@@ -194,7 +194,8 @@ func daemonRunning(sock string) bool {
 	return true
 }
 
-// chownLike gives files root created under dir to dir's owner, so the daemon can use them.
+// chownLike gives files root created under dir to dir's owner, so the daemon can use them. It
+// works through an os.Root, so a link swapped in by a plugin can't point the chown outside dir.
 func chownLike(dir string) {
 	if os.Geteuid() != 0 {
 		return
@@ -207,13 +208,18 @@ func chownLike(dir string) {
 	if !ok || sys.Uid == 0 {
 		return
 	}
-	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	_ = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if info, ierr := d.Info(); ierr == nil {
 			if s, ok := info.Sys().(*syscall.Stat_t); ok && s.Uid == 0 {
-				_ = os.Lchown(p, int(sys.Uid), int(sys.Gid))
+				_ = root.Lchown(p, int(sys.Uid), int(sys.Gid))
 			}
 		}
 		return nil

@@ -34,16 +34,21 @@ const tabs = computed(() => {
   t.push({ id: 'settings', label: 'Settings' }, { id: 'logs', label: 'Log' })
   return t
 })
+// The default tab is picked once per plugin, so a restart doesn't flip it (and reload the panel).
+const defaultTab = ref<Tab | null>(null)
 const tab = computed<Tab>(() => {
   const want = route.params.tab as Tab | undefined
   if (want && tabs.value.some((t) => t.id === want)) return want
-  return plugin.value?.has_panel && plugin.value.state === 'running' ? 'panel' : 'overview'
+  return defaultTab.value ?? 'overview'
 })
 const setTab = (t: Tab) => router.replace({ name: 'plugin', params: { id: id.value, tab: t } })
 
-async function load() {
+async function load(full = false) {
+  const want = id.value
   try {
-    const [p, m] = await Promise.all([api.get<Plugin>(`/plugins/${enc(id.value)}`), meta.value ? Promise.resolve(meta.value) : api.get<PluginsResponse>('/plugins')])
+    const [p, m] = await Promise.all([api.get<Plugin>(`/plugins/${enc(want)}`), meta.value && !full ? Promise.resolve(meta.value) : api.get<PluginsResponse>('/plugins')])
+    if (want !== id.value) return // the route moved on while this loaded
+    if (!plugin.value || plugin.value.id !== p.id) defaultTab.value = p.has_panel && p.state === 'running' ? 'panel' : 'overview'
     plugin.value = p
     meta.value = m
     missing.value = false
@@ -52,9 +57,11 @@ async function load() {
     else toastError(e)
   }
 }
-watch(id, load, { immediate: true })
+watch(id, () => load(), { immediate: true })
 
+const offResync = on('resync', () => void load(true))
 const off = on('plugin', (p) => {
+  if (!p.id) return void load(true)
   if (p.id !== id.value) return
   if (p.deleted) missing.value = true
   else plugin.value = p
@@ -141,6 +148,7 @@ watch(
 )
 onBeforeUnmount(() => {
   off()
+  offResync()
   clearInterval(logTimer)
 })
 const levelClass: Record<string, string> = { error: 'text-bad', warn: 'text-warn', debug: 'text-ink-3', info: '' }

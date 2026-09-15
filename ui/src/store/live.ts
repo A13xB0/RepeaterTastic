@@ -106,6 +106,8 @@ const listeners = {
   traceroute: new Set<Handler<TracerouteEvent>>(),
   log: new Set<Handler<LogLine>>(),
   plugin: new Set<Handler<Plugin>>(),
+  /** The event stream reconnected after a pause: views that load their own data should reload. */
+  resync: new Set<Handler<void>>(),
 }
 type Events = typeof listeners
 
@@ -294,6 +296,7 @@ document.addEventListener('visibilitychange', () => {
     pausedHidden = false
     connect()
     void Promise.allSettled([refreshStatus(), refreshIdentities(), refreshNodes(), refreshPackets(), refreshLogs(), refreshRadios()])
+    listeners.resync.forEach((fn) => fn())
   }
 })
 

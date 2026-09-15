@@ -92,6 +92,7 @@ const mb = (n: number) => (n / 1048576).toFixed(n < 1048576 ? 2 : 1)
       <label class="label" for="pl-url">Bundle URL</label>
       <input id="pl-url" v-model="url" class="input mono" placeholder="https://github.com/…/releases/download/v1.0.0/plugin.zip" />
       <p class="hint">RepeaterTastic downloads it over the network and checks it before installing. Only use URLs from people you trust.</p>
+      <p v-if="url.trim().startsWith('http://')" class="hint !text-warn">This URL isn't encrypted: anyone on the way could swap the bundle for another program. Use https:// if you can.</p>
     </div>
 
     <div v-else class="grid gap-4 text-[13px]">

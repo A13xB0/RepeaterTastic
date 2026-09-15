@@ -2,6 +2,7 @@ package web
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,7 +45,14 @@ func (k *assetKeys) valid(id, key string) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	v, ok := k.keys[id]
-	return ok && len(key) == len(v) && key == v
+	return ok && subtle.ConstantTimeCompare([]byte(key), []byte(v)) == 1
+}
+
+// forget drops a removed plugin's key, so its old asset URLs stop working.
+func (k *assetKeys) forget(id string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	delete(k.keys, id)
 }
 
 func (s *Server) pluginRoutes(priv func(string, http.HandlerFunc)) {
@@ -203,6 +211,11 @@ func (s *Server) installPlugin(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, plugins.MaxBundleBytes+1<<20)
 		file, _, err := r.FormFile("bundle")
 		if err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				writeError(w, http.StatusRequestEntityTooLarge, "the bundle is larger than 100 MB")
+				return
+			}
 			writeError(w, http.StatusBadRequest, "send the plugin bundle as a multipart form field named bundle (up to 100 MB)")
 			return
 		}
@@ -255,7 +268,8 @@ func (s *Server) attachPlugin(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	tok, err := m.Attach(strings.TrimSpace(req.ID), req.Name, req.Permissions)
+	req.ID = strings.TrimSpace(req.ID)
+	tok, err := m.Attach(req.ID, req.Name, req.Permissions)
 	if err != nil {
 		pluginError(w, err)
 		return
@@ -273,6 +287,7 @@ func (s *Server) removePlugin(w http.ResponseWriter, r *http.Request) {
 		pluginError(w, err)
 		return
 	}
+	s.pluginKeys.forget(r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -414,37 +429,41 @@ func (s *Server) pluginAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts allow-popups; default-src 'self' data: blob:; "+
 		"script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; frame-ancestors 'self'")
 	w.Header().Set("Cache-Control", "no-cache")
+	var dir, name string
 	if file == "logo" {
 		p, err := m.LogoPath(id)
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
-		http.ServeFile(w, r, p)
-		return
+		dir, name = filepath.Dir(p), filepath.Base(p)
+	} else {
+		rest, ok := strings.CutPrefix(file, "panel/")
+		if !ok && file != "panel" {
+			http.NotFound(w, r)
+			return
+		}
+		root, index, err := m.PanelRoot(id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		if rest == "" {
+			rest = index
+		}
+		dir, name = root, strings.TrimPrefix(path.Clean("/"+rest), "/")
 	}
-	rest, ok := strings.CutPrefix(file, "panel/")
-	if !ok && file != "panel" {
-		http.NotFound(w, r)
-		return
-	}
-	root, index, err := m.PanelRoot(id)
+	// An os.Root keeps the file inside the plugin's folder whatever links it holds, and works
+	// when the plugins folder itself sits behind a link.
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	if rest == "" {
-		rest = index
-	}
-	clean := path.Clean("/" + rest)
-	full := filepath.Join(root, filepath.FromSlash(clean))
-	if resolved, err := filepath.EvalSymlinks(full); err != nil || !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+	defer root.Close()
+	if st, err := root.Stat(name); err != nil || st.IsDir() {
 		http.NotFound(w, r)
 		return
 	}
-	if st, err := os.Stat(full); err != nil || st.IsDir() {
-		http.NotFound(w, r)
-		return
-	}
-	http.ServeFile(w, r, full)
+	http.ServeFileFS(w, r, root.FS(), name)
 }

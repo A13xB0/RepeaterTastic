@@ -11,6 +11,7 @@ const model = defineModel<string[]>({ required: true })
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLButtonElement | null>(null)
 // The list is teleported to <body> and placed next to the button, so cards with overflow hidden
 // or the bottom of the screen don't cut it off; it opens upwards when there's more room there.
 const place = ref({ left: 0, width: 0, top: 0 as number | undefined, bottom: undefined as number | undefined, maxHeight: 288 })
@@ -47,38 +48,60 @@ function onPointer(e: PointerEvent) {
   if (root.value?.contains(t) || menu.value?.contains(t)) return
   open.value = false
 }
+const optionButtons = () => Array.from(menu.value?.querySelectorAll<HTMLButtonElement>('button[role="option"]') ?? [])
+
+// The list lives at the end of <body>, so keyboard focus is moved into it and back by hand.
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') open.value = false
-}
-watch(open, async (o) => {
-  if (o) {
-    position()
-    document.addEventListener('pointerdown', onPointer)
-    document.addEventListener('keydown', onKey)
-    window.addEventListener('scroll', position, true)
-    window.addEventListener('resize', position)
-    await nextTick()
-    position()
-  } else {
-    document.removeEventListener('pointerdown', onPointer)
-    document.removeEventListener('keydown', onKey)
-    window.removeEventListener('scroll', position, true)
-    window.removeEventListener('resize', position)
+  if (e.key === 'Escape') {
+    open.value = false
+    trigger.value?.focus()
+    return
   }
+  const buttons = optionButtons()
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    const next = e.key === 'ArrowDown' ? Math.min(buttons.length - 1, at + 1) : Math.max(0, at - 1)
+    buttons[next]?.focus()
+  } else if (e.key === 'Tab' && at >= 0) {
+    e.preventDefault()
+    open.value = false
+    trigger.value?.focus()
+  }
+}
+
+function listen(on: boolean) {
+  const doc = on ? document.addEventListener.bind(document) : document.removeEventListener.bind(document)
+  const win = on ? window.addEventListener.bind(window) : window.removeEventListener.bind(window)
+  doc('pointerdown', onPointer as EventListener)
+  doc('keydown', onKey as EventListener)
+  win('scroll', position, true)
+  win('resize', position)
+}
+
+watch(open, async (o) => {
+  listen(o)
+  if (!o) return
+  position()
+  await nextTick()
+  position()
+  optionButtons()[0]?.focus()
 })
-onBeforeUnmount(() => (open.value = false))
+onBeforeUnmount(() => listen(false))
 </script>
 
 <template>
   <div ref="root" class="relative">
     <button
       :id="id"
+      ref="trigger"
       type="button"
       class="input flex items-center gap-2 text-left"
       :disabled="disabled"
       :aria-expanded="open"
       aria-haspopup="listbox"
       @click="open = !open"
+      @keydown.down.prevent="open = true"
     >
       <span :class="['min-w-0 flex-1 truncate', model.length ? '' : 'text-ink-3']">{{ summary }}</span>
       <ChevronDown :class="['size-4 shrink-0 text-ink-3 transition-transform', open && 'rotate-180']" />

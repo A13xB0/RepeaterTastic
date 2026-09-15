@@ -62,7 +62,8 @@ func (t tokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]s
 }
 func (tokenCreds) RequireTransportSecurity() bool { return false }
 
-// Connect opens the session and waits for Welcome.
+// Connect opens the session and waits for Welcome. ctx is the session's lifetime, not just the
+// connection attempt: cancelling it ends the session, so don't pass a context with a timeout.
 func Connect(ctx context.Context, o Options) (*Client, error) {
 	env := func(v *string, name string) {
 		if *v == "" {

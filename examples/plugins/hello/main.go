@@ -102,6 +102,9 @@ func main() {
 					continue
 				}
 				n := nodes[p.From]
+				if n == nil && len(nodes) >= 500 {
+					continue // keep the example's memory bounded
+				}
 				if n == nil {
 					n = &seen{ID: fmt.Sprintf("!%08x", p.From)}
 					nodes[p.From] = n

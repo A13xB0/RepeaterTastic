@@ -209,6 +209,9 @@ type Host struct {
 
 	gateMu sync.RWMutex
 	gate   TxGate
+
+	// PacketCopies: put the packet and its decoded payload on bus packet events (plugins use them).
+	PacketCopies atomic.Bool
 }
 
 // NewHost validates the PHY and prepares a host. Call AddIdentity for each node, then Run.
@@ -667,6 +670,11 @@ func (h *Host) txLoop(ctx context.Context) {
 				return // context cancelled while waiting for another radio
 			}
 			release = rel
+		}
+		if !h.Transmits() {
+			// Switched to monitor or off while waiting for the site's turn to transmit.
+			release()
+			continue
 		}
 		sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
 		err = h.radio.Send(sctx, frame)

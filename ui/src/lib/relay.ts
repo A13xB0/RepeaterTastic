@@ -3,6 +3,8 @@ import type { RelayRole } from '@/api/types'
 
 export interface RelayMode {
   id: RelayRole
+  /** relay: how the relay persona repeats; radio: whether the radio transmits at all. */
+  group: 'relay' | 'radio'
   label: string
   title: string
   /** Text colour when selected. */
@@ -10,11 +12,11 @@ export interface RelayMode {
 }
 
 export const relayModes: RelayMode[] = [
-  { id: 'client', label: 'Client', title: 'Rebroadcast like a normal client: after routers, and cancel if someone else relays', tone: 'text-brand' },
-  { id: 'router', label: 'Router', title: 'Rebroadcast with router priority', tone: 'text-warn' },
-  { id: 'mute', label: 'Mute', title: 'Never rebroadcast; identities still transmit', tone: 'text-bad' },
-  { id: 'monitor', label: 'Monitor', title: 'Listen only: nothing is transmitted, not even by identities', tone: 'text-info' },
-  { id: 'off', label: 'Off', title: 'Radio off: nothing is received or transmitted', tone: 'text-bad' },
+  { id: 'client', group: 'relay', label: 'Client', title: 'Rebroadcast like a normal client: after routers, and cancel if someone else relays', tone: 'text-brand' },
+  { id: 'router', group: 'relay', label: 'Router', title: 'Rebroadcast with router priority', tone: 'text-warn' },
+  { id: 'mute', group: 'relay', label: 'Mute', title: 'Never rebroadcast; identities still transmit', tone: 'text-bad' },
+  { id: 'monitor', group: 'radio', label: 'Monitor', title: 'Listen only: nothing is transmitted, not even by identities', tone: 'text-info' },
+  { id: 'off', group: 'radio', label: 'Off', title: 'Radio off: nothing is received or transmitted', tone: 'text-bad' },
 ]
 
 export const relayModeLabel = (role: string | undefined) => relayModes.find((m) => m.id === role)?.label ?? role ?? ''

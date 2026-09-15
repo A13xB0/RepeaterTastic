@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -250,7 +251,10 @@ func TestManagedPluginEndToEnd(t *testing.T) {
 	if err := m.Enable("echo", []string{"packets.read", "messages.read", "messages.send"}); err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = m.Run(ctx) }()
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); m.Wait() }() // every plugin stopped before the temp dir goes
 	waitFor(t, 15*time.Second, func() bool {
 		in, _ := m.Get("echo")
 		return in.Connected && in.Status != nil && in.Status.Summary == "connected"
@@ -283,6 +287,22 @@ func TestManagedPluginEndToEnd(t *testing.T) {
 		in, _ := m.Get("echo")
 		return in.Status != nil && in.Status.Summary == "greeting hello again"
 	}, nil)
+
+	// Taking a permission away reconnects the running plugin with the new grants.
+	if err := m.Enable("echo", []string{"messages.read", "messages.send"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 15*time.Second, func() bool {
+		in, _ := m.Get("echo")
+		lines, _ := m.Logs("echo")
+		return in.Connected && strings.Contains(logText(lines), "permissions changed") && strings.Count(logText(lines), "connected (echo") >= 2
+	}, func() string { lines, _ := m.Logs("echo"); return logText(lines) })
+	m.mu.Lock()
+	_, granted, _ := m.plugins["echo"].effective()
+	m.mu.Unlock()
+	if slices.Contains(granted, "packets.read") {
+		t.Fatal("packets.read still granted")
+	}
 
 	if err := m.Disable("echo"); err != nil {
 		t.Fatal(err)
@@ -385,5 +405,85 @@ func TestSetLimitsLive(t *testing.T) {
 	}
 	if p := m.plugins["x"]; p.msgBudget.rate() != 60 || p.trBudget.rate() != 60 {
 		t.Fatal("limits didn't reach the plugin")
+	}
+}
+
+// An attached plugin stays connected through unrelated changes, and reconnects when its grants change.
+func TestAttachedPluginLifecycle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	hostA := newHost(t, ctx, sim.NewHub(0), "A", log)
+	dir, _ := os.MkdirTemp("", "rtp")
+	defer os.RemoveAll(dir)
+	cfg := config.Default().Plugins
+	cfg.Listen = "127.0.0.1:0"
+	m, err := New(Options{Config: cfg, Dir: dir, Radios: []Radio{{ID: "main", Host: hostA}}, Version: "test", Log: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); m.Wait() }()
+	tok, err := m.Attach("remote", "Remote", []string{"nodes.read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := pluginsdk.Connect(ctx, pluginsdk.Options{ID: "remote", Addr: m.Listening(), Token: tok, Version: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	waitFor(t, 5*time.Second, func() bool { in, _ := m.Get("remote"); return in.Connected && in.State == "running" }, nil)
+
+	m.reconcile() // what any other plugin change does
+	time.Sleep(300 * time.Millisecond)
+	if in, _ := m.Get("remote"); !in.Connected {
+		t.Fatal("an unrelated reconcile disconnected the attached plugin")
+	}
+
+	if err := m.Enable("remote", []string{"nodes.read", "packets.read"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case _, ok := <-c.Events():
+		for ok {
+			_, ok = <-c.Events()
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("changing grants didn't close the attached session")
+	}
+}
+
+// An upgrade that asks for more permissions waits for review; unticked permissions don't.
+func TestUpgradeAskingForMoreNeedsReview(t *testing.T) {
+	dir := t.TempDir()
+	m, err := New(Options{Config: config.Default().Plugins, Dir: dir, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1 := strings.Replace(echoManifest, "permissions: [packets.read, messages.read, messages.send]", "permissions: [packets.read, messages.read]", 1)
+	install := func(manifest string) {
+		t.Helper()
+		b := zipBundle(t, map[string]string{"plugin.yaml": manifest, "run.sh": "#!/bin/sh\n"}, map[string]os.FileMode{"run.sh": 0o755})
+		if _, err := m.Install(bytes.NewReader(b), int64(len(b)), "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install(v1)
+	if err := m.SetSettings("echo", map[string]any{"greeting": "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Enable("echo", []string{"packets.read"}); err != nil { // messages.read left unticked
+		t.Fatal(err)
+	}
+	if in, _ := m.Get("echo"); in.State == "needs_review" {
+		t.Fatalf("an unticked permission put the plugin in review: %s", in.Detail)
+	}
+	install(echoManifest) // now also asks for messages.send
+	in, _ := m.Get("echo")
+	if in.State != "needs_review" || !strings.Contains(in.Detail, "messages.send") {
+		t.Fatalf("after upgrade: %s %s", in.State, in.Detail)
 	}
 }

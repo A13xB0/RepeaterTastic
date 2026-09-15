@@ -35,6 +35,7 @@ async function load() {
 
 function upsert(p: Plugin) {
   if (!data.value) return
+  if (!p.id) return void load() // several plugins changed at once (the command line)
   const i = data.value.plugins.findIndex((x) => x.id === p.id)
   if (p.deleted) {
     if (i >= 0) data.value.plugins.splice(i, 1)
@@ -63,8 +64,12 @@ function installed(p: Plugin) {
 }
 
 const off = on('plugin', upsert)
+const offResync = on('resync', () => void load())
 onMounted(load)
-onBeforeUnmount(off)
+onBeforeUnmount(() => {
+  off()
+  offResync()
+})
 </script>
 
 <template>
@@ -72,7 +77,7 @@ onBeforeUnmount(off)
     <div class="page-head">
       <div>
         <h2 class="page-title">Plugins</h2>
-        <p class="page-sub">Programs that extend RepeaterTastic: uploaders, bots, dashboards. Each runs on its own and only sees what you allow.</p>
+        <p class="page-sub">Programs that extend RepeaterTastic: uploaders, bots, dashboards. Each runs as its own program; its permissions limit what it gets from RepeaterTastic, so only install plugins you trust.</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <button class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>

@@ -53,8 +53,13 @@ type Manager struct {
 	st        stateFile
 	stMod     time.Time
 	plugins   map[string]*plugin
-	ctx       context.Context // set by Run
+	ctx       context.Context // set by Start
+	closing   bool            // shutting down: start nothing new
+	done      chan struct{}   // closed when Start's loop has stopped every plugin
 	listening string          // TCP address attached plugins use, once listening
+
+	notifyMu      sync.Mutex
+	notifyPending map[string]bool
 }
 
 // plugin is an installed (or attached) plugin and what it is doing now. Guarded by Manager.mu.
@@ -65,7 +70,8 @@ type plugin struct {
 	dir      string    // bundle folder; "" for attached
 	pinned   *config.PluginEntry
 
-	run       *runner  // the managed process supervisor, while it should be running
+	run       *runner  // the managed process supervisor, until its process has exited
+	busy      int      // lifecycle operations (install, restart, remove) in progress: reconcile leaves it alone
 	sess      *session // the connected session, if any
 	token     string   // current managed process's token
 	state     string
@@ -85,12 +91,21 @@ func New(opt Options) (*Manager, error) {
 	if opt.Log == nil {
 		opt.Log = slog.Default()
 	}
-	m := &Manager{opt: opt, log: opt.Log.With("component", "plugins"), plugins: map[string]*plugin{}}
+	m := &Manager{opt: opt, log: opt.Log.With("component", "plugins"), plugins: map[string]*plugin{}, notifyPending: map[string]bool{}}
 	for _, d := range []string{m.installedDir(), m.dataRoot(), m.inboxDir()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return nil, err
 		}
 	}
+	// Leftovers from an install or upload that was interrupted.
+	if entries, err := os.ReadDir(m.installedDir()); err == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".staging-") || strings.HasPrefix(e.Name(), ".old-") {
+				_ = os.RemoveAll(filepath.Join(m.installedDir(), e.Name()))
+			}
+		}
+	}
+	_ = os.RemoveAll(filepath.Join(m.inboxDir(), ".tmp"))
 	_ = os.Chmod(opt.Dir, 0o700)
 	if err := m.reload(); err != nil {
 		return nil, err
@@ -274,12 +289,16 @@ func (m *Manager) reconcile() {
 	}
 	var start, stop []*plugin
 	for _, p := range m.plugins {
+		if p.busy > 0 {
+			continue // installing, restarting or removing: that operation reconciles when done
+		}
 		st, detail := p.blocker()
-		if st == "" && p.run == nil && (p.state != "crashed") {
+		if st == "" && p.run == nil && p.state != "crashed" && !p.rec.Attached && !m.closing {
 			start = append(start, p)
 		}
 		if st != "" {
-			if p.run != nil || (p.sess != nil && p.rec.Attached) {
+			// A connected attached plugin shows "waiting" as its blocker; that isn't a reason to stop it.
+			if p.run != nil || (p.sess != nil && p.rec.Attached && st != "waiting") {
 				stop = append(stop, p)
 			}
 			if st != "waiting" || p.sess == nil {
@@ -299,12 +318,26 @@ func (m *Manager) reconcile() {
 
 // Run serves the Plugin API and supervises plugins until ctx ends.
 func (m *Manager) Run(ctx context.Context) error {
+	if err := m.Start(ctx); err != nil {
+		return err
+	}
+	m.Wait()
+	return nil
+}
+
+// Start listens for plugins and starts the enabled ones; they run until ctx ends. It fails when
+// the Plugin API can't listen (a taken plugins.listen port).
+func (m *Manager) Start(ctx context.Context) error {
 	srv, err := m.serve(ctx)
 	if err != nil {
 		return err
 	}
+	for _, r := range m.opt.Radios {
+		r.Host.PacketCopies.Store(true)
+	}
 	m.mu.Lock()
 	m.ctx = ctx
+	m.done = make(chan struct{})
 	for _, p := range m.plugins {
 		if p.state == "crashed" {
 			p.state = "stopped"
@@ -312,6 +345,22 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 	m.reconcile()
+	go m.loop(ctx, srv)
+	return nil
+}
+
+// Wait returns once Start's plugins have all stopped after ctx ended.
+func (m *Manager) Wait() {
+	m.mu.Lock()
+	done := m.done
+	m.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+}
+
+func (m *Manager) loop(ctx context.Context, srv interface{ Stop() }) {
+	defer close(m.done)
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	inbox := map[string]int64{}
@@ -319,6 +368,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			m.mu.Lock()
+			m.closing = true
 			all := slices.Collect(maps.Values(m.plugins))
 			m.mu.Unlock()
 			var wg sync.WaitGroup
@@ -327,7 +377,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			}
 			wg.Wait()
 			srv.Stop()
-			return nil
+			return
 		case <-tick.C:
 			m.scanInbox(inbox)
 			if fi, err := os.Stat(m.statePath()); err == nil {
@@ -398,7 +448,21 @@ func (m *Manager) Install(r io.ReaderAt, size int64, source string) (*Manifest, 
 		return nil, fmt.Errorf("%w: %s is an attached plugin; remove it first", ErrConflict, man.ID)
 	}
 	p := m.plugins[man.ID]
+	release := func() {}
+	if p != nil {
+		p.busy++ // keep reconcile from starting the old version while it's replaced
+		held := p
+		var once sync.Once
+		release = func() {
+			once.Do(func() {
+				m.mu.Lock()
+				held.busy--
+				m.mu.Unlock()
+			})
+		}
+	}
 	m.mu.Unlock()
+	defer release()
 	if p != nil {
 		m.stopPlugin(p, "upgrading")
 	}
@@ -441,6 +505,7 @@ func (m *Manager) Install(r io.ReaderAt, size int64, source string) (*Manifest, 
 	}
 	err = m.saveLocked()
 	m.mu.Unlock()
+	release()
 	verb := "installed"
 	if upgrade {
 		verb = "upgraded"
@@ -483,7 +548,12 @@ func (m *Manager) Enable(id string, granted []string) error {
 			}
 		}
 	}
+	before := slices.Clone(p.rec.Granted)
+	wasOn := p.rec.Enabled
 	p.rec.Enabled, p.rec.Granted = true, slices.Compact(slices.Sorted(slices.Values(granted)))
+	// A running plugin's events and Welcome follow its grants from connect time: reconnect it.
+	regrant := wasOn && !slices.Equal(before, p.rec.Granted) && (p.run != nil || p.sess != nil)
+	sess := p.sess
 	if p.manifest != nil {
 		p.rec.Reviewed = slices.Clone(p.manifest.Permissions)
 	}
@@ -493,6 +563,16 @@ func (m *Manager) Enable(id string, granted []string) error {
 	err := m.saveLocked()
 	m.mu.Unlock()
 	p.logs.add("info", "host", "enabled with "+permList(granted))
+	if regrant {
+		p.logs.add("info", "host", "permissions changed; reconnecting the plugin")
+		if p.rec.Attached {
+			if sess != nil {
+				sess.close("permissions changed")
+			}
+		} else {
+			m.stopPlugin(p, "permissions changed")
+		}
+	}
 	m.reconcile()
 	m.notify(id)
 	return err
@@ -531,10 +611,14 @@ func (m *Manager) Restart(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("%w: the plugin can't run: %s", ErrConflict, strings.TrimSpace(st+" "+d))
 	}
+	p.busy++
 	m.mu.Unlock()
 	m.stopPlugin(p, "restarting")
 	m.mu.Lock()
-	p.state = "stopped"
+	p.busy--
+	if p.state == "crashed" || p.state == "stopped" {
+		p.state = "stopped"
+	}
 	m.mu.Unlock()
 	m.reconcile()
 	m.notify(id)
@@ -587,6 +671,7 @@ func (m *Manager) Remove(id string, keepData bool) error {
 		m.mu.Unlock()
 		return ErrPinned
 	}
+	p.busy++ // never released: the plugin is gone
 	m.mu.Unlock()
 	m.stopPlugin(p, "removed")
 	m.mu.Lock()
@@ -694,10 +779,28 @@ func (m *Manager) Listening() string {
 	return m.listening
 }
 
+// notify tells the GUI a plugin changed, at most every 250 ms per plugin: a plugin sending status
+// in a loop mustn't flood the event bus that also carries packets.
 func (m *Manager) notify(id string) {
-	if m.opt.Notify != nil {
-		m.opt.Notify(id)
+	if m.opt.Notify == nil {
+		return
 	}
+	m.notifyMu.Lock()
+	if m.notifyPending == nil {
+		m.notifyPending = map[string]bool{}
+	}
+	if m.notifyPending[id] {
+		m.notifyMu.Unlock()
+		return
+	}
+	m.notifyPending[id] = true
+	m.notifyMu.Unlock()
+	time.AfterFunc(250*time.Millisecond, func() {
+		m.notifyMu.Lock()
+		delete(m.notifyPending, id)
+		m.notifyMu.Unlock()
+		m.opt.Notify(id)
+	})
 }
 
 // choices lists the site's radios and identities for list settings.

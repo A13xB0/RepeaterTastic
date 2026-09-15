@@ -63,15 +63,18 @@ func (h *Host) fillRecordFromDecoded(r *PacketRecord, p *pb.MeshPacket, dec deco
 }
 
 func (h *Host) publishPacket(r PacketRecord) {
-	mp, data := r.Mesh, r.Data
-	r.Mesh, r.Data = nil, nil
+	mp, data, holders := r.Mesh, r.Data, r.Holders
+	r.Mesh, r.Data, r.Holders = nil, nil, nil
 	r = h.Packets.Add(r)
-	// Copies: the pipeline keeps using the originals after this returns.
-	if mp != nil {
-		r.Mesh = clonePacket(mp)
-	}
-	if data != nil {
-		r.Data = proto.Clone(data).(*pb.Data)
+	// Copies for plugins, only when some are listening: the pipeline keeps using the originals.
+	if h.PacketCopies.Load() {
+		if mp != nil {
+			r.Mesh = clonePacket(mp)
+		}
+		if data != nil {
+			r.Data = proto.Clone(data).(*pb.Data)
+		}
+		r.Holders = holders
 	}
 	h.Bus.Publish(Event{Type: "packet", Data: r})
 }

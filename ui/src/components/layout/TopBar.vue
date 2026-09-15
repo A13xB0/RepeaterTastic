@@ -116,7 +116,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
         <span class="eyebrow hidden md:inline">Relay</span>
         <div class="seg" role="group" aria-label="Relay mode">
           <template v-for="(r, i) in relayModes" :key="r.id">
-            <span v-if="i === 3" class="mx-0.5 my-1 w-px bg-line" aria-hidden="true" />
+            <span v-if="i > 0 && relayModes[i - 1]!.group !== r.group" class="mx-0.5 my-1 w-px bg-line" aria-hidden="true" />
             <button :title="r.title" :aria-pressed="s.relay.role === r.id" :disabled="busy" @click="setRole(r.id)">
               <span :class="s.relay.role === r.id ? r.tone : ''">{{ r.label }}</span>
             </button>

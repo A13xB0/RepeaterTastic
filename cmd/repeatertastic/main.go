@@ -179,14 +179,10 @@ func run(cfgPath string) error {
 		if err != nil {
 			return fmt.Errorf("plugins: %w", err)
 		}
-		pluginsDone := make(chan struct{})
-		defer func() { stop(); <-pluginsDone }() // plugins stop before the radios close
-		go func() {
-			defer close(pluginsDone)
-			if err := pm.Run(ctx); err != nil {
-				log.Error("plugins stopped", "err", err)
-			}
-		}()
+		if err := pm.Start(ctx); err != nil {
+			return fmt.Errorf("plugins: %w", err)
+		}
+		defer func() { stop(); pm.Wait() }() // plugins stop before the radios close
 	}
 
 	if cfg.Web.Enabled {

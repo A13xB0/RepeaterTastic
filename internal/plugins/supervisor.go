@@ -36,17 +36,18 @@ func (m *Manager) startPlugin(parent context.Context, p *plugin) {
 	m.mu.Unlock()
 	go func() {
 		defer close(r.done)
-		m.supervise(ctx, p)
+		m.supervise(ctx, p, r)
 	}()
 	m.notify(p.id)
 }
 
 // stopPlugin asks the plugin to stop, then terminates its process, and waits. For an attached
 // plugin it closes the session.
+// p.run stays set until the process has exited, so a reconcile meanwhile doesn't start a second
+// copy.
 func (m *Manager) stopPlugin(p *plugin, reason string) {
 	m.mu.Lock()
 	r, sess := p.run, p.sess
-	p.run = nil
 	m.mu.Unlock()
 	if sess != nil {
 		sess.stop(reason)
@@ -62,6 +63,9 @@ func (m *Manager) stopPlugin(p *plugin, reason string) {
 		}
 	}
 	m.mu.Lock()
+	if r != nil && p.run == r {
+		p.run = nil
+	}
 	if p.run == nil {
 		if st, d := p.blocker(); st != "" {
 			p.state, p.detail = st, d
@@ -73,7 +77,7 @@ func (m *Manager) stopPlugin(p *plugin, reason string) {
 	m.notify(p.id)
 }
 
-func (m *Manager) supervise(ctx context.Context, p *plugin) {
+func (m *Manager) supervise(ctx context.Context, p *plugin, r *runner) {
 	quick := 0
 	for {
 		started := time.Now()
@@ -94,7 +98,9 @@ func (m *Manager) supervise(ctx context.Context, p *plugin) {
 		p.restarts++
 		if quick >= maxQuickExit {
 			p.state, p.detail = "crashed", fmt.Sprintf("%s; it stopped %d times within %s of starting, so it was left off", msg, quick, quickCrash)
-			p.run = nil
+			if p.run == r {
+				p.run = nil
+			}
 			m.mu.Unlock()
 			p.logs.add("error", "host", p.detail)
 			m.log.Error("plugin keeps crashing; giving up", "plugin", p.id, "err", err)
@@ -144,13 +150,21 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 	cmd.Stdout, cmd.Stderr = out, errw
 	cmd.WaitDelay = 2 * time.Second
 	setProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	// Before Start: a plugin that connects at once must not have its "running" overwritten.
 	m.mu.Lock()
 	p.startedAt = time.Now()
 	p.state, p.detail = "starting", "Waiting for the plugin to connect"
 	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		if p.token == token {
+			p.token = "" // a stopped process's token stops working
+		}
+		m.mu.Unlock()
+	}()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
 	p.logs.add("info", "host", fmt.Sprintf("started %s (pid %d)", exe, cmd.Process.Pid))
 	m.notify(p.id)
 
