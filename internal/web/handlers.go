@@ -1,8 +1,10 @@
 package web
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -238,6 +240,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		"position": identityPositionJSON(id), "position_secs": id.PositionInterval(),
 		"unread":   rc.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
 		"radio_id": rc.id, "radio_name": rc.name,
+		"multi_radio": id.MultiRadio(), "radios": s.identityRadios(rc, id),
 	}
 }
 
@@ -507,16 +510,17 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		LongName  *string         `json:"long_name"`
-		ShortName *string         `json:"short_name"`
-		Enabled   *bool           `json:"enabled"`
-		APIPort   *int            `json:"api_port"`
-		APIBind   *string         `json:"api_bind"`
-		Role      *string         `json:"role"`
-		Share     *float64        `json:"share_limit_pct"`
-		HopLimit  *uint32         `json:"hop_limit"`
-		Position  json.RawMessage `json:"position"` // {"latitude","longitude","altitude"} or null to remove
-		PosSecs   *uint32         `json:"position_secs"`
+		MultiRadio json.RawMessage `json:"multi_radio"` // routing across radios, or null to clear
+		LongName   *string         `json:"long_name"`
+		ShortName  *string         `json:"short_name"`
+		Enabled    *bool           `json:"enabled"`
+		APIPort    *int            `json:"api_port"`
+		APIBind    *string         `json:"api_bind"`
+		Role       *string         `json:"role"`
+		Share      *float64        `json:"share_limit_pct"`
+		HopLimit   *uint32         `json:"hop_limit"`
+		Position   json.RawMessage `json:"position"` // {"latitude","longitude","altitude"} or null to remove
+		PosSecs    *uint32         `json:"position_secs"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -570,6 +574,15 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		short = *req.ShortName
 	}
 	id.SetOwner(long, short)
+	if len(req.MultiRadio) > 0 {
+		mr, err := s.parseMultiRadio(s.radioFor(r), id, req.MultiRadio)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		id.SetMultiRadio(mr)
+		s.opt.Federation.Changed()
+	}
 	if req.Enabled != nil && !id.IsRelay {
 		id.Enabled = *req.Enabled
 	}
@@ -1457,6 +1470,122 @@ func (s *Server) putExperimental(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.opt.Federation.SetEnabled(req.MultiRadioIdentities)
 	s.log.Info("experimental settings changed", "multi_radio_identities", req.MultiRadioIdentities)
 	writeJSON(w, http.StatusOK, req)
+}
+
+// identityRadios lists the radios an identity is on right now: its own, plus extra radios while
+// multi-radio identities are switched on.
+func (s *Server) identityRadios(rc *radioCtx, id *mesh.Identity) []string {
+	out := []string{rc.id}
+	mr := id.MultiRadio()
+	if mr == nil || !s.opt.Federation.Enabled() || id.IsRelay {
+		return out
+	}
+	for _, r := range mr.Radios {
+		if r != rc.id && s.radioByID(r) != nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// parseMultiRadio validates routing sent by the GUI against the site's radios.
+func (s *Server) parseMultiRadio(home *radioCtx, id *mesh.Identity, raw json.RawMessage) (*mesh.MultiRadio, error) {
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return nil, nil
+	}
+	if id.IsRelay {
+		return nil, errors.New("a relay persona belongs to its radio")
+	}
+	var mr mesh.MultiRadio
+	if err := json.Unmarshal(raw, &mr); err != nil {
+		return nil, fmt.Errorf("multi_radio: %w", err)
+	}
+	attached := map[string]bool{home.id: true}
+	var radios []string
+	for _, r := range mr.Radios {
+		if r == home.id || attached[r] {
+			continue
+		}
+		if s.radioByID(r) == nil {
+			return nil, fmt.Errorf("multi_radio: no radio %q", r)
+		}
+		attached[r] = true
+		radios = append(radios, r)
+	}
+	mr.Radios = radios
+	for idx, rs := range mr.Listen {
+		if idx < 0 || idx >= mesh.MaxChannels {
+			return nil, fmt.Errorf("multi_radio: channel index %d is out of range", idx)
+		}
+		for _, r := range rs {
+			if !attached[r] {
+				return nil, fmt.Errorf("multi_radio: channel %d listens on %q, which the identity isn't on", idx, r)
+			}
+		}
+	}
+	for idx, r := range mr.Send {
+		if idx < 0 || idx >= mesh.MaxChannels {
+			return nil, fmt.Errorf("multi_radio: channel index %d is out of range", idx)
+		}
+		if r != mesh.SendAll && !attached[r] {
+			return nil, fmt.Errorf("multi_radio: channel %d sends on %q, which the identity isn't on", idx, r)
+		}
+	}
+	switch {
+	case mr.DM == "", mr.DM == mesh.DMAuto, mr.DM == mesh.DMHome, attached[mr.DM]:
+	default:
+		return nil, fmt.Errorf("multi_radio: dm must be auto, home or a radio the identity is on, not %q", mr.DM)
+	}
+	return &mr, nil
+}
+
+// routePreview is GET /identities/{id}/route?to=!node or ?channel=N: which radios a message
+// would use and why.
+func (s *Server) routePreview(w http.ResponseWriter, r *http.Request) {
+	id := s.identityParam(w, r)
+	if id == nil {
+		return
+	}
+	q := r.URL.Query()
+	to := wire.Broadcast
+	if v := q.Get("to"); v != "" {
+		num, err := wire.ParseNodeID(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "to must look like !a1c40e07")
+			return
+		}
+		to = num
+	}
+	channel, _ := strconv.Atoi(q.Get("channel"))
+	radios, reason := s.hostFor(r).RoutePreview(id, to, channel)
+	names := make([]string, 0, len(radios))
+	for _, rid := range radios {
+		if rc := s.radioByID(rid); rc != nil {
+			names = append(names, rc.name)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"radios": radios, "radio_names": names, "reason": reason,
+		"enabled": s.opt.Federation.Enabled()})
+}
+
+// nodeSightings is GET /nodes/{id}/sightings: what every radio knows about a node.
+func (s *Server) nodeSightings(w http.ResponseWriter, r *http.Request) {
+	num, err := wire.ParseNodeID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "node id must look like !a1c40e07")
+		return
+	}
+	out := []map[string]any{}
+	for _, sg := range s.radios[0].host.Sightings(num) {
+		name := sg.Radio
+		if rc := s.radioByID(sg.Radio); rc != nil {
+			name = rc.name
+		}
+		out = append(out, map[string]any{"radio_id": sg.Radio, "radio_name": name, "last_heard": sg.LastHeard.UnixMilli(),
+			"snr": sg.SNR, "rssi": sg.RSSI, "hops_away": sg.HopsAway, "via_mqtt": sg.ViaMQTT})
+	}
+	writeJSON(w, http.StatusOK, out)
 }

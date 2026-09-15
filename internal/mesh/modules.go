@@ -27,14 +27,17 @@ func (h *Host) runModules(id *Identity, p *pb.MeshPacket) *pb.MeshPacket {
 		m := &Message{ID: p.Id, From: wire.NodeID(p.From), To: wire.NodeID(p.To), Channel: int(p.Channel),
 			Text: string(d.Payload), Time: time.Now().UnixMilli(), Direction: "in", Status: "received", PKI: p.PkiEncrypted,
 			SNR: p.RxSnr, Hops: wire.HopsAway(p)}
+		if h.multiRadioOf(id) != nil {
+			m.Radio = h.RadioID()
+		}
 		if p.RxRssi != nil {
 			m.RSSI = *p.RxRssi
 		}
 		if p.To == wire.Broadcast {
 			m.To = "!ffffffff"
 		}
-		h.Messages.Add(id.NodeNum, m)
-		h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: id.NodeID(), Message: *m}})
+		h.storeFor(id).Add(id.NodeNum, m)
+		h.publishMessage(id, *m)
 
 	case pb.PortNum_NODEINFO_APP:
 		if d.WantResponse && p.From != id.NodeNum && h.Identity(p.From) == nil {

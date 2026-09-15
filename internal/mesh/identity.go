@@ -50,6 +50,8 @@ type Identity struct {
 	// PositionSecs is this identity's position broadcast interval (0 = the radio's).
 	PositionSecs uint32
 	MACAddr      []byte
+	// multiRadio is experimental routing across radios (nil = home radio only).
+	multiRadio *MultiRadio
 
 	sinks             map[ClientSink]struct{}
 	backlog           []*pb.FromRadio
@@ -264,6 +266,7 @@ type IdentityRecord struct {
 	Position     *IdentityPosition `json:"position,omitempty"`
 	PositionSecs uint32            `json:"position_secs,omitempty"`
 	Channels     []string          `json:"channels"` // base64 protobuf Channel
+	MultiRadio   *MultiRadio       `json:"multi_radio,omitempty"`
 }
 
 func (id *Identity) Record() IdentityRecord {
@@ -274,7 +277,7 @@ func (id *Identity) Record() IdentityRecord {
 		LongName:   id.User.LongName, ShortName: id.User.ShortName, Role: id.User.Role.String(),
 		IsRelay: id.IsRelay, Enabled: id.Enabled, APIBind: id.APIBind, APIPort: id.APIPort,
 		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct, HopLimit: id.HopLimit,
-		Position: id.OwnPosition, PositionSecs: id.PositionSecs,
+		Position: id.OwnPosition, PositionSecs: id.PositionSecs, MultiRadio: id.multiRadio.clone(),
 	}
 	for _, ch := range id.Channels {
 		b, _ := proto.Marshal(ch)
@@ -296,6 +299,7 @@ func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
 	id.ShareLimitPct = r.ShareLimit
 	id.HopLimit = r.HopLimit
 	id.OwnPosition, id.PositionSecs = r.Position, r.PositionSecs
+	id.multiRadio = r.MultiRadio.clone()
 	if v, ok := pb.Config_DeviceConfig_Role_value[r.Role]; ok {
 		id.User.Role = pb.Config_DeviceConfig_Role(v)
 	}

@@ -94,6 +94,9 @@ type Options struct {
 
 	// Origins is shared by a radio's connections to track which one a broker packet came from.
 	Origins *Origins
+	// Uplinked is shared by every connection on the site, so a packet heard on two radios is
+	// published to a broker and root once.
+	Uplinked *Uplinked
 }
 
 // Link is one broker connection.
@@ -356,6 +359,9 @@ func (l *Link) publish(p *pb.MeshPacket, ch mesh.ChannelRef, data *pb.Data) {
 	if !l.Connected() || ch.Name == "" {
 		return
 	}
+	if !l.opt.Uplinked.first(l.opt.Address+"|"+l.Root(), p.From, p.Id) {
+		return // another radio of this site already published it here
+	}
 	gw := l.gatewayID()
 	sent := false
 	if l.opt.Format != FormatJSON && p.GetEncrypted() != nil {
@@ -592,4 +598,40 @@ func (o *Origins) crossLink(from, id uint32, to string) (uint32, bool) {
 		return 0, false
 	}
 	return v.hopLimit, true
+}
+
+// Uplinked remembers packets published per broker and root across a site's radios.
+type Uplinked struct {
+	mu   sync.Mutex
+	seen map[upKey]time.Time
+}
+
+type upKey struct {
+	dest     string
+	from, id uint32
+}
+
+func NewUplinked() *Uplinked { return &Uplinked{seen: map[upKey]time.Time{}} }
+
+// first reports whether this is the first publish of a packet to dest (nil: always).
+func (u *Uplinked) first(dest string, from, id uint32) bool {
+	if u == nil || id == 0 {
+		return true
+	}
+	now := time.Now()
+	k := upKey{dest, from, id}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if at, ok := u.seen[k]; ok && now.Sub(at) < originTTL {
+		return false
+	}
+	u.seen[k] = now
+	if len(u.seen) > 8192 {
+		for key, at := range u.seen {
+			if now.Sub(at) > originTTL {
+				delete(u.seen, key)
+			}
+		}
+	}
+	return true
 }

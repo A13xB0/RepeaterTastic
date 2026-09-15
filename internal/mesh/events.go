@@ -143,6 +143,8 @@ type Message struct {
 	RSSI      int32   `json:"rssi,omitempty"`
 	SNR       float32 `json:"snr,omitempty"`
 	Hops      int     `json:"hops"`
+	// Radio is the radio a multi-radio identity heard or sent it on.
+	Radio string `json:"radio,omitempty"`
 }
 
 // Conversation key: "ch:<index>" or "dm:!nodeid".

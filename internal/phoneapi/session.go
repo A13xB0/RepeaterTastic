@@ -151,7 +151,7 @@ func (s *Session) startConfig(nonce uint32) {
 		}
 	}
 	if nonce != nonceOnlyConfig {
-		for _, e := range s.host.DB.Snapshot() {
+		for _, e := range s.host.NodesFor(s.id) {
 			if e.Num == s.id.NodeNum || (e.User == nil && e.LastHeard.IsZero()) {
 				continue
 			}

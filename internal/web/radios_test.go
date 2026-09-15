@@ -56,7 +56,8 @@ func testWebTwoRadios(t *testing.T) *httptest.Server {
 	})
 	rcs := cfg.RadioConfigs()
 	s, err := New(Options{Config: cfg, Host: hosts[0], API: apis[0], Logs: logbuf.New(10), Version: "test", Log: log, Site: st,
-		Radios: []Radio{{ID: "mf", Name: "MediumFast", Config: rcs[1].Config, Host: hosts[1], API: apis[1]}}})
+		Federation: mesh.NewFederation(hosts...),
+		Radios:     []Radio{{ID: "mf", Name: "MediumFast", Config: rcs[1].Config, Host: hosts[1], API: apis[1]}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +235,7 @@ func TestMoveIdentityBetweenRadios(t *testing.T) {
 	if desk["radio_id"] != "main" {
 		t.Fatalf("new identity radio = %v", desk["radio_id"])
 	}
-	// a message still waiting to transmit (the test radio never sends) is marked failed by the move
+	// a message still waiting to transmit is marked failed by the move (see TestDropOutgoing)
 	_, busy, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Busy", "api_port": 4462})
 	busyID := busy["node_id"].(string)
 	if code, _, _ := call(t, srv, "POST", "/api/v1/identities/"+busyID+"/messages", tok, map[string]any{"channel": 0, "text": "queued", "want_ack": false}); code >= 300 {
@@ -244,7 +245,8 @@ func TestMoveIdentityBetweenRadios(t *testing.T) {
 		t.Fatalf("move busy %d %v", code, res)
 	}
 	_, _, msgs := call(t, srv, "GET", "/api/v1/identities/"+busyID+"/messages?conversation=ch:0", tok, nil)
-	if len(msgs) != 1 || msgs[0].(map[string]any)["status"] != "failed" || msgs[0].(map[string]any)["text"] != "queued" {
+	// "failed" when the move cancelled it, "sent" when the test radio got it out first
+	if st := msgs[0].(map[string]any)["status"]; len(msgs) != 1 || (st != "failed" && st != "sent") || msgs[0].(map[string]any)["text"] != "queued" {
 		t.Fatalf("busy identity's messages after the move = %v", msgs)
 	}
 	if code, _, _ := call(t, srv, "POST", "/api/v1/identities/"+busyID+"/move", tok, map[string]any{"radio_id": "main"}); code != 200 {
@@ -355,5 +357,54 @@ func TestConfigurationGaps(t *testing.T) {
 	b["radio_identities"].(map[string]any)["../evil"] = []any{}
 	if code, _, _ := call(t, srv, "POST", "/api/v1/restore", tok, b); code != 400 {
 		t.Fatalf("restore with a path-like radio id accepted: %d", code)
+	}
+}
+
+func TestMultiRadioIdentityAPI(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+
+	_, desk, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk", "api_port": 4470})
+	path := "/api/v1/identities/" + desk["node_id"].(string)
+	for name, bad := range map[string]map[string]any{
+		"unknown radio":          {"radios": []string{"nope"}},
+		"listen off-radio":       {"radios": []string{}, "listen": map[string][]string{"0": {"mf"}}},
+		"send off-radio":         {"radios": []string{}, "send": map[string]string{"1": "mf"}},
+		"dm to unattached radio": {"radios": []string{}, "dm": "mf"},
+	} {
+		if code, _, _ := call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": bad}); code != 400 {
+			t.Errorf("%s accepted: %d", name, code)
+		}
+	}
+	code, res, _ := call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": map[string]any{
+		"radios": []string{"mf", "main"}, "send": map[string]string{"0": "all"}, "dm": "auto", "fallback": true}})
+	if code != 200 {
+		t.Fatalf("patch multi_radio %d %v", code, res)
+	}
+	mr := res["multi_radio"].(map[string]any)
+	if radios := mr["radios"].([]any); len(radios) != 1 || radios[0] != "mf" || mr["fallback"] != true {
+		t.Fatalf("multi_radio = %v (home should be dropped from radios)", mr)
+	}
+	if r := res["radios"].([]any); len(r) != 1 {
+		t.Fatalf("with the switch off the identity should be on its home radio only: %v", r)
+	}
+	call(t, srv, "PUT", "/api/v1/experimental", tok, map[string]any{"multi_radio_identities": true})
+	_, res, _ = call(t, srv, "GET", path+"/route?channel=0", tok, nil)
+	if radios := res["radios"].([]any); len(radios) != 2 || res["enabled"] != true {
+		t.Fatalf("channel 0 sends on all: %v", res)
+	}
+	_, list, _ := call(t, srv, "GET", "/api/v1/identities?radio=all", tok, nil)
+	for _, x := range list {
+		if m := x.(map[string]any); m["node_id"] == desk["node_id"] && len(m["radios"].([]any)) != 2 {
+			t.Fatalf("radios with the switch on = %v", m["radios"])
+		}
+	}
+	if code, _, sightings := call(t, srv, "GET", "/api/v1/nodes/"+desk["node_id"].(string)+"/sightings", tok, nil); code != 200 || sightings == nil {
+		t.Fatalf("sightings %d %v", code, sightings)
+	}
+	if code, res, _ := call(t, srv, "PATCH", path, tok, map[string]any{"multi_radio": nil}); code != 200 || res["multi_radio"] != nil {
+		t.Fatalf("clearing multi_radio: %d %v", code, res["multi_radio"])
 	}
 }

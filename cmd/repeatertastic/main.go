@@ -76,13 +76,14 @@ func run(cfgPath string) error {
 	defer stop()
 
 	rcs := cfg.RadioConfigs()
+	uplinked := mqtt.NewUplinked() // one per site: a packet heard on two radios is published once
 	var radios []*radioRuntime
 	for _, rc := range rcs {
 		rlog := log
 		if len(rcs) > 1 {
 			rlog = log.With("radio", rc.ID)
 		}
-		rt, err := startRadio(ctx, rc, rlog)
+		rt, err := startRadio(ctx, rc, rlog, uplinked)
 		if err != nil {
 			return fmt.Errorf("radio %s: %w", rc.ID, err)
 		}
@@ -95,6 +96,14 @@ func run(cfgPath string) error {
 			rt.host.Bus.Publish(mesh.Event{Type: "log", Data: e})
 		}
 	})
+
+	// Experimental multi-radio identities: join the radios; the switch applies live.
+	hosts := make([]*mesh.Host, 0, len(radios))
+	for _, rt := range radios {
+		hosts = append(hosts, rt.host)
+	}
+	fed := mesh.NewFederation(hosts...)
+	fed.SetEnabled(cfg.Experimental.MultiRadioIdentities)
 
 	// One site coordinator whenever several radios share a mast (co-channel transmit
 	// turns) or a site-wide airtime budget is set.
@@ -132,8 +141,8 @@ func run(cfgPath string) error {
 		key, source := resolveMapAPIKey()
 		log.Info("map tiles", "api_key", source)
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
-			MapAPIKey: key, MapKeySource: source, LogLevel: level,
-			Radios:    extra, Site: st, Version: version, Log: log})
+			MapAPIKey: key, MapKeySource: source, LogLevel: level, Federation: fed,
+			Radios: extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
 		}
@@ -182,7 +191,7 @@ type radioRuntime struct {
 
 // startRadio opens a radio's modem, builds its host and identities and starts its client
 // API and UDP link. The host itself is run by the caller.
-func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (*radioRuntime, error) {
+func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, uplinked *mqtt.Uplinked) (*radioRuntime, error) {
 	if err := os.MkdirAll(rc.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("state dir: %w", err)
 	}
@@ -238,7 +247,7 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (*
 			DownlinkPerMinute: mc.DownlinkPerMinute, UplinkPerMinute: mc.UplinkPerMinute, FirmwareVersion: phoneapi.FirmwareVersion,
 			MapReport: mc.MapReport.Enabled, MapInterval: mc.MapReport.Interval, PositionPrecision: mc.MapReport.PositionPrecision,
 			Latitude: mc.MapReport.Latitude, Longitude: mc.MapReport.Longitude, Altitude: mc.MapReport.Altitude,
-			Origins: origins}, log)
+			Origins: origins, Uplinked: uplinked}, log)
 		rt.mqtt = append(rt.mqtt, l)
 		go func() {
 			if err := l.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

@@ -281,6 +281,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	d := toDTO(s.radioConfig(rc), rc.host)
 	s.cfgMu.Unlock()
 	d.RadioID, d.Main = rc.id, rc == s.radios[0]
+	d.Web.MapKeySource = s.mapKeySource()
 	writeJSON(w, http.StatusOK, d)
 }
 
@@ -423,6 +424,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	out := toDTO(s.radioConfig(rc), rc.host)
 	s.cfgMu.Unlock()
 	out.RadioID, out.Main = rc.id, main
+	out.Web.MapKeySource = s.mapKeySource()
 	writeJSON(w, http.StatusOK, map[string]any{"config": out, "restart_required": restart})
 }
 
@@ -863,4 +865,11 @@ func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {
 	out := s.udpLinkJSON(rc)
 	out["restart_required"] = len(s.restartReasons()) > 0
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) mapKeySource() string {
+	if s.opt.MapKeySource == "" {
+		return "none"
+	}
+	return s.opt.MapKeySource
 }

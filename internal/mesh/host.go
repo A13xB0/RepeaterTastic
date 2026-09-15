@@ -123,6 +123,7 @@ type pendingTx struct {
 	next      time.Time
 	broadcast bool
 	text      bool
+	index     int      // channel index the packet was sent on (for a fallback on another radio)
 	plain     *pb.Data // payload, for the packet log on retransmits
 }
 
@@ -173,9 +174,12 @@ type Host struct {
 
 	started       time.Time
 	nextTelemetry time.Time // run loop only
-	stateDir      string
-	radioOK       atomic.Bool
-	nodeInfoAsks  sync.Map // uint32 → time.Time
+
+	fed          *Federation            // nil unless the site joins its radios (experimental)
+	guestTimers  map[uint32]*guestTimer // run loop only
+	stateDir     string
+	radioOK      atomic.Bool
+	nodeInfoAsks sync.Map // uint32 → time.Time
 
 	gateMu sync.RWMutex
 	gate   TxGate
@@ -430,8 +434,15 @@ func (h *Host) channelGroups(hash uint8) []*chanGroup {
 	if h.chanCache == nil {
 		h.chanCache = map[uint8][]*chanGroup{}
 		display := h.presetDisplay()
-		for _, id := range h.Identities() {
+		for _, id := range append(h.Identities(), h.guests()...) {
+			mr, home := h.multiRadioOf(id), ""
+			if mr != nil {
+				home = h.homeHost(id).RadioID()
+			}
 			for _, rc := range id.resolvedChannels(display) {
+				if mr != nil && !mr.Listens(rc.index, h.RadioID(), home) {
+					continue
+				}
 				var g *chanGroup
 				for _, x := range h.chanCache[rc.hash] {
 					if string(x.key) == string(rc.key) && x.aead == rc.aead && x.name == rc.name {
@@ -546,6 +557,7 @@ func (h *Host) timerLoop(ctx context.Context) {
 			h.periodicNodeInfo(now)
 			h.periodicPosition(now)
 			h.periodicTelemetry(now)
+			h.periodicGuests(now)
 			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
 				lastSave = now
 				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
@@ -642,10 +654,10 @@ func (h *Host) txLoop(ctx context.Context) {
 		} else if dec := h.decode(it.pkt); dec.ok {
 			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold
 		}
-		if o := h.Identity(it.origin); o != nil {
+		if o := h.identityAny(it.origin); o != nil {
 			rec.DecodedBy = o.NodeID()
-			if m, ok := h.Messages.SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
-				h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: o.NodeID(), Message: m}})
+			if m, ok := h.storeFor(o).SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
+				h.publishMessage(o, m)
 			}
 		}
 		h.publishPacket(rec)

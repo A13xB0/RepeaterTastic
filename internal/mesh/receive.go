@@ -44,7 +44,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	}
 
 	// One of our own packets relayed back to us: implicit ACK (ReliableRouter).
-	if origin := h.Identity(p.From); origin != nil {
+	if origin := h.identityAny(p.From); origin != nil {
 		h.hist.Observe(k, p.HopLimit, uint8(p.RelayNode), uint8(p.NextHop), relayByte, now)
 		h.implicitAck(origin, p)
 		rec.Kind = "echo"
@@ -136,6 +136,9 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	h.sniffRouting(decoded, dec)
 
 	for _, d := range dec.deliveries {
+		if !h.firstDelivery(d.id, p) {
+			continue // already delivered from another of its radios
+		}
 		h.deliver(d.id, decoded, dec, d.index, now)
 	}
 	if len(dec.deliveries) > 0 {
@@ -151,7 +154,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 func (h *Host) decode(p *pb.MeshPacket) decodeResult {
 	var r decodeResult
 	enc := p.GetEncrypted()
-	r.target = h.Identity(p.To)
+	r.target = h.identityAny(p.To)
 	if p.Channel == 0 && r.target != nil && len(enc) > wire.PKIOverhead {
 		r.matched = true
 		if peer := h.peerKey(p.From); peer != nil {
@@ -202,7 +205,7 @@ func (h *Host) decode(p *pb.MeshPacket) decodeResult {
 }
 
 func (h *Host) peerKey(num uint32) []byte {
-	if id := h.Identity(num); id != nil {
+	if id := h.identityAny(num); id != nil {
 		return id.PublicKey
 	}
 	e, ok := h.DB.Get(num)
@@ -322,7 +325,7 @@ func (h *Host) sniffRouting(p *pb.MeshPacket, dec decodeResult) {
 		_ = proto.Unmarshal(d.Payload, rt)
 		key := pktKey{target.NodeNum, d.RequestId}
 		errReason := rt.GetErrorReason()
-		h.stopPending(key)
+		h.stopPendingEverywhere(key)
 		status, errText := "acked", ""
 		if errReason != pb.Routing_NONE {
 			status, errText = "failed", errReason.String()
@@ -330,8 +333,8 @@ func (h *Host) sniffRouting(p *pb.MeshPacket, dec decodeResult) {
 		} else {
 			h.Counters.AckOK.Add(1)
 		}
-		if m, ok := h.Messages.SetStatus(target.NodeNum, d.RequestId, status, errText); ok {
-			h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: target.NodeID(), Message: m}})
+		if m, ok := h.storeFor(target).SetStatus(target.NodeNum, d.RequestId, status, errText); ok {
+			h.publishMessage(target, m)
 		}
 		if errReason == pb.Routing_PKI_UNKNOWN_PUBKEY {
 			h.sendNodeInfo(target, p.From, false, ch, true)
@@ -365,7 +368,7 @@ func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
 	if p.ViaMqtt && cfg.IgnoreMQTT {
 		return false
 	}
-	if h.Identity(p.To) != nil || h.Identity(p.From) != nil {
+	if h.isSiteIdentity(p.To) || h.isSiteIdentity(p.From) || h.identityAny(p.To) != nil {
 		return false
 	}
 	relay := h.Relay()

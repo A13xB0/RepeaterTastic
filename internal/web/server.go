@@ -43,6 +43,8 @@ type Options struct {
 	MapKeySource string
 	// LogLevel is the daemon's live log level; nil when the caller doesn't share it.
 	LogLevel *slog.LevelVar
+	// Federation joins the radios for experimental multi-radio identities (nil = not available).
+	Federation *mesh.Federation
 }
 
 // Radio is an additional radio served by the same web GUI.
@@ -249,6 +251,8 @@ func (s *Server) routes() {
 	priv("PATCH /api/v1/identities/{id}", s.patchIdentity)
 	priv("DELETE /api/v1/identities/{id}", s.deleteIdentity)
 	priv("POST /api/v1/identities/{id}/move", s.moveIdentity)
+	priv("GET /api/v1/identities/{id}/route", s.routePreview)
+	priv("GET /api/v1/nodes/{id}/sightings", s.nodeSightings)
 	priv("GET /api/v1/identities/{id}/key", s.getKey)
 	priv("PUT /api/v1/identities/{id}/channels/{index}", s.putChannel)
 	priv("GET /api/v1/identities/{id}/channels/url", s.getChannelURL)
