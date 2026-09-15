@@ -57,6 +57,7 @@ type Airtime struct {
 	DutyCyclePct      float64       `yaml:"duty_cycle_percent" json:"duty_cycle_percent"`
 	OverrideDutyCycle bool          `yaml:"override_duty_cycle" json:"override_duty_cycle"`
 	NodeInfoInterval  time.Duration `yaml:"nodeinfo_interval" json:"nodeinfo_interval"`
+	IdentitySharePct  float64       `yaml:"identity_share_percent" json:"identity_share_percent"`
 }
 
 type Links struct {
@@ -78,6 +79,8 @@ type Web struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Bind    string `yaml:"bind" json:"bind"`
 	Port    int    `yaml:"port" json:"port"`
+	// SessionTTL is how long a web login lasts.
+	SessionTTL time.Duration `yaml:"session_ttl" json:"session_ttl"`
 }
 
 // Identity seeds a virtual node on first start; afterwards identities live in the state dir.
@@ -94,9 +97,9 @@ func Default() *Config {
 		Radio:    Radio{Driver: "kiss", Device: "/dev/ttyUSB0", Baud: 115200},
 		Mesh:     Mesh{Region: "EU_868", Preset: "LONG_FAST", HopLimit: 3, TxPowerDBm: 20},
 		Relay:    Relay{Role: mesh.RoleClient, LongName: "RepeaterTastic Relay", ShortName: "RPTR"},
-		Airtime:  Airtime{NodeInfoInterval: 3 * time.Hour},
+		Airtime:  Airtime{NodeInfoInterval: 3 * time.Hour, IdentitySharePct: 25},
 		Links:    Links{UDPMulticast: UDPMulticast{Group: "239.0.0.69:4403"}},
-		Web:      Web{Enabled: true, Bind: "0.0.0.0", Port: 8080},
+		Web:      Web{Enabled: true, Bind: "0.0.0.0", Port: 8080, SessionTTL: 7 * 24 * time.Hour},
 		MDNS:     MDNS{Enabled: true},
 		StateDir: "/var/lib/repeatertastic",
 		LogLevel: "info",

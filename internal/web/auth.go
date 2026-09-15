@@ -23,10 +23,11 @@ const (
 )
 
 type apiToken struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Hash    string `json:"hash"`
-	Created int64  `json:"created"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Hash     string `json:"hash"`
+	Created  int64  `json:"created"`
+	LastUsed int64  `json:"last_used,omitempty"`
 }
 
 type authFile struct {
@@ -42,6 +43,7 @@ type Auth struct {
 	mu   sync.Mutex
 	path string
 	f    authFile
+	ttl  func() time.Duration
 }
 
 func loadAuth(stateDir string) (*Auth, error) {
@@ -120,7 +122,11 @@ func (a *Auth) CheckPassword(pw string) bool {
 var b64 = base64.RawURLEncoding
 
 func (a *Auth) IssueJWT() (string, time.Time) {
-	exp := time.Now().Add(tokenLifetime)
+	life := tokenLifetime
+	if a.ttl != nil && a.ttl() > 0 {
+		life = a.ttl()
+	}
+	exp := time.Now().Add(life)
 	header := b64.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	claims, _ := json.Marshal(map[string]any{"sub": "admin", "exp": exp.Unix(), "iat": time.Now().Unix()})
 	payload := header + "." + b64.EncodeToString(claims)
@@ -203,8 +209,13 @@ func (a *Auth) Valid(tok string) bool {
 		h := hashToken(tok)
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		for _, t := range a.f.Tokens {
+		for i, t := range a.f.Tokens {
 			if subtle.ConstantTimeCompare([]byte(t.Hash), []byte(h)) == 1 {
+				now := time.Now().UnixMilli()
+				if now-t.LastUsed > int64(time.Hour/time.Millisecond) {
+					a.f.Tokens[i].LastUsed = now
+					_ = a.save()
+				}
 				return true
 			}
 		}

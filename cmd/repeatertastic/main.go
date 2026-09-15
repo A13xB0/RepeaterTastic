@@ -21,6 +21,7 @@ import (
 	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
 	"github.com/A13xB0/RepeaterTastic/internal/radio"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/kiss"
+	"github.com/A13xB0/RepeaterTastic/internal/radio/lazy"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/null"
 	"github.com/A13xB0/RepeaterTastic/internal/web"
 )
@@ -60,11 +61,10 @@ func run(cfgPath string) error {
 	var r radio.Radio
 	switch cfg.Radio.Driver {
 	case "kiss":
-		m, err := kiss.Open(ctx, kiss.Options{Device: cfg.Radio.Device, Baud: cfg.Radio.Baud, Logf: func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "kiss") }})
-		if err != nil {
-			return fmt.Errorf("opening modem %s: %w", cfg.Radio.Device, err)
-		}
-		r = m
+		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "kiss") }
+		opts := kiss.Options{Device: cfg.Radio.Device, Baud: cfg.Radio.Baud, Logf: logf}
+		r = lazy.New(func(ctx context.Context) (radio.Radio, error) { return kiss.Open(ctx, opts) },
+			radio.Info{Driver: "kiss", Device: cfg.Radio.Device}, 5*time.Second, logf)
 	case "none", "sim":
 		r = null.New()
 	}

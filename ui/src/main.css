@@ -1,0 +1,358 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ tokens
+   Light is the base palette; .dark swaps the same roles. Tailwind utilities
+   read the roles through @theme inline, so `bg-surface`, `text-ink-2`,
+   `border-line`, `bg-brand/15` all follow the theme. */
+
+:root {
+  color-scheme: light;
+  --bg: #eef2f1;
+  --bg-glow-1: rgba(20, 170, 130, 0.14);
+  --bg-glow-2: rgba(70, 110, 220, 0.1);
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-solid: #ffffff;
+  --raised: #f5f8f7;
+  --sunken: #e9eeed;
+  --line: #d9e1df;
+  --line-soft: #e7edeb;
+  --ink: #0d1a17;
+  --ink-2: #43524e;
+  --ink-3: #72807c;
+  --brand: #0c8a6c;
+  --brand-2: #0a6f74;
+  --brand-ink: #ffffff;
+  --ok: #15913f;
+  --warn: #c26a05;
+  --bad: #d23a3a;
+  --info: #2b6fd6;
+  --violet: #7048e8;
+  --shadow: 0 1px 2px rgba(16, 32, 28, 0.04), 0 8px 24px rgba(16, 32, 28, 0.06);
+  --grid: #e3e9e7;
+  --axis: #c4cecb;
+  /* chart series: validated categorical order (blue, orange, aqua, yellow, magenta, green, violet, red) */
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
+  --s5: #e87ba4;
+  --s6: #008300;
+  --s7: #4a3aa7;
+  --s8: #e34948;
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #070b0b;
+  --bg-glow-1: rgba(40, 220, 160, 0.08);
+  --bg-glow-2: rgba(80, 120, 255, 0.07);
+  --surface: rgba(17, 24, 23, 0.78);
+  --surface-solid: #111817;
+  --raised: #162020;
+  --sunken: #0c1211;
+  --line: #243230;
+  --line-soft: #1a2523;
+  --ink: #e6eeec;
+  --ink-2: #a6b5b1;
+  --ink-3: #6d7d79;
+  --brand: #3fd9a0;
+  --brand-2: #2fb9c4;
+  --brand-ink: #04140e;
+  --ok: #3ccf7a;
+  --warn: #f2b33d;
+  --bad: #f07272;
+  --info: #6aa5f5;
+  --violet: #a68cff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
+  --grid: #1d2826;
+  --axis: #34423f;
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
+  --s5: #d55181;
+  --s6: #008300;
+  --s7: #9085e9;
+  --s8: #e66767;
+}
+
+@theme inline {
+  --font-sans: 'Inter var', Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-solid: var(--surface-solid);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --color-brand-ink: var(--brand-ink);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
+  --color-violet: var(--violet);
+  --color-s1: var(--s1);
+  --color-s2: var(--s2);
+  --color-s3: var(--s3);
+  --color-s4: var(--s4);
+  --color-s5: var(--s5);
+  --color-s6: var(--s6);
+  --color-s7: var(--s7);
+  --color-s8: var(--s8);
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+/* ------------------------------------------------------------------ base */
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+    font-size: 14px;
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-tap-highlight-color: transparent;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+}
+
+/* ------------------------------------------------------------------ components */
+
+@layer components {
+  .app-bg {
+    background:
+      radial-gradient(900px 520px at 12% -8%, var(--bg-glow-1), transparent 70%),
+      radial-gradient(760px 480px at 88% 4%, var(--bg-glow-2), transparent 70%),
+      var(--bg);
+  }
+
+  .card {
+    @apply min-w-0 rounded-2xl border border-line-soft bg-surface backdrop-blur-xl;
+    box-shadow: var(--shadow);
+  }
+  .card-head {
+    @apply flex flex-wrap items-center justify-between gap-2 px-4 pt-3.5 pb-2 sm:px-5;
+  }
+  .card-title {
+    @apply text-[13px] font-semibold tracking-tight text-ink;
+  }
+  .card-sub {
+    @apply text-xs text-ink-3;
+  }
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase tracking-[0.08em] text-ink-3;
+  }
+
+  .page-head {
+    @apply mb-4 flex flex-wrap items-end justify-between gap-3;
+  }
+  .page-title {
+    @apply text-xl font-semibold tracking-tight text-ink max-lg:hidden;
+  }
+  .page-sub {
+    @apply mt-0.5 text-[13px] text-ink-3;
+  }
+
+  .btn {
+    @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface-solid px-3.5 text-[13px] font-medium text-ink transition-colors select-none hover:border-ink-3/40 hover:bg-raised disabled:opacity-50 disabled:hover:bg-surface-solid;
+  }
+  .btn-sm {
+    @apply h-7 rounded-lg px-2.5 text-xs;
+  }
+  .btn-primary {
+    @apply border-transparent bg-brand text-brand-ink hover:border-transparent hover:bg-brand/90 disabled:hover:bg-brand;
+  }
+  .btn-danger {
+    @apply border-bad/30 bg-bad/10 text-bad hover:border-bad/50 hover:bg-bad/15;
+  }
+  .btn-ghost {
+    @apply border-transparent bg-transparent text-ink-2 hover:border-transparent hover:bg-sunken hover:text-ink;
+  }
+  .icon-btn {
+    @apply inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-3 transition-colors hover:bg-sunken hover:text-ink disabled:opacity-40;
+  }
+
+  .input {
+    @apply h-9 w-full rounded-xl border border-line bg-surface-solid px-3 text-[13px] text-ink placeholder:text-ink-3 transition-colors outline-none focus:border-brand/60 focus:ring-3 focus:ring-brand/15 disabled:opacity-60;
+  }
+  textarea.input {
+    @apply h-auto py-2 leading-relaxed;
+  }
+  select.input {
+    @apply appearance-none pr-8;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%2372807c' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-medium text-ink-2;
+  }
+  .hint {
+    @apply mt-1 text-xs text-ink-3;
+  }
+  .mono {
+    @apply font-mono text-[12.5px] tracking-tight;
+  }
+
+  .chip {
+    @apply inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-2xs font-semibold whitespace-nowrap;
+  }
+  .badge {
+    @apply inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1.5 text-2xs font-bold text-brand-ink;
+  }
+  .dot {
+    @apply inline-block size-2 shrink-0 rounded-full;
+  }
+
+  .tbl {
+    @apply w-full border-separate border-spacing-0 text-[13px];
+  }
+  .tbl th {
+    @apply sticky top-0 z-[1] border-b border-line-soft bg-surface-solid/95 px-3 py-2 text-left text-2xs font-semibold tracking-[0.06em] whitespace-nowrap text-ink-3 uppercase backdrop-blur first:pl-4 last:pr-4 sm:first:pl-5 sm:last:pr-5;
+  }
+  .tbl td {
+    @apply border-b border-line-soft px-3 py-2 align-middle whitespace-nowrap first:pl-4 last:pr-4 sm:first:pl-5 sm:last:pr-5;
+  }
+  .tbl tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .tbl tbody tr.row-link {
+    @apply cursor-pointer transition-colors hover:bg-raised;
+  }
+  .tbl .num {
+    @apply text-right tabular-nums;
+  }
+
+  .seg {
+    @apply inline-flex rounded-xl border border-line bg-sunken p-0.5;
+  }
+  .seg > button {
+    @apply h-7 rounded-[9px] px-2.5 text-xs font-medium text-ink-2 transition-all hover:text-ink disabled:opacity-60;
+  }
+  .seg > button[aria-pressed='true'] {
+    @apply bg-surface-solid text-ink shadow-sm;
+  }
+
+  .tabs {
+    @apply flex gap-1 overflow-x-auto border-b border-line-soft;
+  }
+  .tabs > button {
+    @apply -mb-px shrink-0 border-b-2 border-transparent px-3 py-2.5 text-[13px] font-medium whitespace-nowrap text-ink-3 transition-colors hover:text-ink;
+  }
+  .tabs > button[aria-selected='true'] {
+    @apply border-brand text-ink;
+  }
+
+  .kv {
+    @apply grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2 text-[13px];
+  }
+  .kv dt {
+    @apply text-ink-3;
+  }
+  .kv dd {
+    @apply min-w-0 text-ink;
+  }
+
+  .empty {
+    @apply flex flex-col items-center justify-center gap-2 px-6 py-12 text-center text-[13px] text-ink-3;
+  }
+}
+
+@layer utilities {
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 8px;
+  }
+  .pulse-dot {
+    animation: pulse-dot 2s ease-out infinite;
+  }
+  @keyframes pulse-dot {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent);
+    }
+    70%,
+    100% {
+      box-shadow: 0 0 0 6px transparent;
+    }
+  }
+  .flash-in {
+    animation: flash-in 1.2s ease-out;
+  }
+  @keyframes flash-in {
+    from {
+      background-color: color-mix(in srgb, var(--brand) 12%, transparent);
+    }
+    to {
+      background-color: transparent;
+    }
+  }
+}
+
+/* transitions shared by modal/drawer */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+.pop-enter-active,
+.pop-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.985);
+}
+.slide-enter-active,
+.slide-leave-active {
+  transition: transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.slide-enter-from,
+.slide-leave-to {
+  transform: translateX(100%);
+}
+.slide-left-enter-active,
+.slide-left-leave-active {
+  transition: transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.slide-left-enter-from,
+.slide-left-leave-to {
+  transform: translateX(-105%);
+}

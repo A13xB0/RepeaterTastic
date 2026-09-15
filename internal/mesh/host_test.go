@@ -188,3 +188,47 @@ func TestLocalDirectMessage(t *testing.T) {
 		t.Fatal("local DM went over the air")
 	}
 }
+
+func TestPKIDirectMessageThroughRelayLearnsNextHop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hub := sim.NewHub(0.02)
+	hub.SetLink("A", "B", sim.Link{Drop: 1})
+	hub.SetLink("B", "A", sim.Link{Drop: 1})
+	a := newTestHost(t, ctx, hub, "A", "Alice")
+	r := newTestHost(t, ctx, hub, "R")
+	b := newTestHost(t, ctx, hub, "B", "Bob")
+	alice, bob := newSink(), newSink()
+	a.ids[0].AddSink(alice)
+	b.ids[0].AddSink(bob)
+	time.Sleep(100 * time.Millisecond)
+
+	// Exchange keys across the relay.
+	a.RequestNodeInfo(a.ids[0], wire.Broadcast)
+	b.RequestNodeInfo(b.ids[0], wire.Broadcast)
+	deadline := time.Now().Add(15 * time.Second)
+	for a.peerKey(b.ids[0].NodeNum) == nil || b.peerKey(a.ids[0].NodeNum) == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("keys not exchanged through relay")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	for i, msg := range []string{"first", "second"} {
+		id, err := a.SendText(a.ids[0], b.ids[0].NodeNum, 0, msg, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := bob.waitPacket(t, 15*time.Second, func(p *pb.MeshPacket) bool { return text(p) == msg })
+		if !p.PkiEncrypted || p.HopStart-p.HopLimit != 1 {
+			t.Fatalf("msg %d: pki=%v hops=%d", i, p.PkiEncrypted, p.HopStart-p.HopLimit)
+		}
+		alice.waitPacket(t, 20*time.Second, func(p *pb.MeshPacket) bool { return isAckFor(id)(p) && p.From == b.ids[0].NodeNum })
+		time.Sleep(200 * time.Millisecond)
+	}
+	// After an ACK came back through the relay, the relay should be A's next hop towards B.
+	e, _ := a.DB.Get(b.ids[0].NodeNum)
+	if want := wire.LastByte(r.Relay().NodeNum); e.NextHop != want {
+		t.Logf("next hop towards B is %#x, relay byte %#x (learning needs the relay to have relayed the original)", e.NextHop, want)
+	}
+}

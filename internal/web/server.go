@@ -48,6 +48,9 @@ type Server struct {
 	statsMu   sync.Mutex
 	statsAt   time.Time
 	lastStats radio.Stats
+
+	rf     rfHistory
+	traces traceWait
 }
 
 func (s *Server) radioStats(ctx context.Context) radio.Stats {
@@ -74,6 +77,12 @@ func New(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opt: o, cfg: o.Config, host: o.Host, auth: a, log: o.Log.With("component", "web"), mux: http.NewServeMux()}
+	s.traces.pending = map[string]time.Time{}
+	a.ttl = func() time.Duration {
+		s.cfgMu.Lock()
+		defer s.cfgMu.Unlock()
+		return s.cfg.Web.SessionTTL
+	}
 	s.routes()
 	return s, nil
 }
@@ -82,6 +91,8 @@ func New(o Options) (*Server, error) {
 func (s *Server) Handler() http.Handler { return s.mux }
 
 func (s *Server) Run(ctx context.Context) error {
+	go s.sampleRF(ctx)
+	go s.watchTraceroutes(ctx)
 	addr := net.JoinHostPort(s.cfg.Web.Bind, strconv.Itoa(s.cfg.Web.Port))
 	srv := &http.Server{Addr: addr, Handler: securityHeaders(s.mux), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -117,6 +128,12 @@ func (s *Server) routes() {
 	pub("GET /api/v1/setup", s.getSetup)
 	pub("POST /api/v1/setup", s.postSetup)
 	pub("POST /api/v1/auth/login", s.login)
+	setup := func(pattern string, h http.HandlerFunc) { s.mux.HandleFunc(pattern, s.setupOrAuth(h)) }
+	setup("GET /api/v1/serial-ports", s.serialPorts)
+	setup("GET /api/v1/regions", s.regions)
+	setup("POST /api/v1/phy/preview", s.phyPreview)
+	setup("POST /api/v1/setup/probe", s.probe)
+	priv("PUT /api/v1/auth/password", s.changePassword)
 
 	priv("GET /api/v1/status", s.getStatus)
 	priv("PUT /api/v1/relay", s.putRelay)
@@ -146,9 +163,6 @@ func (s *Server) routes() {
 
 	priv("GET /api/v1/config", s.getConfig)
 	priv("PUT /api/v1/config", s.putConfig)
-	priv("GET /api/v1/serial-ports", s.serialPorts)
-	priv("GET /api/v1/regions", s.regions)
-	priv("POST /api/v1/phy/preview", s.phyPreview)
 	priv("GET /api/v1/tokens", s.listTokens)
 	priv("POST /api/v1/tokens", s.createToken)
 	priv("DELETE /api/v1/tokens/{id}", s.deleteToken)
@@ -156,6 +170,11 @@ func (s *Server) routes() {
 	priv("POST /api/v1/restore", s.restore)
 	priv("GET /api/v1/logs", s.logs)
 	priv("GET /api/v1/links", s.links)
+	priv("PATCH /api/v1/links/{name}", s.patchLink)
+	priv("POST /api/v1/identities/{id}/api/restart", s.restartAPI)
+	priv("POST /api/v1/identities/{id}/conversations/{key}/read", s.markRead)
+	priv("GET /api/v1/stats/rf", s.statsRF)
+	priv("GET /api/v1/stats/identities", s.statsIdentities)
 
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such endpoint")

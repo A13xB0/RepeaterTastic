@@ -221,8 +221,18 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		"role": u.Role.String(), "hw_model": u.HwModel.String(), "public_key": base64.StdEncoding.EncodeToString(id.PublicKey),
 		"is_relay": id.IsRelay, "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
-		"last_byte": wire.LastByte(id.NodeNum),
+		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id),
+		"unread": s.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
 	}
+}
+
+func (s *Server) shareLimit(id *mesh.Identity) float64 {
+	if id.ShareLimitPct > 0 {
+		return id.ShareLimitPct
+	}
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	return s.cfg.Airtime.IdentitySharePct
 }
 
 func (s *Server) identityParam(w http.ResponseWriter, r *http.Request) *mesh.Identity {
@@ -304,11 +314,13 @@ func (s *Server) previewKey(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		LongName   string `json:"long_name"`
-		ShortName  string `json:"short_name"`
-		PrivateKey string `json:"private_key"`
-		APIPort    int    `json:"api_port"`
-		APIBind    string `json:"api_bind"`
+		LongName   string  `json:"long_name"`
+		ShortName  string  `json:"short_name"`
+		PrivateKey string  `json:"private_key"`
+		APIPort    int     `json:"api_port"`
+		APIBind    string  `json:"api_bind"`
+		Role       string  `json:"role"`
+		ShareLimit float64 `json:"share_limit_pct"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -345,7 +357,13 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	id.APIPort, id.APIBind = req.APIPort, req.APIBind
+	id.APIPort, id.APIBind, id.ShareLimitPct = req.APIPort, req.APIBind, req.ShareLimit
+	if req.Role != "" {
+		if err := id.SetRole(req.Role); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := s.host.AddIdentity(id); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -366,14 +384,29 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		LongName  *string `json:"long_name"`
-		ShortName *string `json:"short_name"`
-		Enabled   *bool   `json:"enabled"`
-		APIPort   *int    `json:"api_port"`
-		APIBind   *string `json:"api_bind"`
+		LongName  *string  `json:"long_name"`
+		ShortName *string  `json:"short_name"`
+		Enabled   *bool    `json:"enabled"`
+		APIPort   *int     `json:"api_port"`
+		APIBind   *string  `json:"api_bind"`
+		Role      *string  `json:"role"`
+		Share     *float64 `json:"share_limit_pct"`
 	}
 	if !readJSON(w, r, &req) {
 		return
+	}
+	if req.Role != nil && !id.IsRelay {
+		if err := id.SetRole(*req.Role); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.Share != nil {
+		if *req.Share < 0 || *req.Share > 100 {
+			writeError(w, http.StatusBadRequest, "share_limit_pct must be between 0 and 100")
+			return
+		}
+		id.ShareLimitPct = *req.Share
 	}
 	long, short := "", ""
 	if req.LongName != nil {
@@ -638,7 +671,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 
 // ----------------------------------------------------------------------------------------- nodes
 
-func nodeJSON(e mesh.NodeEntry) map[string]any {
+func nodeJSON(e mesh.NodeEntry, knownBy []string) map[string]any {
 	n := map[string]any{"node_id": wire.NodeID(e.Num), "node_num": e.Num, "has_public_key": e.PublicKey() != nil,
 		"snr": e.SNR, "rssi": e.RSSI, "via_mqtt": e.ViaMQTT, "local": e.Local, "favorite": e.Favorite, "ignored": e.Ignored}
 	if e.User != nil {
@@ -671,13 +704,29 @@ func nodeJSON(e mesh.NodeEntry) map[string]any {
 	} else {
 		n["telemetry"] = nil
 	}
+	if e.Local {
+		n["known_by"] = []string{}
+	} else {
+		n["known_by"] = knownBy
+	}
 	return n
+}
+
+func (s *Server) localIDs() []string {
+	var ids []string
+	for _, id := range s.host.Identities() {
+		if id.Enabled {
+			ids = append(ids, id.NodeID())
+		}
+	}
+	return ids
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
+	known := s.localIDs()
 	for _, e := range s.host.DB.Snapshot() {
-		out = append(out, nodeJSON(e))
+		out = append(out, nodeJSON(e, known))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -716,6 +765,7 @@ func (s *Server) traceroute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "traceroute not sent: "+err.Error())
 		return
 	}
+	s.expectTraceroute(from.NodeID(), wire.NodeID(target))
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent"})
 }
 
@@ -752,14 +802,26 @@ func (s *Server) listPackets(w http.ResponseWriter, r *http.Request) {
 	}
 	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
 	node, port, kind := q.Get("node"), q.Get("port"), q.Get("kind")
+	dir, channel, text := q.Get("direction"), q.Get("channel"), strings.ToLower(q.Get("q"))
+	since, _ := strconv.ParseInt(q.Get("since"), 10, 64)
 	writeJSON(w, http.StatusOK, s.host.Packets.List(limit, before, func(p *mesh.PacketRecord) bool {
-		if node != "" && p.From != node && p.To != node {
+		switch {
+		case node != "" && p.From != node && p.To != node:
+			return false
+		case port != "" && p.Port != port:
+			return false
+		case kind != "" && p.Kind != kind:
+			return false
+		case dir != "" && p.Direction != dir:
+			return false
+		case channel != "" && p.Channel != channel:
+			return false
+		case since > 0 && p.Time < since:
+			return false
+		case text != "" && !strings.Contains(strings.ToLower(p.Summary), text):
 			return false
 		}
-		if port != "" && p.Port != port {
-			return false
-		}
-		return kind == "" || p.Kind == kind
+		return true
 	}))
 }
 
@@ -811,14 +873,6 @@ func (s *Server) statsPorts(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------------------------------- config
 
-func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
-	s.cfgMu.Lock()
-	c := *s.cfg
-	s.cfgMu.Unlock()
-	c.Identities = nil
-	writeJSON(w, http.StatusOK, c)
-}
-
 // applyConfig validates, applies live and saves a new config.
 func (s *Server) applyConfig(r *http.Request, next *config.Config) error {
 	if err := next.Validate(); err != nil {
@@ -845,28 +899,6 @@ func (s *Server) saveConfigFile() error {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	return s.cfg.Save()
-}
-
-func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
-	s.cfgMu.Lock()
-	next := *s.cfg
-	old := *s.cfg
-	s.cfgMu.Unlock()
-	// Partial update: decode over a copy of the current config.
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-	if err := s.applyConfig(r, &next); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	restart := old.Radio != next.Radio || old.Web != next.Web || old.Links.UDPMulticast != next.Links.UDPMulticast ||
-		old.StateDir != next.StateDir
-	c := next
-	c.Identities = nil
-	writeJSON(w, http.StatusOK, map[string]any{"config": c, "restart_required": restart})
 }
 
 func (s *Server) serialPorts(w http.ResponseWriter, r *http.Request) {
@@ -939,6 +971,7 @@ func (s *Server) phyPreview(w http.ResponseWriter, r *http.Request) {
 		Region         string `json:"region"`
 		Preset         string `json:"preset"`
 		PrimaryChannel string `json:"primary_channel"`
+		TxPowerDBm     int    `json:"tx_power_dbm"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -948,7 +981,8 @@ func (s *Server) phyPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown preset")
 		return
 	}
-	rp, err := phy.Resolve(phy.Options{Region: req.Region, Preset: phy.Preset(pv), PrimaryChannelName: req.PrimaryChannel})
+	rp, err := phy.Resolve(phy.Options{Region: strings.ToUpper(req.Region), Preset: phy.Preset(pv), PrimaryChannelName: req.PrimaryChannel,
+		TxPowerDBm: req.TxPowerDBm})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -963,7 +997,11 @@ func (s *Server) phyPreview(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for _, t := range s.auth.Tokens() {
-		out = append(out, map[string]any{"id": t.ID, "name": t.Name, "created": t.Created})
+		var last any
+		if t.LastUsed > 0 {
+			last = t.LastUsed
+		}
+		out = append(out, map[string]any{"id": t.ID, "name": t.Name, "created_at": t.Created, "last_used": last})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -984,7 +1022,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": t.ID, "name": t.Name, "token": secret, "created": t.Created})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": t.ID, "name": t.Name, "token": secret, "created_at": t.Created, "last_used": nil})
 }
 
 func (s *Server) deleteToken(w http.ResponseWriter, r *http.Request) {
@@ -1011,7 +1049,7 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 	for _, id := range s.host.Identities() {
 		b.Identities = append(b.Identities, id.Record())
 	}
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="repeatertastic-backup-%s.json"`, time.Now().Format("20060102-1504")))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="repeatertastic-backup-%s.json"`, time.Now().Format("2006-01-02")))
 	writeJSON(w, http.StatusOK, b)
 }
 
@@ -1050,15 +1088,6 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 		limit = 500
 	}
 	writeJSON(w, http.StatusOK, s.opt.Logs.Recent(limit))
-}
-
-func (s *Server) links(w http.ResponseWriter, r *http.Request) {
-	u := map[string]any{"name": "udp", "type": "udp_multicast", "enabled": s.cfg.Links.UDPMulticast.Enabled,
-		"connected": false, "rx": 0, "tx": 0}
-	if l := s.opt.UDP; l != nil {
-		u["connected"], u["rx"], u["tx"] = l.Connected(), l.Rx.Load(), l.Tx.Load()
-	}
-	writeJSON(w, http.StatusOK, []any{u})
 }
 
 // ------------------------------------------------------------------------------------------ SSE
@@ -1119,7 +1148,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				if !ok {
 					continue
 				}
-				payload = nodeJSON(en)
+				payload = nodeJSON(en, s.localIDs())
 			}
 			if !send(e.Type, payload) {
 				return

@@ -134,3 +134,68 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 - `GET /api/v1/backup` → JSON file download (config + keys); `POST /api/v1/restore`
 - `GET /api/v1/logs?limit=500` → `[{"time","level","msg"}]`
 - `GET /api/v1/links` → `[{"name": "udp", "type": "udp_multicast", "enabled": false, "connected": false, "rx": 0, "tx": 0}]`
+
+## Proposed additions (from the web GUI)
+
+> Added while building `ui/`. The GUI already calls these and the dev mock (`ui/mock/`) implements them.
+> Everything above stays as is; these are additive. Types live in `ui/src/api/types.ts`.
+
+### Setup and auth
+
+- While `GET /setup` reports `needed: true`, these work **without a token** so the wizard can run:
+  `GET /serial-ports`, `GET /regions`, `POST /phy/preview`, `POST /setup/probe`.
+- `POST /api/v1/setup/probe` `{"device": "/dev/ttyUSB0"}` → `{"ok": true, "driver": "kiss", "firmware": "MeshCore KISS v2", "name": "Heltec V3", "sync_word_ok": true, "error": ""}` — ping the modem, read its version and check it accepts sync word 0x2B. Always 200; `ok: false` + `error` when nothing answers.
+- `POST /phy/preview` also accepts `"tx_power_dbm"` (clamped to the region limit in the reply).
+- `PUT /api/v1/auth/password` `{"current": "...", "new": "..."}` → 204 (400 with an error when `current` is wrong or `new` < 8 chars).
+
+### Identities
+
+- Identity gains `"share_limit_pct": 25` (the slice of the hourly duty budget this identity may use; the GUI shows
+  "Over share" when `airtime_ms_1h / (duty_limit_pct% × window)` exceeds it) and `"unread": 3` (browser-chat unread
+  messages across its conversations).
+- `POST /identities` also accepts `"role"` (`CLIENT`, `CLIENT_MUTE`, `CLIENT_HIDDEN`, `TRACKER`, `SENSOR`).
+  The GUI sends the `private_key` returned by `preview-key` so the node id matches the preview.
+- `PATCH /identities/{node_id}` also accepts `"role"` and `"share_limit_pct"`. 409 when `api_port` is taken.
+- `POST /api/v1/identities/{node_id}/api/restart` → 204 — restart that identity's client-API server (drops apps).
+- `POST /api/v1/identities/{node_id}/conversations/{key}/read` → 204 — clear unread for one conversation
+  (`key` URL-encoded, e.g. `dm%3A!5b9e2213`). Emits SSE `identity` with the new `unread`.
+- `DELETE /identities/{node_id}` on the relay persona → 409.
+
+### Nodes
+
+- Node gains `"known_by": ["!a1c40e07", …]` — local identities whose NodeDB holds this node.
+- `DELETE /nodes/{node_id}` on a local identity → 409.
+- SSE `traceroute` may carry `"error": "no response within 60 s"` with empty routes when the request timed out.
+
+### Packets
+
+- `GET /packets` also filters by `direction=rx|tx`, `channel=<name>`, `since=<ms>` and `q=<text>` (substring of `summary`).
+  `before` paginates on `time`.
+
+### Statistics
+
+- `GET /api/v1/stats/rf?window=1h|24h|7d` → `{"bucket_s": 60, "points": [{"time", "noise_floor_dbm": -118, "channel_util_pct": 11.2, "rx": 19, "tx": 5}]}` — noise-floor and channel-utilisation history (dashboard sparkline, statistics charts). Same bucket sizes as `stats/airtime` (1h → 60 s, 24h → 600 s, 7d → 3600 s).
+- `GET /api/v1/stats/identities?window=24h` → `[{"node_id", "tx": 132, "rx": 3520, "ack_ok": 38, "ack_fail": 2, "airtime_ms": 60000}]` — per-identity packets, ACK success and airtime for the window (relay persona included).
+- `stats/airtime` buckets: `tx_ms` is the total of `relay_ms` + all `by_identity` values.
+
+### Configuration
+
+- Shape of `GET /config` / partial `PUT /config` (mirrors the YAML file; secrets never included):
+
+  ```json
+  {
+    "radio": {"type": "kiss", "port": "/dev/serial/by-id/usb-…", "region": "EU_868", "preset": "LONG_FAST",
+              "primary_channel": "", "tx_power_dbm": 27, "frequency_offset_mhz": 0},
+    "relay": {"role": "client", "long_name": "RepeaterTastic Relay", "short_name": "RPTR", "local_dm": "software|also_rf"},
+    "airtime": {"duty_cycle_percent": 10, "identity_share_percent": 25, "nodeinfo_interval": "3h",
+                "position": "off|fixed", "telemetry": "off|device", "cw_min": 3, "cw_max": 8},
+    "web": {"bind": "0.0.0.0", "port": 8080, "session_ttl": "24h"}
+  }
+  ```
+
+  `PUT` takes any subset of sections (the GUI sends one section at a time) and replies `{"config", "restart_required"}`.
+  Changing `relay.role` is equivalent to `PUT /relay`.
+- `GET /tokens` → `[{"id", "name", "created_at", "last_used": null | ms}]`; `POST /tokens` replies 201 with the same fields plus `token`.
+- `GET /backup` sets `Content-Disposition: attachment; filename="repeatertastic-backup-YYYY-MM-DD.json"`.
+- `POST /restore` body is the backup JSON as downloaded → `{"restart_required": true}`; 400 when it isn't a backup.
+- `PATCH /api/v1/links/{name}` `{"enabled": true}` → Link. Link gains `"detail": "239.0.0.69:4403 on eth0"` (human-readable endpoint).

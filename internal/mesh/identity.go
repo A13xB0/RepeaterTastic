@@ -38,7 +38,9 @@ type Identity struct {
 	APIBind    string
 	APIPort    int
 	CreatedAt  time.Time
-	MACAddr    []byte
+	// ShareLimitPct is this identity's slice of the hourly duty budget (0 = host default).
+	ShareLimitPct float64
+	MACAddr       []byte
 
 	sinks           map[ClientSink]struct{}
 	backlog         []*pb.FromRadio
@@ -246,6 +248,7 @@ type IdentityRecord struct {
 	APIBind    string   `json:"api_bind,omitempty"`
 	APIPort    int      `json:"api_port,omitempty"`
 	CreatedAt  int64    `json:"created_at"`
+	ShareLimit float64  `json:"share_limit_pct,omitempty"`
 	Channels   []string `json:"channels"` // base64 protobuf Channel
 }
 
@@ -256,7 +259,7 @@ func (id *Identity) Record() IdentityRecord {
 		PrivateKey: base64.StdEncoding.EncodeToString(id.PrivateKey),
 		LongName:   id.User.LongName, ShortName: id.User.ShortName, Role: id.User.Role.String(),
 		IsRelay: id.IsRelay, Enabled: id.Enabled, APIBind: id.APIBind, APIPort: id.APIPort,
-		CreatedAt: id.CreatedAt.UnixMilli(),
+		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct,
 	}
 	for _, ch := range id.Channels {
 		b, _ := proto.Marshal(ch)
@@ -275,6 +278,7 @@ func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
 		return nil, err
 	}
 	id.IsRelay, id.Enabled, id.APIBind, id.APIPort = r.IsRelay, r.Enabled, r.APIBind, r.APIPort
+	id.ShareLimitPct = r.ShareLimit
 	if v, ok := pb.Config_DeviceConfig_Role_value[r.Role]; ok {
 		id.User.Role = pb.Config_DeviceConfig_Role(v)
 	}
@@ -331,5 +335,17 @@ func (h *Host) SetChannel(id *Identity, ch *pb.Channel) error {
 	id.mu.Unlock()
 	h.ChannelsChanged()
 	h.Bus.Publish(Event{Type: "identity", Data: id.NodeID()})
+	return nil
+}
+
+// SetRole changes the identity's advertised device role.
+func (id *Identity) SetRole(role string) error {
+	v, ok := pb.Config_DeviceConfig_Role_value[strings.ToUpper(role)]
+	if !ok {
+		return fmt.Errorf("unknown role %q", role)
+	}
+	id.mu.Lock()
+	id.User.Role = pb.Config_DeviceConfig_Role(v)
+	id.mu.Unlock()
 	return nil
 }

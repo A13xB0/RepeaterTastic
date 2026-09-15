@@ -454,3 +454,17 @@ func (m *Manager) Status(num uint32) (addr string, running bool) {
 	}
 	return s.srv.Addr().String(), true
 }
+
+// Restart stops an identity's server; the next sync starts it again (dropping connected apps).
+func (m *Manager) Restart(ctx context.Context, num uint32) {
+	m.mu.Lock()
+	if s, ok := m.servers[num]; ok {
+		s.cancel()
+		if s.srv != nil {
+			_ = s.srv.Close()
+		}
+		delete(m.servers, num)
+	}
+	m.mu.Unlock()
+	m.Sync(ctx)
+}

@@ -275,3 +275,35 @@ func (s *MessageStore) Conversations(identity uint32, self string) []Conversatio
 	}
 	return out
 }
+
+// MarkRead clears unread messages in one conversation.
+func (s *MessageStore) MarkRead(identity uint32, conversation string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.read[identity] == nil {
+		s.read[identity] = map[string]int64{}
+	}
+	s.read[identity][conversation] = time.Now().UnixMilli()
+}
+
+// UnreadTotal counts unread incoming messages across all conversations of an identity.
+func (s *MessageStore) UnreadTotal(identity uint32, self string) int {
+	n := 0
+	for _, c := range s.Conversations(identity, self) {
+		n += c.Unread
+	}
+	return n
+}
+
+// Window returns an identity's messages newer than sinceMs.
+func (s *MessageStore) Window(identity uint32, sinceMs int64) []Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Message
+	for _, m := range s.per[identity] {
+		if m.Time >= sinceMs {
+			out = append(out, *m)
+		}
+	}
+	return out
+}
