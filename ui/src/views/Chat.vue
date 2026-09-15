@@ -342,6 +342,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
                   <div class="mt-0.5 flex items-center gap-1.5 px-1 text-2xs tabular-nums text-ink-3">
                     <Lock v-if="r.m.pki" class="size-2.5" />
                     <span>{{ clock(r.m.time, false) }}</span>
+                    <span v-if="r.m.radio" :title="`${r.m.direction === 'in' ? 'Heard' : 'Sent'} on ${r.m.radio}`">· via {{ r.m.radio.split(', ').map((x) => live.radios.find((rr) => rr.id === x)?.name ?? x).join(' + ') }}</span>
                     <template v-if="r.m.direction === 'in' && r.m.snr != null">
                       <span>· SNR {{ r.m.snr.toFixed(1) }}</span><span v-if="r.m.hops != null">· {{ r.m.hops }} hop{{ r.m.hops === 1 ? '' : 's' }}</span>
                     </template>

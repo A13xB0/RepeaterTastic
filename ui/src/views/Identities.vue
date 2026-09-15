@@ -152,7 +152,10 @@ async function remove(i: Identity) {
                       <CopyButton :text="i.node_id" label="Node id" />
                       <span>· {{ i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
                     </div>
-                    <div v-if="multiRadio" class="mt-1"><span class="chip bg-ink-3/12 text-ink-2" :title="`On radio ${i.radio_name}`">{{ i.radio_name }}</span></div>
+                    <div v-if="multiRadio" class="mt-1 flex flex-wrap gap-1">
+                      <span class="chip bg-ink-3/12 text-ink-2" :title="`Home radio ${i.radio_name}`">{{ i.radio_name }}</span>
+                      <span v-if="(i.radios?.length ?? 1) > 1" class="chip bg-info/12 text-info" :title="`Also on ${i.radios!.slice(1).map((r) => live.radios.find((x) => x.id === r)?.name ?? r).join(', ')} (experimental)`">+{{ i.radios!.length - 1 }} radio{{ i.radios!.length > 2 ? 's' : '' }}</span>
+                    </div>
                   </div>
                 </div>
               </td>

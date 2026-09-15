@@ -131,6 +131,10 @@ export interface Identity {
   created_at: number
   channels: Channel[]
   api_bind?: string
+  /** Experimental routing across radios (kept while the switch is off). */
+  multi_radio?: MultiRadio | null
+  /** Radios the identity is on right now (home first). */
+  radios?: string[]
   /** The radio this identity is on. */
   radio_id?: string
   radio_name?: string
@@ -167,6 +171,8 @@ export interface Message {
   rssi: number | null
   snr: number | null
   hops: number | null
+  /** The radio a multi-radio identity heard or sent it on. */
+  radio?: string
 }
 
 export interface MeshNode {
@@ -327,6 +333,15 @@ export interface Link {
   // UDP only
   group?: string
   map_report?: boolean
+}
+
+/** Experimental: an identity's routing across radios. Keys of listen/send are channel indexes. */
+export interface MultiRadio {
+  radios: string[]
+  listen?: Record<string, string[]>
+  send?: Record<string, string>
+  dm?: string
+  fallback?: boolean
 }
 
 export type MqttMode = 'gateway' | 'uplink_only' | 'map_only' | 'monitor' | 'bridge'
