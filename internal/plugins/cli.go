@@ -54,7 +54,7 @@ func CLI(cfg *config.Config, args []string, stdout io.Writer) error {
 	switch args[0] {
 	case "list", "ls":
 		tw := tabwriter.NewWriter(stdout, 2, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tVERSION\tKIND\tSTATE\tPERMISSIONS")
+		fmt.Fprintln(tw, "ID\tNAME\tVERSION\tKIND\tSWITCH\tGRANTED")
 		for _, in := range m.List() {
 			var granted []string
 			for _, p := range in.Permissions {
@@ -62,7 +62,16 @@ func CLI(cfg *config.Config, args []string, stdout io.Writer) error {
 					granted = append(granted, p.Key)
 				}
 			}
-			state := in.State
+			// This process isn't the daemon, so it can only say whether a plugin is on and whether
+			// something stops it running.
+			state := "off"
+			if in.Enabled {
+				state = "on"
+			}
+			switch in.State {
+			case "needs_review", "needs_settings", "unsupported", "waiting":
+				state += ", " + strings.ReplaceAll(in.State, "_", " ")
+			}
 			if in.Pinned {
 				state += " (config file)"
 			}

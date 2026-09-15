@@ -36,6 +36,7 @@ with a **Restart now** button:
 - MQTT connections and UDP multicast
 - `web.bind`, `web.port` and `mdns`
 - turning a site airtime cap on for a single radio
+- `plugins.enabled`, `plugins.dir`, `plugins.listen` and `plugins.entries`
 - a restored backup
 
 The GUI's restart shuts down cleanly and exits with status 75, so the service manager starts it again
@@ -156,6 +157,11 @@ account menu) and stored in the state folder, not in this file.
 
 Extra radios, the site-wide airtime cap and the experimental identities on several radios are
 covered in [Several radios](radios.md).
+
+### `plugins`
+
+The plugin system: its folder, the TCP address for attached plugins, URL installs, send budgets and
+plugins pinned by the config file. See [Plugins](plugins.md#configuration).
 
 ## Backups
 

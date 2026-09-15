@@ -56,7 +56,7 @@ RT_TEST_MQTT_BROKER=host:1883 go test ./internal/links/mqtt   # MQTT against a r
   `deploy/repeatertastic.example.yaml`.
 - **Locks:** don't call into another host (radio) while holding a host's `mu`/`chanMu`; the
   federation reads identities across hosts.
-- **Protobufs** in `pb` (Meshtastic) and `pluginapi/v1` (plugin API) are generated (`scripts/gen-proto.sh`); don't edit by hand.
+- **Protobufs** in `pb` (Meshtastic) and `pluginapi/v1` (plugin API) are generated (`scripts/gen-proto.sh`, `scripts/gen-plugin-proto.sh`); don't edit by hand. Plugin work is described in `docs/plugins.md`.
 
 ## Style
 

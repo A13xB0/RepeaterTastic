@@ -1,0 +1,31 @@
+# An example RepeaterTastic plugin. Build a bundle with: make plugin-example
+id: hello
+name: Hello Mesh
+version: 1.0.0
+api: 1
+description: Counts what each radio hears, lists the nodes it has seen, and can answer "ping" on a relay persona's channels.
+author: ScotMesh
+homepage: https://github.com/A13xB0/RepeaterTastic/tree/main/examples/plugins/hello
+license: GPL-3.0-or-later
+logo: logo.svg
+permissions:
+  - packets.read
+  - nodes.read
+  - messages.read
+  - messages.send
+settings:
+  - key: reply_to_ping
+    label: Answer ping
+    type: bool
+    default: false
+    help: Reply "pong" when someone sends "ping" to a relay persona, on the same channel or as a DM.
+  - key: reply_text
+    label: Reply
+    type: string
+    default: pong
+    placeholder: pong
+run:
+  managed:
+    exec: bin/hello-{os}-{arch}
+ui:
+  panel: panel/index.html

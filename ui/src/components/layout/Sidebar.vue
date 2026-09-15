@@ -3,7 +3,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Activity, Cable, ChartColumn, Layers, LayoutDashboard, LogOut, MapPinned, MessagesSquare, ScrollText, Settings2, UsersRound, X,
+  Activity, Cable, ChartColumn, Layers, LayoutDashboard, LogOut, MapPinned, MessagesSquare, Puzzle, ScrollText, Settings2, UsersRound, X,
 } from '@lucide/vue'
 import Logo from '@/components/ui/Logo.vue'
 import Sparkline from '@/components/charts/Sparkline.vue'
@@ -42,6 +42,7 @@ const groups = computed(() => [
     label: 'System',
     items: [
       { to: '/config', name: 'config', label: 'Configuration', icon: Settings2 },
+      { to: '/plugins', name: 'plugins', label: 'Plugins', icon: Puzzle },
       { to: '/logs', name: 'logs', label: 'Logs', icon: ScrollText },
     ],
   },

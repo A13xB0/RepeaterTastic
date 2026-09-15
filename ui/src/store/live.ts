@@ -1,7 +1,7 @@
 // Small reactive store fed by REST snapshots plus the SSE stream (/api/v1/events).
 import { markRaw, reactive, shallowRef, triggerRef } from 'vue'
 import { API_BASE, api, radio, setRadio, token, withRadio } from '@/api/client'
-import type { Identity, LogLine, MeshNode, Message, Packet, RadioSummary, RadiosResponse, RfStats, Status, TracerouteEvent } from '@/api/types'
+import type { Identity, LogLine, MeshNode, Message, Packet, Plugin, RadioSummary, RadiosResponse, RfStats, Status, TracerouteEvent } from '@/api/types'
 
 const PACKET_BUFFER = 400
 const LOG_BUFFER = 1500
@@ -105,6 +105,7 @@ const listeners = {
   message: new Set<Handler<{ identity: string; message: Message }>>(),
   traceroute: new Set<Handler<TracerouteEvent>>(),
   log: new Set<Handler<LogLine>>(),
+  plugin: new Set<Handler<Plugin>>(),
 }
 type Events = typeof listeners
 
@@ -236,6 +237,10 @@ export function connect() {
   es.addEventListener('traceroute', (e) => {
     const t = parse<TracerouteEvent>(e as MessageEvent)
     if (t) listeners.traceroute.forEach((fn) => fn(t))
+  })
+  es.addEventListener('plugin', (e) => {
+    const p = parse<Plugin>(e as MessageEvent)
+    if (p) listeners.plugin.forEach((fn) => fn(p))
   })
   es.addEventListener('log', (e) => {
     const l = parse<LogLine>(e as MessageEvent)

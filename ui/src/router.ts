@@ -31,6 +31,13 @@ export const router = createRouter({
         { path: 'links', name: 'links', component: () => import('@/views/Links.vue'), meta: { title: 'Links' } },
         { path: 'config/:tab?', name: 'config', component: () => import('@/views/Configuration.vue'), meta: { title: 'Configuration' } },
         { path: 'logs', name: 'logs', component: () => import('@/views/Logs.vue'), meta: { title: 'Logs' } },
+        {
+          path: 'plugins',
+          children: [
+            { path: '', name: 'plugins', component: () => import('@/views/Plugins.vue'), meta: { title: 'Plugins' } },
+            { path: ':id/:tab?', name: 'plugin', component: () => import('@/views/Plugin.vue'), meta: { title: 'Plugin' } },
+          ],
+        },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

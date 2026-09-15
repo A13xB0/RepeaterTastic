@@ -426,3 +426,70 @@ export interface ConfigPutResult {
   config: Config
   restart_required: boolean
 }
+
+// ------------------------------------------------------------------------------------ plugins
+
+export type PluginState =
+  | 'disabled' | 'needs_review' | 'needs_settings' | 'starting' | 'running' | 'restarting' | 'crashed' | 'stopped' | 'waiting' | 'unsupported'
+
+export interface PluginSetting {
+  key: string
+  label: string
+  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select'
+  help?: string
+  required?: boolean
+  default?: unknown
+  options?: string[]
+  placeholder?: string
+}
+
+export interface Plugin {
+  id: string
+  name: string
+  version?: string
+  description?: string
+  author?: string
+  homepage?: string
+  license?: string
+  kind: 'managed' | 'attached'
+  enabled: boolean
+  pinned: boolean
+  state: PluginState
+  detail?: string
+  permissions: { key: string; text: string; granted: boolean }[]
+  network?: string[]
+  settings: PluginSetting[]
+  values: Record<string, unknown>
+  secrets_set: string[]
+  status?: { summary: string; state: 'ok' | 'warning' | 'error'; fields?: Record<string, string> }
+  has_logo: boolean
+  has_panel: boolean
+  logo_url?: string
+  panel_url?: string
+  connected: boolean
+  connected_at?: number
+  started_at?: number
+  restarts: number
+  dropped_events: number
+  installed_at: number
+  source?: string
+  deleted?: boolean
+}
+
+export interface PluginsResponse {
+  enabled: boolean
+  plugins: Plugin[]
+  permissions?: Record<string, string>
+  attach_address?: string
+  allow_url_install?: boolean
+  folder?: string
+  messages_per_hour?: number
+  traceroutes_per_hour?: number
+}
+
+export interface PluginLogLine {
+  time: number
+  level: 'debug' | 'info' | 'warn' | 'error'
+  source: 'plugin' | 'stdout' | 'stderr' | 'host'
+  message: string
+}
