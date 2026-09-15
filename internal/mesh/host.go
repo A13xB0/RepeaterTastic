@@ -19,10 +19,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/radio"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 // Relay roles for the host's relay persona.
@@ -652,7 +652,7 @@ func (h *Host) txLoop(ctx context.Context) {
 		rec := h.baseRecord(it.pkt, frame, "tx", kind)
 		rec.AirtimeMs = ms
 		if it.plain != nil {
-			rec.Port, rec.PKI = it.plain.Portnum.String(), it.pkt.PkiEncrypted
+			rec.Port, rec.PKI, rec.Data = it.plain.Portnum.String(), it.pkt.PkiEncrypted, it.plain
 			rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
 		} else if dec := h.decode(it.pkt); dec.ok {
 			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold

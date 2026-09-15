@@ -20,12 +20,10 @@ service PluginHost {
   rpc ListRadios(ListRadiosRequest) returns (ListRadiosResponse);
   // nodes.read
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
-  // messages.send: text from the plugin's own identity (identity.own) on a radio.
+  // messages.send: text from a radio's relay persona, within the plugin's send budget.
   rpc SendText(SendTextRequest) returns (SendResponse);
-  // traceroute.send: from a radio's relay persona or the plugin's identity.
+  // traceroute.send: from a radio's relay persona, within the plugin's send budget.
   rpc Traceroute(TracerouteRequest) returns (SendResponse);
-  // identity.own: create (or return) the plugin's identity on a radio.
-  rpc EnsureIdentity(EnsureIdentityRequest) returns (Identity);
 }
 
 // ------------------------------------------------------------------------------------ session
@@ -36,6 +34,7 @@ message PluginMessage {
     Status status = 2;
     LogLine log = 3;
     Heartbeat heartbeat = 4;
+    PanelData panel = 5;
   }
 }
 
@@ -48,6 +47,7 @@ message HostMessage {
     TracerouteEvent traceroute = 5;
     SettingsChanged settings = 6;
     Stop stop = 7;
+    PanelAction action = 8;
   }
 }
 
@@ -55,6 +55,9 @@ message Hello {
   string plugin_id = 1;
   uint32 api_version = 2; // 1
   string plugin_version = 3;
+  // An attached plugin (no bundle) may send its plugin.yaml so the GUI can show its name, logo URL,
+  // permissions and settings form. Managed plugins leave it empty: their bundle has one.
+  string manifest_yaml = 4;
 }
 
 message Welcome {
@@ -78,6 +81,18 @@ message LogLine {
 }
 
 message Heartbeat {}
+
+// PanelData: JSON for the plugin's own GUI panel, if it has one. The panel receives the latest
+// value (window message {type: "data", data}) whenever it changes and when it opens.
+message PanelData {
+  string json = 1;
+}
+
+// PanelAction: the plugin's panel posted {type: "action", name, payload} to the GUI.
+message PanelAction {
+  string name = 1;
+  string payload_json = 2;
+}
 
 message SettingsChanged {
   string settings_json = 1;
@@ -106,7 +121,6 @@ message Identity {
   string long_name = 3;
   string short_name = 4;
   string radio_id = 5;
-  bool owned_by_plugin = 6;
 }
 
 message Node {
@@ -148,7 +162,7 @@ message NodeEvent {
   Node node = 1;
 }
 
-// TextMessageEvent: a text message delivered to the plugin's own identity (messages.read or identity.own).
+// TextMessageEvent: a text message a radio's relay persona received or sent (messages.read).
 message TextMessageEvent {
   string radio_id = 1;
   string identity_node_id = 2;
@@ -159,6 +173,7 @@ message TextMessageEvent {
   string text = 7;
   uint32 packet_id = 8;
   int64 time_ms = 9;
+  string direction = 10;      // "in" or "out"
 }
 
 message TracerouteEvent {
@@ -180,25 +195,18 @@ message ListNodesRequest { string radio_id = 1; } // "" = every radio
 message ListNodesResponse { repeated Node nodes = 1; }
 
 message SendTextRequest {
-  string radio_id = 1;
+  string radio_id = 1;        // "" = the main radio
   string to = 2;              // "!a1c40e07" for a DM, "" for a channel
-  uint32 channel = 3;         // channel index on the plugin's identity
+  uint32 channel = 3;         // channel index on the relay persona
   string text = 4;
   bool want_ack = 5;
 }
 
 message TracerouteRequest {
-  string radio_id = 1;
+  string radio_id = 1;        // "" = the main radio
   string target = 2;          // "!a1c40e07"
-  bool from_relay = 3;        // from the radio's relay persona instead of the plugin's identity
 }
 
 message SendResponse {
   uint32 packet_id = 1;
-}
-
-message EnsureIdentityRequest {
-  string radio_id = 1;
-  string long_name = 2;
-  string short_name = 3;
 }

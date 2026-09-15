@@ -8,8 +8,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) PacketRecord {
@@ -27,6 +27,7 @@ func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) 
 		r.Size = wire.HeaderLen + len(p.GetEncrypted())
 	}
 	r.AirtimeMs = h.RadioParams().AirtimeMs(r.Size)
+	r.Mesh = p
 	if gs := h.channelGroups(uint8(p.Channel)); len(gs) > 0 && !(p.Channel == 0 && h.Identity(p.To) != nil) {
 		r.Channel = gs[0].name
 	}
@@ -35,6 +36,7 @@ func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) 
 
 func (h *Host) fillRecordFromDecoded(r *PacketRecord, p *pb.MeshPacket, dec decodeResult) {
 	r.Port = dec.data.Portnum.String()
+	r.Data = dec.data
 	r.PKI = dec.pki
 	if dec.group != nil {
 		r.Channel = dec.group.name
@@ -51,7 +53,16 @@ func (h *Host) fillRecordFromDecoded(r *PacketRecord, p *pb.MeshPacket, dec deco
 }
 
 func (h *Host) publishPacket(r PacketRecord) {
+	mp, data := r.Mesh, r.Data
+	r.Mesh, r.Data = nil, nil
 	r = h.Packets.Add(r)
+	// Copies: the pipeline keeps using the originals after this returns.
+	if mp != nil {
+		r.Mesh = clonePacket(mp)
+	}
+	if data != nil {
+		r.Data = proto.Clone(data).(*pb.Data)
+	}
 	h.Bus.Publish(Event{Type: "packet", Data: r})
 }
 

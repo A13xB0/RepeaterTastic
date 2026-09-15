@@ -13,9 +13,9 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 const (

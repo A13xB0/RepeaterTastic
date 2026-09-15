@@ -23,9 +23,9 @@ import (
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 // ---------------------------------------------------------------------------------- setup/auth

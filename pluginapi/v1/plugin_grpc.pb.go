@@ -27,12 +27,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PluginHost_Session_FullMethodName        = "/repeatertastic.plugin.v1.PluginHost/Session"
-	PluginHost_ListRadios_FullMethodName     = "/repeatertastic.plugin.v1.PluginHost/ListRadios"
-	PluginHost_ListNodes_FullMethodName      = "/repeatertastic.plugin.v1.PluginHost/ListNodes"
-	PluginHost_SendText_FullMethodName       = "/repeatertastic.plugin.v1.PluginHost/SendText"
-	PluginHost_Traceroute_FullMethodName     = "/repeatertastic.plugin.v1.PluginHost/Traceroute"
-	PluginHost_EnsureIdentity_FullMethodName = "/repeatertastic.plugin.v1.PluginHost/EnsureIdentity"
+	PluginHost_Session_FullMethodName    = "/repeatertastic.plugin.v1.PluginHost/Session"
+	PluginHost_ListRadios_FullMethodName = "/repeatertastic.plugin.v1.PluginHost/ListRadios"
+	PluginHost_ListNodes_FullMethodName  = "/repeatertastic.plugin.v1.PluginHost/ListNodes"
+	PluginHost_SendText_FullMethodName   = "/repeatertastic.plugin.v1.PluginHost/SendText"
+	PluginHost_Traceroute_FullMethodName = "/repeatertastic.plugin.v1.PluginHost/Traceroute"
 )
 
 // PluginHostClient is the client API for PluginHost service.
@@ -46,12 +45,10 @@ type PluginHostClient interface {
 	ListRadios(ctx context.Context, in *ListRadiosRequest, opts ...grpc.CallOption) (*ListRadiosResponse, error)
 	// nodes.read
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
-	// messages.send: text from the plugin's own identity (identity.own) on a radio.
+	// messages.send: text from a radio's relay persona, within the plugin's send budget.
 	SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendResponse, error)
-	// traceroute.send: from a radio's relay persona or the plugin's identity.
+	// traceroute.send: from a radio's relay persona, within the plugin's send budget.
 	Traceroute(ctx context.Context, in *TracerouteRequest, opts ...grpc.CallOption) (*SendResponse, error)
-	// identity.own: create (or return) the plugin's identity on a radio.
-	EnsureIdentity(ctx context.Context, in *EnsureIdentityRequest, opts ...grpc.CallOption) (*Identity, error)
 }
 
 type pluginHostClient struct {
@@ -115,16 +112,6 @@ func (c *pluginHostClient) Traceroute(ctx context.Context, in *TracerouteRequest
 	return out, nil
 }
 
-func (c *pluginHostClient) EnsureIdentity(ctx context.Context, in *EnsureIdentityRequest, opts ...grpc.CallOption) (*Identity, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Identity)
-	err := c.cc.Invoke(ctx, PluginHost_EnsureIdentity_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // PluginHostServer is the server API for PluginHost service.
 // All implementations must embed UnimplementedPluginHostServer
 // for forward compatibility.
@@ -136,12 +123,10 @@ type PluginHostServer interface {
 	ListRadios(context.Context, *ListRadiosRequest) (*ListRadiosResponse, error)
 	// nodes.read
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
-	// messages.send: text from the plugin's own identity (identity.own) on a radio.
+	// messages.send: text from a radio's relay persona, within the plugin's send budget.
 	SendText(context.Context, *SendTextRequest) (*SendResponse, error)
-	// traceroute.send: from a radio's relay persona or the plugin's identity.
+	// traceroute.send: from a radio's relay persona, within the plugin's send budget.
 	Traceroute(context.Context, *TracerouteRequest) (*SendResponse, error)
-	// identity.own: create (or return) the plugin's identity on a radio.
-	EnsureIdentity(context.Context, *EnsureIdentityRequest) (*Identity, error)
 	mustEmbedUnimplementedPluginHostServer()
 }
 
@@ -166,9 +151,6 @@ func (UnimplementedPluginHostServer) SendText(context.Context, *SendTextRequest)
 }
 func (UnimplementedPluginHostServer) Traceroute(context.Context, *TracerouteRequest) (*SendResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Traceroute not implemented")
-}
-func (UnimplementedPluginHostServer) EnsureIdentity(context.Context, *EnsureIdentityRequest) (*Identity, error) {
-	return nil, status.Error(codes.Unimplemented, "method EnsureIdentity not implemented")
 }
 func (UnimplementedPluginHostServer) mustEmbedUnimplementedPluginHostServer() {}
 func (UnimplementedPluginHostServer) testEmbeddedByValue()                    {}
@@ -270,24 +252,6 @@ func _PluginHost_Traceroute_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PluginHost_EnsureIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EnsureIdentityRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PluginHostServer).EnsureIdentity(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PluginHost_EnsureIdentity_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PluginHostServer).EnsureIdentity(ctx, req.(*EnsureIdentityRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // PluginHost_ServiceDesc is the grpc.ServiceDesc for PluginHost service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -310,10 +274,6 @@ var PluginHost_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Traceroute",
 			Handler:    _PluginHost_Traceroute_Handler,
-		},
-		{
-			MethodName: "EnsureIdentity",
-			Handler:    _PluginHost_EnsureIdentity_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

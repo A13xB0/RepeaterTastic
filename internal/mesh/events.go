@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 // Event is published on the host bus for the web UI and other observers.
@@ -76,6 +78,11 @@ type PacketRecord struct {
 	Payload     map[string]any `json:"payload,omitempty"`
 	Raw         string         `json:"raw,omitempty"`
 	Transport   string         `json:"transport,omitempty"`
+
+	// Mesh and Data travel on the bus only (plugins): the packet as heard or sent, and its
+	// decoded payload when one of this radio's channels or keys could read it. Never logged.
+	Mesh *pb.MeshPacket `json:"-"`
+	Data *pb.Data       `json:"-"`
 }
 
 // PacketLog is a fixed-size ring of recent packets.

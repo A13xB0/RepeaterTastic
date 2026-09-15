@@ -42,8 +42,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 // Modes, formats and channel selection policies (as in the config).
