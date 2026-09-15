@@ -5,14 +5,15 @@ import type { Identity } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, upsertIdentity } from '@/store/live'
+import { live, refreshAllIdentities, refreshIdentities, upsertIdentity } from '@/store/live'
+import { confirmDialog } from '@/composables/confirm'
 import { toast } from '@/composables/toast'
 
 const props = defineProps<{ identity: Identity | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, share_limit_pct: 25, hop_limit: 0,
-  own_position: false, latitude: 0, longitude: 0, altitude: 0, position_secs: 0 })
+  own_position: false, latitude: 0, longitude: 0, altitude: 0, position_secs: 0, radio_id: 'main' })
 const saving = ref(false)
 const error = ref('')
 const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR', 'ROUTER', 'ROUTER_LATE']
@@ -21,10 +22,11 @@ watch(
   () => props.identity,
   (i) => {
     if (!i) return
+    refreshAllIdentities()
     error.value = ''
     form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
       own_position: !!i.position, latitude: i.position?.latitude ?? 0, longitude: i.position?.longitude ?? 0, altitude: i.position?.altitude ?? 0,
-      position_secs: i.position_secs ?? 0 }
+      position_secs: i.position_secs ?? 0, radio_id: i.radio_id ?? 'main' }
   },
 )
 
@@ -32,7 +34,8 @@ async function save() {
   const i = props.identity
   if (!i) return
   const f = form.value
-  if (i.api && live.identities.some((x) => x.node_id !== i.node_id && x.api?.port === f.api_port)) {
+  const everyone = live.allIdentities.length ? live.allIdentities : live.identities
+  if (i.api && everyone.some((x) => x.node_id !== i.node_id && x.api?.port === f.api_port)) {
     error.value = `Port ${f.api_port} is used by another identity`
     return
   }
@@ -47,12 +50,27 @@ async function save() {
   if (f.position_secs !== (i.position_secs ?? 0)) patch.position_secs = f.position_secs
   const pos = f.own_position ? { latitude: f.latitude, longitude: f.longitude, altitude: f.altitude } : null
   if (JSON.stringify(pos) !== JSON.stringify(i.position ?? null)) patch.position = pos
-  if (!Object.keys(patch).length) return emit('close')
+  const moving = !i.is_relay && live.radios.length > 1 && f.radio_id !== (i.radio_id ?? 'main')
+  if (!Object.keys(patch).length && !moving) return emit('close')
+  if (moving) {
+    const target = live.radios.find((r) => r.id === f.radio_id)
+    const ok = await confirmDialog({
+      title: `Move ${i.long_name} to ${target?.name ?? f.radio_id}?`,
+      body: `It goes off air on ${i.radio_name} and comes back on ${target?.name} (${target?.phy.preset_name}, ${target?.phy.frequency_mhz.toFixed(3)} MHz) with the same node ID, key, app port and chats. Its primary channel becomes ${target?.phy.preset_name}; other channels stay as they are. Connected apps reconnect, and messages still waiting to send are marked failed.`,
+      confirm: 'Move identity',
+    })
+    if (!ok) return
+  }
   saving.value = true
   error.value = ''
   try {
-    upsertIdentity(await api.patch<Identity>(`/identities/${enc(i.node_id)}`, patch))
-    toast('Identity updated')
+    if (moving) {
+      await api.post<Identity>(`/identities/${enc(i.node_id)}/move`, { radio_id: f.radio_id })
+      await Promise.all([refreshIdentities(), refreshAllIdentities()])
+    }
+    if (Object.keys(patch).length) upsertIdentity(await api.patch<Identity>(`/identities/${enc(i.node_id)}`, patch))
+    if (moving) refreshAllIdentities()
+    toast(moving ? `Moved to ${live.radios.find((r) => r.id === f.radio_id)?.name ?? f.radio_id}` : 'Identity updated')
     emit('close')
   } catch (e) {
     error.value = (e as Error).message
@@ -72,6 +90,14 @@ async function save() {
       <div>
         <label class="label" for="e-sn">Short name</label>
         <input id="e-sn" v-model="form.short_name" class="input mono uppercase" maxlength="4" />
+      </div>
+      <div v-if="live.radios.length > 1 && !identity.is_relay" class="sm:col-span-2">
+        <label class="label" for="e-radio">Radio</label>
+        <select id="e-radio" v-model="form.radio_id" class="input">
+          <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }} · {{ r.phy.preset_name }} · {{ r.phy.frequency_mhz.toFixed(3) }} MHz</option>
+        </select>
+        <p v-if="form.radio_id !== (identity.radio_id ?? 'main')" class="hint !text-warn">Saving moves this identity to another radio. You'll be asked to confirm.</p>
+        <p v-else class="hint">A relay persona stays with its radio; other identities can move with their key, port and chats.</p>
       </div>
       <div>
         <label class="label" for="e-role">Device role</label>

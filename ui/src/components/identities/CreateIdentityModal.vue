@@ -6,7 +6,7 @@ import { api, radio } from '@/api/client'
 import type { Identity, KeyPreview } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, nodeLabel, upsertIdentity } from '@/store/live'
+import { live, nodeLabel, refreshAllIdentities, upsertIdentity } from '@/store/live'
 import { toast } from '@/composables/toast'
 
 const props = defineProps<{ open: boolean; mode: 'create' | 'import' }>()
@@ -31,7 +31,7 @@ const error = ref('')
 const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR']
 
 function nextPort() {
-  const used = new Set(live.identities.map((i) => i.api?.port).filter(Boolean))
+  const used = new Set((live.allIdentities.length ? live.allIdentities : live.identities).map((i) => i.api?.port).filter(Boolean))
   let p = 4403
   while (used.has(p)) p++
   return p
@@ -41,6 +41,7 @@ watch(
   () => props.open,
   (o) => {
     if (!o) return
+    refreshAllIdentities()
     longName.value = ''
     shortName.value = ''
     shortTouched.value = false
@@ -99,7 +100,7 @@ watch(tab, (t) => {
 })
 
 const idParts = computed(() => (preview.value ? { head: preview.value.node_id.slice(0, 7), tail: preview.value.node_id.slice(7) } : null))
-const portClash = computed(() => live.identities.some((i) => i.api?.port === port.value))
+const portClash = computed(() => (live.allIdentities.length ? live.allIdentities : live.identities).some((i) => i.api?.port === port.value))
 const canSave = computed(
   () => !!longName.value.trim() && !!shortName.value.trim() && !!preview.value && !portClash.value && (!preview.value.collision || acceptClash.value),
 )
@@ -154,8 +155,9 @@ async function save() {
       <div v-if="live.radios.length > 1" class="sm:col-span-2">
         <label class="label" for="radio">Radio</label>
         <select id="radio" v-model="radioId" class="input">
-          <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }} · {{ r.phy.preset_name }} · {{ r.phy.frequency_mhz.toFixed(3) }} MHz</option>
+          <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }} · {{ r.phy.preset_name }} · {{ r.phy.frequency_mhz.toFixed(3) }} MHz · relay {{ r.relay.role }}</option>
         </select>
+        <p class="hint">An identity lives on one radio. You can move it later from Edit.</p>
       </div>
       <div>
         <label class="label" for="port">API port</label>

@@ -15,7 +15,7 @@ import { toast, toastError } from '@/composables/toast'
 const props = defineProps<{ identityId: string | null; focus?: number }>()
 const emit = defineEmits<{ close: [] }>()
 
-const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId))
+const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
 const tab = ref<'edit' | 'share'>('edit')
 const editing = ref<number | null>(null)
 const draft = ref<{ name: string; psk: string; role: ChannelRole; uplink: boolean; downlink: boolean }>({ name: '', psk: '', role: 'SECONDARY', uplink: false, downlink: false })

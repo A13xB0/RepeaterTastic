@@ -128,6 +128,9 @@ export interface Identity {
   unread?: number
   created_at: number
   channels: Channel[]
+  /** The radio this identity is on. */
+  radio_id?: string
+  radio_name?: string
 }
 
 export interface KeyPreview {

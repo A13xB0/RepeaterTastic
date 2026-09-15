@@ -33,7 +33,21 @@ export const live = reactive({
   /** Every radio on this host (one entry on a single-radio host). */
   radios: [] as RadioSummary[],
   site: null as RadiosResponse['site'],
+  /** Identities on every radio (only fetched when the host has more than one). */
+  allIdentities: [] as Identity[],
 })
+
+export async function refreshAllIdentities() {
+  if (live.radios.length < 2) {
+    live.allIdentities = live.identities
+    return
+  }
+  try {
+    live.allIdentities = await api.get<Identity[]>('/identities?radio=all')
+  } catch {
+    /* keep the last list */
+  }
+}
 
 export async function refreshRadios() {
   try {
