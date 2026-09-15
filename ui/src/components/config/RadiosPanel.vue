@@ -3,11 +3,12 @@
 // Each radio's own settings (preset, relay, MQTT…) are edited with the radio switcher.
 import { computed, onMounted, ref, watch } from 'vue'
 import { Pencil, Plus, Radio as RadioIcon, Settings2, Trash, TriangleAlert } from '@lucide/vue'
-import { api, enc, radio as currentRadio, setRadio } from '@/api/client'
+import { api, enc } from '@/api/client'
 import type { Phy, RadiosResponse, Region, SerialPort } from '@/api/types'
 import { refreshRadios } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import RadioSettingsModal from '@/components/config/RadioSettingsModal.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { num } from '@/lib/format'
@@ -169,9 +170,9 @@ async function add() {
   }
 }
 
+const settingsFor = ref<string | null>(null)
 function openSettings(id: string) {
-  if (id === currentRadio.value) return
-  setRadio(id)
+  settingsFor.value = id
 }
 </script>
 
@@ -181,7 +182,7 @@ function openSettings(id: string) {
     <template v-else>
       <div class="flex flex-wrap items-end justify-between gap-3">
         <p class="max-w-2xl text-xs text-ink-3">
-          Each radio is its own modem on its own preset, with its own relay persona and identities. Radios on the same channel take turns to transmit. Pick <b>Edit</b> to change a radio below; the Relay, Airtime, Position and MQTT tabs follow the radio you're editing. Adding or removing a radio takes effect after a restart.
+          Each radio is its own modem on its own preset, with its own relay persona and identities. Radios on the same channel take turns to transmit. <b>Edit</b> changes a radio's name and LoRa &amp; modem settings; the Relay, Airtime, Position and MQTT tabs follow the radio picked at the top of the page. Adding or removing a radio takes effect after a restart.
         </p>
         <button type="button" class="btn btn-primary" @click="openAdd"><Plus class="size-4" />Add radio</button>
       </div>
@@ -211,8 +212,8 @@ function openSettings(id: string) {
               <span v-if="r.overlaps?.length" class="text-warn"> · shares its channel with {{ r.overlaps.join(', ') }}</span>
             </div>
           </div>
-          <button type="button" class="btn btn-sm" :disabled="r.id === currentRadio" :title="r.id === currentRadio ? 'Its settings are below' : 'Edit this radio'" @click="openSettings(r.id)">
-            <Settings2 class="size-3.5" />{{ r.id === currentRadio ? 'Editing below' : 'Edit' }}
+          <button type="button" class="btn btn-sm" title="Name and LoRa & modem settings" @click="openSettings(r.id)">
+            <Settings2 class="size-3.5" />Edit
           </button>
           <button v-if="!r.main" type="button" class="icon-btn" :aria-label="`Remove ${r.name}`" title="Remove" @click="remove(r.id, r.name, true)"><Trash class="size-4" /></button>
         </li>
@@ -298,5 +299,6 @@ function openSettings(id: string) {
         </div>
       </form>
     </Modal>
+    <RadioSettingsModal :radio-id="settingsFor" :ports="ports" :regions="regions" @close="settingsFor = null; load()" />
   </div>
 </template>
