@@ -28,6 +28,7 @@ type Config struct {
 	StateDir   string     `yaml:"state_dir" json:"state_dir"`
 	LogLevel   string     `yaml:"log_level" json:"log_level"`
 	Identities []Identity `yaml:"identities" json:"identities"`
+	Position   Position   `yaml:"position" json:"position"`
 
 	// Radios are additional radios on the same site, each on its own preset. The
 	// top-level radio/mesh/relay/airtime/links/identities above are the "main" radio.
@@ -47,6 +48,19 @@ type RadioInstance struct {
 	Airtime    Airtime    `yaml:"airtime" json:"airtime"`
 	Links      Links      `yaml:"links" json:"links"`
 	Identities []Identity `yaml:"identities" json:"identities"`
+	Position   Position   `yaml:"position" json:"position"`
+}
+
+// Position is a fixed site location broadcast by the relay persona (or every identity).
+type Position struct {
+	Latitude  float64 `yaml:"latitude" json:"latitude"`
+	Longitude float64 `yaml:"longitude" json:"longitude"`
+	Altitude  int     `yaml:"altitude" json:"altitude"` // metres above sea level
+	// PrecisionBits keeps that many bits of latitude/longitude: 32 = exact, 16 ≈ 360 m, 13 ≈ 3 km. 0 = 32.
+	PrecisionBits int           `yaml:"precision_bits" json:"precision_bits"`
+	Interval      time.Duration `yaml:"interval" json:"interval"` // 0 = 3h, minimum 30m
+	// Identities is "relay" (default) or "all".
+	Identities string `yaml:"identities" json:"identities"`
 }
 
 // Site holds settings shared by every radio on the mast.
@@ -74,6 +88,7 @@ func (c *Config) RadioConfigs() []RadioConfig {
 	for _, ri := range c.Radios {
 		v := *c
 		v.Radio, v.Mesh, v.Relay, v.Airtime, v.Links, v.Identities = ri.Radio, ri.Mesh, ri.Relay, ri.Airtime, ri.Links, ri.Identities
+		v.Position = ri.Position
 		v.StateDir = filepath.Join(c.StateDir, "radios", ri.ID)
 		v.Radios = nil
 		name := ri.Name
@@ -175,6 +190,9 @@ type Mesh struct {
 	FreqOffsetMHz   float64 `yaml:"frequency_offset_mhz" json:"frequency_offset_mhz"`
 	TxPowerDBm      int     `yaml:"tx_power_dbm" json:"tx_power_dbm"`
 	HopLimit        uint32  `yaml:"hop_limit" json:"hop_limit"`
+	// HwModel is the hardware identities advertise: "auto" or "" = the modem's board (Heltec V3 →
+	// HELTEC_V3), or a Meshtastic HardwareModel name such as PORTDUINO or RAK4631.
+	HwModel string `yaml:"hw_model" json:"hw_model"`
 }
 
 type Relay struct {
@@ -350,12 +368,29 @@ func (c *Config) validateOne() error {
 	default:
 		return fmt.Errorf("radio.driver must be kiss or none, not %q", c.Radio.Driver)
 	}
+	if name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel)); name != "" && name != "AUTO" {
+		if _, ok := pb.HardwareModel_value[name]; !ok {
+			return fmt.Errorf("mesh.hw_model %q is not a Meshtastic hardware model (or auto)", c.Mesh.HwModel)
+		}
+	}
+	if p := c.Position; p.Latitude < -90 || p.Latitude > 90 || p.Longitude < -180 || p.Longitude > 180 {
+		return errors.New("position.latitude/longitude out of range")
+	}
+	if p := c.Position.PrecisionBits; p < 0 || p > 32 {
+		return errors.New("position.precision_bits must be 0-32")
+	}
+	switch strings.ToLower(c.Position.Identities) {
+	case "", "relay", "all":
+	default:
+		return errors.New(`position.identities must be "relay" or "all"`)
+	}
 	if m := c.Links.MQTT; m.Enabled {
 		if m.Address == "" {
 			return errors.New("links.mqtt.address is required when the MQTT link is enabled")
 		}
-		if m.MapReport.Enabled && (m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0) {
-			return errors.New("links.mqtt.map_report needs a latitude and longitude")
+		if m.MapReport.Enabled && m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0 &&
+			c.Position.Latitude == 0 && c.Position.Longitude == 0 {
+			return errors.New("links.mqtt.map_report needs a position (its own latitude/longitude or the radio's position:)")
 		}
 		if p := m.MapReport.PositionPrecision; p < 0 || p > 32 {
 			return errors.New("links.mqtt.map_report.position_precision must be 0-32")
@@ -374,7 +409,20 @@ func (c *Config) MeshConfig() mesh.Config {
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
 		OKToMQTT: c.Links.MQTT.OKToMQTT, IgnoreMQTT: !c.Links.MQTT.RelayMQTT,
+		HwModel: c.hwModel(),
+		Position: mesh.FixedPosition{Latitude: c.Position.Latitude, Longitude: c.Position.Longitude,
+			Altitude: int32(c.Position.Altitude), PrecisionBits: uint32(c.Position.PrecisionBits),
+			Interval: c.Position.Interval, AllIdentities: strings.EqualFold(c.Position.Identities, "all")},
 	}
+}
+
+// hwModel resolves mesh.hw_model; UNSET means "use the modem's board".
+func (c *Config) hwModel() pb.HardwareModel {
+	name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel))
+	if name == "" || name == "AUTO" {
+		return pb.HardwareModel_UNSET
+	}
+	return pb.HardwareModel(pb.HardwareModel_value[name])
 }
 
 // MeshConfig is MeshConfig with this radio's ID set.

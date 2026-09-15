@@ -62,6 +62,10 @@ type Config struct {
 	// IgnoreMQTT stops the relay persona rebroadcasting packets that arrived via MQTT
 	// (LoRaConfig.ignore_mqtt), so broker traffic never costs this radio's airtime.
 	IgnoreMQTT bool
+	// HwModel is the hardware identities advertise; UNSET = the modem's own board.
+	HwModel pb.HardwareModel
+	// Position is the site's fixed location, broadcast and answered on request.
+	Position FixedPosition
 }
 
 // Counters are cumulative statistics.
@@ -523,8 +527,12 @@ func (h *Host) timerLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-tick.C:
+			if now.Sub(lastSave) > time.Minute {
+				h.recordOwnPositions()
+			}
 			h.doRetransmissions(now)
 			h.periodicNodeInfo(now)
+			h.periodicPosition(now)
 			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
 				lastSave = now
 				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {

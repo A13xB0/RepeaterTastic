@@ -319,13 +319,18 @@ func (l *Link) publishMapReport() {
 			online++
 		}
 	}
+	lat, lon, alt := l.opt.Latitude, l.opt.Longitude, l.opt.Altitude
+	if lat == 0 && lon == 0 { // no map-report position of its own: use the site position
+		pos := l.host.Config().Position
+		lat, lon, alt = pos.Latitude, pos.Longitude, int(pos.Altitude)
+	}
 	report := &pb.MapReport{
-		LongName: u.LongName, ShortName: u.ShortName, Role: u.Role, HwModel: u.HwModel,
+		LongName: u.LongName, ShortName: u.ShortName, Role: u.Role, HwModel: l.host.Hardware(),
 		FirmwareVersion: l.opt.FirmwareVersion, Region: region, ModemPreset: rp.Preset,
 		HasDefaultChannel: l.host.Config().PrimaryChannel == "",
-		LatitudeI:         truncate(int32(math.Round(l.opt.Latitude*1e7)), l.opt.PositionPrecision),
-		LongitudeI:        truncate(int32(math.Round(l.opt.Longitude*1e7)), l.opt.PositionPrecision),
-		Altitude:          int32(l.opt.Altitude), PositionPrecision: uint32(l.opt.PositionPrecision),
+		LatitudeI:         truncate(int32(math.Round(lat*1e7)), l.opt.PositionPrecision),
+		LongitudeI:        truncate(int32(math.Round(lon*1e7)), l.opt.PositionPrecision),
+		Altitude:          int32(alt), PositionPrecision: uint32(l.opt.PositionPrecision),
 		NumOnlineLocalNodes: uint32(online), HasOptedReportLocation: true,
 	}
 	payload, err := proto.Marshal(report)

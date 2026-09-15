@@ -198,6 +198,7 @@ func (s *Session) ownNodeInfo() *pb.NodeInfo {
 	e, _ := s.host.DB.Get(s.id.NodeNum)
 	e.Num = s.id.NodeNum
 	e.User = s.id.UserCopy()
+	e.User.HwModel = s.host.Hardware()
 	e.LastHeard = time.Now()
 	ni := e.NodeInfo()
 	ni.HopsAway = nil
@@ -215,7 +216,7 @@ func (s *Session) metadata() *pb.DeviceMetadata {
 		HasEthernet:        true,
 		Role:               s.id.UserCopy().Role,
 		PositionFlags:      811,
-		HwModel:            pb.HardwareModel_PORTDUINO,
+		HwModel:            s.host.Hardware(),
 		HasRemoteHardware:  false,
 		HasPKC:             true,
 	}

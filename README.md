@@ -42,6 +42,15 @@ The top-level radio stays the **main** radio and existing configs keep working u
 - **API:** `?radio=<id>` selects a radio (see [`docs/api.md`](docs/api.md)).
 - **EU_868 notes:** LongTurbo's 500 kHz doesn't fit the 250 kHz sub-band, and LongSlow sits on 869.4625 MHz.
 
+## Position and hardware
+
+- **`position:`** gives a radio a fixed site location. The relay persona (or every identity, with
+  `identities: all`) broadcasts it on a timer and answers position requests, and apps connected
+  to those identities see it.
+- **Hardware:** identities advertise the modem's real board by default (`mesh.hw_model: auto`, e.g.
+  Heltec V3 → `HELTEC_V3`). The firmware version reads `2.8.1.rptrtst`, so apps can still tell
+  it's RepeaterTastic.
+
 ## MQTT
 
 `links.mqtt` makes a radio a Meshtastic MQTT gateway (the relay persona is the gateway node):

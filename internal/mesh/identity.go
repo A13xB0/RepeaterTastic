@@ -46,6 +46,8 @@ type Identity struct {
 	backlog         []*pb.FromRadio
 	lastNodeInfoTx  time.Time
 	nextNodeInfo    time.Time
+	nextPosition      time.Time
+	lastPositionReply time.Time
 	nodeInfoReplied map[uint32]time.Time
 	lastTraceroute  time.Time
 }

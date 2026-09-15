@@ -15,7 +15,17 @@ mesh:
   override_frequency_mhz: 0
   frequency_offset_mhz: 0
   tx_power_dbm: 20        # SX1262 boards max out at 22 dBm; 0 = region limit. Check antenna gain and local rules.
+  hw_model: auto          # hardware identities advertise: auto = the modem's board (Heltec V3 → HELTEC_V3), or e.g. PORTDUINO
   hop_limit: 3
+
+# Fixed site position, broadcast on a timer and answered on request (also used for MQTT map reports).
+position:
+  latitude: 0             # both 0 = no position
+  longitude: 0
+  altitude: 0             # metres above sea level
+  precision_bits: 32      # 32 = exact, 16 ≈ 360 m, 13 ≈ 3 km
+  interval: 3h            # minimum 30m
+  identities: relay       # relay (the relay persona only) or all
 
 relay:
   role: client            # client (relay like a normal node) | router (relay first) | mute (never relay)
