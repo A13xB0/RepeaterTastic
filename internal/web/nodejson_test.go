@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
@@ -46,5 +47,19 @@ func TestWithMapKey(t *testing.T) {
 	}
 	if got := withMapKey("https://tiles.example/{z}/{x}/{y}.png", "k"); got != "https://tiles.example/{z}/{x}/{y}.png" {
 		t.Errorf("url without placeholder changed: %s", got)
+	}
+}
+
+func TestMissingAssetIs404(t *testing.T) {
+	s := &Server{}
+	rec := httptest.NewRecorder()
+	s.spa().ServeHTTP(rec, httptest.NewRequest("GET", "/assets/Links-gone0000.js", nil))
+	if rec.Code != 404 {
+		t.Fatalf("missing asset = %d %s, want 404", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	rec = httptest.NewRecorder()
+	s.spa().ServeHTTP(rec, httptest.NewRequest("GET", "/config/mqtt", nil))
+	if rec.Code != 200 {
+		t.Fatalf("history route = %d, want the app page", rec.Code)
 	}
 }

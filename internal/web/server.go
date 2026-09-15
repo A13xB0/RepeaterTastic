@@ -298,6 +298,13 @@ func (s *Server) spa() http.Handler {
 			p = "index.html"
 		}
 		if _, err := fs.Stat(dist, p); err != nil {
+			// A missing asset is a 404, not the app page: a tab still running an older build asks
+			// for chunks that no longer exist, and must see the failure so it can reload.
+			if strings.HasPrefix(p, "assets/") {
+				w.Header().Set("Cache-Control", "no-store")
+				http.NotFound(w, r)
+				return
+			}
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
 			p = "index.html"
