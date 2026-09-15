@@ -26,6 +26,7 @@ export interface Phy {
 
 export interface Status {
   version: string
+  map?: { tile_url: string }
   uptime_s: number
   radio: {
     driver: string

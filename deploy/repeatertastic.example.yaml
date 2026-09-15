@@ -39,6 +39,8 @@ web:
   enabled: true
   bind: 0.0.0.0
   port: 8080
+  # Tiles for the Nodes & map page. The public OSM servers discourage heavy use; point this at your own tile server for a busy site.
+  map_tile_url: https://tile.openstreetmap.org/{z}/{x}/{y}.png
 
 state_dir: /var/lib/repeatertastic
 log_level: info

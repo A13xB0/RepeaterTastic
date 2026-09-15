@@ -138,7 +138,7 @@ function logout() {
 
       <div class="flex items-center gap-2 border-t border-line-soft px-4 py-3">
         <div class="min-w-0 flex-1 text-2xs leading-snug text-ink-3">
-          <div>RepeaterTastic <span class="tabular-nums">v{{ live.status?.version ?? '…' }}</span></div>
+          <div>RepeaterTastic <span class="tabular-nums">v{{ (live.status?.version ?? '…').replace(/^v/, '') }}</span></div>
           <div>UI layout after openHop (MIT)</div>
         </div>
         <button class="icon-btn" title="Sign out" aria-label="Sign out" @click="logout"><LogOut class="size-4" /></button>

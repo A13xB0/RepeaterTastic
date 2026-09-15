@@ -81,10 +81,20 @@ export async function refreshStatus() {
 export async function refreshIdentities() {
   live.identities = await api.get<Identity[]>('/identities')
 }
+// Servers before the NodeInfo-defaults fix left names out for nodes heard without a
+// NodeInfo; views sort and filter on them, so fill the firmware's placeholders here too.
+export function normalizeNode(n: MeshNode): MeshNode {
+  const short = n.node_id.slice(-4)
+  n.long_name ??= `Meshtastic ${short}`
+  n.short_name ??= short
+  n.hw_model ??= 'UNSET'
+  n.role ??= 'CLIENT'
+  return n
+}
 export async function refreshNodes() {
   const list = await api.get<MeshNode[]>('/nodes')
   const map: Record<string, MeshNode> = {}
-  for (const n of list) map[n.node_id] = n
+  for (const n of list) map[n.node_id] = normalizeNode(n)
   live.nodes = map
 }
 export async function refreshPackets() {
@@ -141,7 +151,7 @@ export function connect() {
   })
   es.addEventListener('node', (e) => {
     const n = parse<MeshNode>(e as MessageEvent)
-    if (n) live.nodes[n.node_id] = n
+    if (n) live.nodes[n.node_id] = normalizeNode(n)
   })
   es.addEventListener('message', (e) => {
     const m = parse<{ identity: string; message: Message }>(e as MessageEvent)

@@ -139,6 +139,7 @@ func (s *Server) statusJSON(r *http.Request) map[string]any {
 			"tx": st.TxPackets, "errors": st.Errors, "noise_floor_dbm": st.NoiseFloorDBm, "queue": h.QueueLen()},
 		"phy":   phyJSON(rp, primary),
 		"relay": relay,
+		"map":   map[string]any{"tile_url": mapTileURL(s.cfg.Web.MapTileURL)},
 		"airtime": map[string]any{"window_s": 3600, "tx_ms": txMs, "rx_ms": rxMs, "duty_limit_pct": duty,
 			"tx_pct": h.Air.TxPercent(now), "channel_util_pct": h.Air.ChannelUtilPercent(now)},
 		"counters": map[string]uint64{"rx": c.Rx.Load(), "rx_dupe": c.RxDupe.Load(), "rx_undecryptable": c.RxUndecryptable.Load(),
@@ -692,6 +693,15 @@ func nodeJSON(e mesh.NodeEntry, knownBy []string) map[string]any {
 		"snr": e.SNR, "rssi": e.RSSI, "via_mqtt": e.ViaMQTT, "local": e.Local, "favorite": e.Favorite, "ignored": e.Ignored}
 	if e.User != nil {
 		n["long_name"], n["short_name"], n["hw_model"], n["role"] = e.User.LongName, e.User.ShortName, e.User.HwModel.String(), e.User.Role.String()
+		n["has_user"] = true
+	} else {
+		// Heard but no NodeInfo yet: the firmware's own placeholder names, so every
+		// node always has the fields the GUI sorts and filters on.
+		id := wire.NodeID(e.Num)
+		short := id[len(id)-4:]
+		n["long_name"], n["short_name"], n["hw_model"], n["role"] = "Meshtastic "+short, short,
+			pb.HardwareModel_UNSET.String(), pb.Config_DeviceConfig_CLIENT.String()
+		n["has_user"] = false
 	}
 	if !e.LastHeard.IsZero() {
 		n["last_heard"] = e.LastHeard.UnixMilli()
@@ -1171,4 +1181,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// mapTileURL falls back to the public OSM tiles for configs written before
+// web.map_tile_url existed.
+func mapTileURL(u string) string {
+	if u == "" {
+		return config.DefaultMapTileURL
+	}
+	return u
 }

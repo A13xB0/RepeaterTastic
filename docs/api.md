@@ -27,6 +27,7 @@ are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are 
           "tx_power_dbm": 27, "primary_channel": "LongFast"},
   "relay": {"node_id": "!3f0a91c2", "node_num": 1057657282, "long_name": "RepeaterTastic Relay", "short_name": "RPTR",
             "role": "client"},
+  "map": {"tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png"},
   "airtime": {"window_s": 3600, "tx_ms": 147700, "rx_ms": 402000, "duty_limit_pct": 10, "tx_pct": 4.1,
               "channel_util_pct": 11.2},
   "counters": {"rx": 1203, "rx_dupe": 402, "rx_undecryptable": 77, "tx": 311, "relayed": 120,
@@ -80,6 +81,8 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 ## Nodes (shared node DB)
 
 `GET /api/v1/nodes` → `[Node]`
+
+A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": "Meshtastic 77f6"`, `"short_name": "77f6"`, `"hw_model": "UNSET"`, `"role": "CLIENT"`) and `"has_user": false`, so every node always carries every field.
 
 ```json
 {"node_id": "!5b9e2213", "node_num": 1537090067, "long_name": "Hilltop", "short_name": "HILL", "hw_model": "HELTEC_V3",

@@ -81,7 +81,14 @@ type Web struct {
 	Port    int    `yaml:"port" json:"port"`
 	// SessionTTL is how long a web login lasts.
 	SessionTTL time.Duration `yaml:"session_ttl" json:"session_ttl"`
+	// MapTileURL is the Leaflet tile template for the nodes map. The public OSM
+	// servers' usage policy discourages heavy app use, so busy sites should
+	// point this at their own or a commercial tile server.
+	MapTileURL string `yaml:"map_tile_url" json:"map_tile_url"`
 }
+
+// DefaultMapTileURL is the public OpenStreetMap tile server.
+const DefaultMapTileURL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 // Identity seeds a virtual node on first start; afterwards identities live in the state dir.
 type Identity struct {
@@ -99,7 +106,7 @@ func Default() *Config {
 		Relay:    Relay{Role: mesh.RoleClient, LongName: "RepeaterTastic Relay", ShortName: "RPTR"},
 		Airtime:  Airtime{NodeInfoInterval: 3 * time.Hour, IdentitySharePct: 25},
 		Links:    Links{UDPMulticast: UDPMulticast{Group: "239.0.0.69:4403"}},
-		Web:      Web{Enabled: true, Bind: "0.0.0.0", Port: 8080, SessionTTL: 7 * 24 * time.Hour},
+		Web:      Web{Enabled: true, Bind: "0.0.0.0", Port: 8080, SessionTTL: 7 * 24 * time.Hour, MapTileURL: DefaultMapTileURL},
 		MDNS:     MDNS{Enabled: true},
 		StateDir: "/var/lib/repeatertastic",
 		LogLevel: "info",
