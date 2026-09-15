@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
+	"github.com/A13xB0/RepeaterTastic/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/phy"
 )
 

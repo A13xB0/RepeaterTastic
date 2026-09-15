@@ -1,0 +1,204 @@
+// RepeaterTastic Plugin API v1.
+//
+// A plugin is a separate process that connects to RepeaterTastic's PluginHost: over a Unix socket
+// when RepeaterTastic starts it (managed), or over TCP when it runs elsewhere (attached). Every call
+// carries the plugin's token in the "authorization" metadata ("Bearer <token>"). The Session stream
+// must be opened first; the other calls work while it is open and are checked against the
+// permissions the operator granted.
+syntax = "proto3";
+
+package repeatertastic.plugin.v1;
+
+option go_package = "github.com/A13xB0/RepeaterTastic/pluginapi/v1;pluginv1";
+
+service PluginHost {
+  // Session: the plugin sends Hello first; the host answers Welcome (or closes with an error), then
+  // streams events the plugin is allowed to see. The plugin sends status, logs and heartbeats.
+  // Ending the stream means the plugin has stopped.
+  rpc Session(stream PluginMessage) returns (stream HostMessage);
+
+  rpc ListRadios(ListRadiosRequest) returns (ListRadiosResponse);
+  // nodes.read
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  // messages.send: text from the plugin's own identity (identity.own) on a radio.
+  rpc SendText(SendTextRequest) returns (SendResponse);
+  // traceroute.send: from a radio's relay persona or the plugin's identity.
+  rpc Traceroute(TracerouteRequest) returns (SendResponse);
+  // identity.own: create (or return) the plugin's identity on a radio.
+  rpc EnsureIdentity(EnsureIdentityRequest) returns (Identity);
+}
+
+// ------------------------------------------------------------------------------------ session
+
+message PluginMessage {
+  oneof msg {
+    Hello hello = 1;
+    Status status = 2;
+    LogLine log = 3;
+    Heartbeat heartbeat = 4;
+  }
+}
+
+message HostMessage {
+  oneof msg {
+    Welcome welcome = 1;
+    PacketEvent packet = 2;
+    NodeEvent node = 3;
+    TextMessageEvent text = 4;
+    TracerouteEvent traceroute = 5;
+    SettingsChanged settings = 6;
+    Stop stop = 7;
+  }
+}
+
+message Hello {
+  string plugin_id = 1;
+  uint32 api_version = 2; // 1
+  string plugin_version = 3;
+}
+
+message Welcome {
+  uint32 api_version = 1;
+  string host_version = 2;
+  repeated string permissions = 3; // granted
+  string settings_json = 4;        // the plugin's settings, secrets included
+  repeated Radio radios = 5;
+  string data_dir = 6;             // a folder the plugin may write to (managed plugins)
+}
+
+message Status {
+  string summary = 1;              // one line shown on the plugin's card, e.g. "API connected"
+  map<string, string> fields = 2;  // shown as label: value pairs
+  string state = 3;                // "ok", "warning" or "error"
+}
+
+message LogLine {
+  string level = 1; // debug, info, warn, error
+  string message = 2;
+}
+
+message Heartbeat {}
+
+message SettingsChanged {
+  string settings_json = 1;
+}
+
+message Stop {
+  string reason = 1;
+}
+
+// ------------------------------------------------------------------------------------ model
+
+message Radio {
+  string id = 1;              // "main", "mf", ...
+  string name = 2;
+  string region = 3;          // "EU_868"
+  string preset = 4;          // "LONG_FAST"
+  string preset_name = 5;     // "LongFast"
+  double frequency_mhz = 6;
+  bool connected = 7;
+  Identity relay = 8;         // the radio's relay persona
+}
+
+message Identity {
+  string node_id = 1;         // "!a1c40e07"
+  uint32 node_num = 2;
+  string long_name = 3;
+  string short_name = 4;
+  string radio_id = 5;
+  bool owned_by_plugin = 6;
+}
+
+message Node {
+  uint32 node_num = 1;
+  string node_id = 2;
+  string radio_id = 3;
+  bytes user = 4;             // meshtastic.User protobuf, when known
+  bytes position = 5;         // meshtastic.Position protobuf, when known
+  bytes device_metrics = 6;   // meshtastic.DeviceMetrics protobuf, when known
+  int64 last_heard_ms = 7;
+  float snr = 8;
+  int32 rssi = 9;
+  int32 hops_away = 10;       // -1 unknown
+  bool via_mqtt = 11;
+  bool local = 12;            // one of RepeaterTastic's own identities
+}
+
+// ------------------------------------------------------------------------------------ events
+
+// PacketEvent: a packet a radio received or transmitted (packets.read).
+message PacketEvent {
+  string radio_id = 1;
+  string direction = 2;       // "rx" or "tx"
+  // How RepeaterTastic handled it: heard, delivered, relayed, dup, undecryptable, ours, echo, ...
+  string kind = 3;
+  // meshtastic.MeshPacket protobuf. Decoded (payload variant "decoded") when a channel or PKI key
+  // this radio holds could read it, otherwise encrypted exactly as heard. rx_time, rx_snr,
+  // rx_rssi, hop_limit, hop_start, via_mqtt, relay_node and next_hop are filled.
+  bytes mesh_packet = 4;
+  bool decoded = 5;
+  uint32 channel_hash = 6;    // the on-air channel hash (mesh_packet.channel is the index when decoded)
+  string channel_name = 7;    // when decoded on a named channel
+  int64 time_ms = 8;
+  // The node that reports this packet: the radio's relay persona.
+  uint32 reporter_node_num = 9;
+}
+
+message NodeEvent {
+  Node node = 1;
+}
+
+// TextMessageEvent: a text message delivered to the plugin's own identity (messages.read or identity.own).
+message TextMessageEvent {
+  string radio_id = 1;
+  string identity_node_id = 2;
+  uint32 from = 3;
+  uint32 to = 4;
+  uint32 channel = 5;         // channel index on the identity; 0 for DMs
+  bool direct = 6;
+  string text = 7;
+  uint32 packet_id = 8;
+  int64 time_ms = 9;
+}
+
+message TracerouteEvent {
+  string radio_id = 1;
+  string identity_node_id = 2;
+  string target_node_id = 3;
+  repeated string route = 4;
+  repeated double snr_towards = 5;
+  repeated string route_back = 6;
+  repeated double snr_back = 7;
+}
+
+// ------------------------------------------------------------------------------------ calls
+
+message ListRadiosRequest {}
+message ListRadiosResponse { repeated Radio radios = 1; }
+
+message ListNodesRequest { string radio_id = 1; } // "" = every radio
+message ListNodesResponse { repeated Node nodes = 1; }
+
+message SendTextRequest {
+  string radio_id = 1;
+  string to = 2;              // "!a1c40e07" for a DM, "" for a channel
+  uint32 channel = 3;         // channel index on the plugin's identity
+  string text = 4;
+  bool want_ack = 5;
+}
+
+message TracerouteRequest {
+  string radio_id = 1;
+  string target = 2;          // "!a1c40e07"
+  bool from_relay = 3;        // from the radio's relay persona instead of the plugin's identity
+}
+
+message SendResponse {
+  uint32 packet_id = 1;
+}
+
+message EnsureIdentityRequest {
+  string radio_id = 1;
+  string long_name = 2;
+  string short_name = 3;
+}

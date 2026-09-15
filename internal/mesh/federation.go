@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
+	"github.com/A13xB0/RepeaterTastic/pb"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
 )
 

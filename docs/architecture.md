@@ -47,7 +47,7 @@ internal/links/mqtt    Meshtastic MQTT connections (gateway, monitor, bridge, ma
 internal/site          several radios on one host: shared transmit turns and airtime cap
 internal/config        YAML config, validation, environment overrides
 internal/web           REST/SSE API, auth, embedded GUI
-internal/pb            generated protobufs (scripts/gen-proto.sh; vendored in proto/)
+pb/                    generated Meshtastic protobufs (scripts/gen-proto.sh; vendored in proto/), public for plugins
 ui/                    web GUI (Vue 3 + Vite), built into internal/web/dist
 firmware/              KISS modem patch, board list, build script
 tests/interop          meshtasticd Docker harness + golden vectors

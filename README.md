@@ -99,7 +99,7 @@ docker build -t repeatertastic .         # container image
 ./firmware/build.sh Heltec_v3_kiss_modem # modem firmware (PlatformIO)
 ```
 
-Go 1.24+ is needed. `MAP_API_KEY=… make build` (or `--secret id=map_api_key,env=CARTO_API_KEY` for
+Go 1.25+ is needed. `MAP_API_KEY=… make build` (or `--secret id=map_api_key,env=CARTO_API_KEY` for
 Docker) bakes in a default map tile key; see [Configuration](docs/configuration.md#web-and-map-tiles).
 
 ## Documentation

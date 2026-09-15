@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 func TestFrequencySlots(t *testing.T) {

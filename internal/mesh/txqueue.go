@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/A13xB0/RepeaterTastic/internal/pb"
+	"github.com/A13xB0/RepeaterTastic/pb"
 )
 
 type txItem struct {
