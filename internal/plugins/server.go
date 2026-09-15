@@ -422,15 +422,29 @@ func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteReq
 	if err != nil || target == wire.Broadcast {
 		return nil, status.Error(codes.InvalidArgument, "target must be a node id like !a1c40e07")
 	}
+	// A plugin sends only from the identity chosen for it in its settings on that radio, or the
+	// relay persona when none is chosen there.
+	h.m.mu.Lock()
+	_, _, settings := p.effective()
+	var schema []Setting
+	if p.manifest != nil {
+		schema = p.manifest.Settings
+	}
+	h.m.mu.Unlock()
+	allowed := chosenIdentities(schema, settings, r.Host)
 	from := r.Host.Relay()
+	if len(allowed) > 0 {
+		from = allowed[0]
+	}
 	if req.From != "" {
 		num, err := wire.ParseNodeID(req.From)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "from must be a node id like !a1c40e07")
 		}
-		if from = r.Host.Identity(num); from == nil {
-			return nil, status.Errorf(codes.NotFound, "%s isn't an identity on %s", req.From, r.ID)
+		if !slices.ContainsFunc(append(allowed, from), func(id *mesh.Identity) bool { return id.NodeNum == num }) {
+			return nil, status.Errorf(codes.PermissionDenied, "%s isn't the identity chosen in the plugin's settings for %s", req.From, r.ID)
 		}
+		from = r.Host.Identity(num)
 	}
 	if ok, wait := p.trBudget.take(); !ok {
 		return nil, budgetError("traceroutes", h.m.opt.Config.TraceroutesPerHour, wait)
@@ -440,6 +454,37 @@ func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteReq
 	}
 	p.logs.add("info", "host", fmt.Sprintf("sent a traceroute from %s to %s on %s", from.NodeID(), req.Target, r.ID))
 	return &pluginv1.SendResponse{}, nil
+}
+
+// chosenIdentities are the identities on this radio picked in the plugin's "identities" settings.
+func chosenIdentities(schema []Setting, settings map[string]any, host *mesh.Host) []*mesh.Identity {
+	var out []*mesh.Identity
+	for _, s := range schema {
+		if s.Type != "identities" {
+			continue
+		}
+		var ids []string
+		switch v := settings[s.Key].(type) {
+		case []string:
+			ids = v
+		case []any:
+			for _, x := range v {
+				if str, ok := x.(string); ok {
+					ids = append(ids, str)
+				}
+			}
+		}
+		for _, str := range ids {
+			num, err := wire.ParseNodeID(str)
+			if err != nil {
+				continue
+			}
+			if id := host.Identity(num); id != nil && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
 }
 
 func budgetError(what string, perHour int, wait time.Duration) error {

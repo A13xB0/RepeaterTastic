@@ -28,7 +28,7 @@ var Permissions = map[string]string{
 	"nodes.read":      "See the node database",
 	"messages.read":   "Read text messages to and from each radio's relay persona",
 	"messages.send":   "Send text messages from each radio's relay persona",
-	"traceroute.send": "Send traceroutes from a radio's relay persona or its other identities",
+	"traceroute.send": "Send traceroutes from the identity chosen in the plugin's settings (or the radio's relay persona)",
 }
 
 // Manifest is plugin.yaml.

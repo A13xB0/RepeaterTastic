@@ -1828,10 +1828,11 @@ func (x *SendTextRequest) GetWantAck() bool {
 }
 
 type TracerouteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RadioId       string                 `protobuf:"bytes,1,opt,name=radio_id,json=radioId,proto3" json:"radio_id,omitempty"` // "" = the main radio
-	Target        string                 `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`                  // "!a1c40e07"
-	From          string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`                      // an identity on that radio ("!…"); "" = the relay persona
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	RadioId string                 `protobuf:"bytes,1,opt,name=radio_id,json=radioId,proto3" json:"radio_id,omitempty"` // "" = the main radio
+	Target  string                 `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`                  // "!a1c40e07"
+	// "" = the chosen identity (or the relay persona). Anything else must be that identity.
+	From          string `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

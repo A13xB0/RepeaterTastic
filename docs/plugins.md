@@ -49,7 +49,7 @@ for a permission it wasn't granted gets a "permission denied" error.
 | `nodes.read` | See the node database (and traceroute results) |
 | `messages.read` | Read text messages to and from each radio's relay persona |
 | `messages.send` | Send text messages from each radio's relay persona |
-| `traceroute.send` | Send traceroutes from a radio's relay persona or its other identities |
+| `traceroute.send` | Send traceroutes from the identity chosen in the plugin's settings on that radio, or the radio's relay persona when none is chosen |
 
 Plugins act as the **relay persona** of each radio: the node the site already is on the mesh.
 Transmissions go through the normal transmit queue and duty cycle. Each plugin also has a budget,
@@ -264,7 +264,9 @@ Decoding uses every identity's channels and keys, not just the relay persona's. 
 reports **as an identity** should keep only what that node would hear itself: the identity is
 in `holders` (use its `channel_index` as the channel), and `to` is either broadcast or that
 identity. For the relay persona, `relay_channel_index >= 0` says the same thing. `ListRadios`
-lists each radio's identities, and `Traceroute` takes `from` to send from one of them.
+lists each radio's identities. `Traceroute` always sends from the identity chosen in the plugin's
+`identities` settings on that radio, or its relay persona when none is chosen there. A `from`
+naming any other identity is refused, so the operator decides who transmits.
 
 The node database (`ListNodes`, `NodeEvent`) is shared by all of a radio's identities. It can hold
 names, positions and metrics learned on channels or in DMs the relay persona can't read.

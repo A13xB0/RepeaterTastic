@@ -22,8 +22,8 @@ service PluginHost {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   // messages.send: text from a radio's relay persona, within the plugin's send budget.
   rpc SendText(SendTextRequest) returns (SendResponse);
-  // traceroute.send: from a radio's relay persona or another of its identities, within the
-  // plugin's send budget.
+  // traceroute.send: from the identity chosen in the plugin's "identities" settings on that radio
+  // (the relay persona when none is), within the plugin's send budget.
   rpc Traceroute(TracerouteRequest) returns (SendResponse);
 }
 
@@ -220,7 +220,8 @@ message SendTextRequest {
 message TracerouteRequest {
   string radio_id = 1;        // "" = the main radio
   string target = 2;          // "!a1c40e07"
-  string from = 3;            // an identity on that radio ("!…"); "" = the relay persona
+  // "" = the chosen identity (or the relay persona). Anything else must be that identity.
+  string from = 3;
 }
 
 message SendResponse {

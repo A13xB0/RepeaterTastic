@@ -47,8 +47,8 @@ type PluginHostClient interface {
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	// messages.send: text from a radio's relay persona, within the plugin's send budget.
 	SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendResponse, error)
-	// traceroute.send: from a radio's relay persona or another of its identities, within the
-	// plugin's send budget.
+	// traceroute.send: from the identity chosen in the plugin's "identities" settings on that radio
+	// (the relay persona when none is), within the plugin's send budget.
 	Traceroute(ctx context.Context, in *TracerouteRequest, opts ...grpc.CallOption) (*SendResponse, error)
 }
 
@@ -126,8 +126,8 @@ type PluginHostServer interface {
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	// messages.send: text from a radio's relay persona, within the plugin's send budget.
 	SendText(context.Context, *SendTextRequest) (*SendResponse, error)
-	// traceroute.send: from a radio's relay persona or another of its identities, within the
-	// plugin's send budget.
+	// traceroute.send: from the identity chosen in the plugin's "identities" settings on that radio
+	// (the relay persona when none is), within the plugin's send budget.
 	Traceroute(context.Context, *TracerouteRequest) (*SendResponse, error)
 	mustEmbedUnimplementedPluginHostServer()
 }

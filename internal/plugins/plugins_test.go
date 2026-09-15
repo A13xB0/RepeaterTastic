@@ -341,3 +341,27 @@ func logText(lines []LogLine) string {
 	}
 	return sb.String()
 }
+
+// Traceroutes come only from the identity chosen in the plugin's settings on that radio, or its
+// relay persona when none is chosen there.
+func TestChosenIdentities(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := newHost(t, ctx, sim.NewHub(0), "A", log)
+	other, err := mesh.NewIdentity(nil, "Claims", "CLM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.AddIdentity(other); err != nil {
+		t.Fatal(err)
+	}
+	schema := []Setting{{Key: "report_as", Type: "identities"}}
+	if got := chosenIdentities(schema, map[string]any{}, h); len(got) != 0 {
+		t.Fatalf("nothing chosen, got %v", got)
+	}
+	got := chosenIdentities(schema, map[string]any{"report_as": []any{"!00000001", other.NodeID()}}, h)
+	if len(got) != 1 || got[0] != other {
+		t.Fatalf("chosen = %v", got)
+	}
+}
