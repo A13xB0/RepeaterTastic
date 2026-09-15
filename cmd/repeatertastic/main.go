@@ -23,6 +23,7 @@ import (
 	"github.com/A13xB0/RepeaterTastic/internal/radio/kiss"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/lazy"
 	"github.com/A13xB0/RepeaterTastic/internal/radio/null"
+	"github.com/A13xB0/RepeaterTastic/internal/site"
 	"github.com/A13xB0/RepeaterTastic/internal/web"
 )
 
@@ -51,60 +52,66 @@ func run(cfgPath string) error {
 	_ = level.UnmarshalText([]byte(strings.ToUpper(cfg.LogLevel)))
 	log := slog.New(logbuf.NewHandler(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}), logs))
 	slog.SetDefault(log)
-	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
-		return fmt.Errorf("state dir: %w", err)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var r radio.Radio
-	switch cfg.Radio.Driver {
-	case "kiss":
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "kiss") }
-		opts := kiss.Options{Device: cfg.Radio.Device, Baud: cfg.Radio.Baud, Logf: logf}
-		r = lazy.New(func(ctx context.Context) (radio.Radio, error) { return kiss.Open(ctx, opts) },
-			radio.Info{Driver: "kiss", Device: cfg.Radio.Device}, 5*time.Second, logf)
-	case "none", "sim":
-		r = null.New()
+	rcs := cfg.RadioConfigs()
+	var radios []*radioRuntime
+	for _, rc := range rcs {
+		rlog := log
+		if len(rcs) > 1 {
+			rlog = log.With("radio", rc.ID)
+		}
+		rt, err := startRadio(ctx, rc, rlog)
+		if err != nil {
+			return fmt.Errorf("radio %s: %w", rc.ID, err)
+		}
+		defer rt.radio.Close()
+		radios = append(radios, rt)
 	}
-	defer r.Close()
+	primary := radios[0]
+	logs.OnEntry(func(e logbuf.Entry) {
+		for _, rt := range radios {
+			rt.host.Bus.Publish(mesh.Event{Type: "log", Data: e})
+		}
+	})
 
-	host, err := mesh.NewHost(cfg.MeshConfig(), r, log)
-	if err != nil {
-		return err
+	// One site coordinator whenever several radios share a mast (co-channel transmit
+	// turns) or a site-wide airtime budget is set.
+	var st *site.Site
+	if len(radios) > 1 || cfg.Site.DutyCyclePct > 0 {
+		st = site.New(cfg.Site.DutyCyclePct)
+		for _, rt := range radios {
+			st.Add(rt.host)
+		}
+		for _, rt := range radios {
+			if o := st.Overlaps(rt.host); len(o) > 0 {
+				ids := make([]string, 0, len(o))
+				for _, h := range o {
+					ids = append(ids, h.RadioID())
+				}
+				log.Warn("radio shares its channel with other radios on this site; they will take turns to transmit",
+					"radio", rt.rc.ID, "overlaps", strings.Join(ids, ","))
+			}
+		}
 	}
-	if err := loadIdentities(cfg, host, log); err != nil {
-		return err
-	}
-	logs.OnEntry(func(e logbuf.Entry) { host.Bus.Publish(mesh.Event{Type: "log", Data: e}) })
-
-	api := phoneapi.NewManager(host, log)
-	go api.Run(ctx)
 
 	if cfg.MDNS.Enabled {
-		go runMDNS(ctx, host, log)
-	}
-
-	var udpLink *udp.Link
-	if cfg.Links.UDPMulticast.Enabled {
-		var groups []string
-		if g := cfg.Links.UDPMulticast.Group; g != "" && !strings.Contains(g, ":") {
-			groups = strings.Split(g, ",")
+		hosts := make([]*mesh.Host, 0, len(radios))
+		for _, rt := range radios {
+			hosts = append(hosts, rt.host)
 		}
-		udpLink, err = udp.New(host, groups, 0, "", log)
-		if err != nil {
-			return err
-		}
-		go func() {
-			if err := udpLink.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("UDP link stopped", "err", err)
-			}
-		}()
+		go runMDNS(ctx, hosts, log)
 	}
 
 	if cfg.Web.Enabled {
-		srv, err := web.New(web.Options{Config: cfg, Host: host, API: api, Logs: logs, UDP: udpLink, Version: version, Log: log})
+		extra := make([]web.Radio, 0, len(radios)-1)
+		for _, rt := range radios[1:] {
+			extra = append(extra, web.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Config: rt.rc.Config, Host: rt.host, API: rt.api, UDP: rt.udp})
+		}
+		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp,
+			Radios: extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
 		}
@@ -115,16 +122,88 @@ func run(cfgPath string) error {
 		}()
 	}
 
-	rp := host.RadioParams()
-	log.Info("RepeaterTastic starting", "version", version, "region", rp.Region.Name, "preset", rp.PresetName(),
-		"freq_mhz", rp.FrequencyMHz, "identities", len(host.Identities()))
-	err = host.Run(ctx)
-	_ = host.SaveIdentities()
-	if errors.Is(err, context.Canceled) {
+	for _, rt := range radios {
+		rp := rt.host.RadioParams()
+		log.Info("RepeaterTastic starting", "version", version, "radio", rt.rc.ID, "region", rp.Region.Name, "preset", rp.PresetName(),
+			"freq_mhz", rp.FrequencyMHz, "identities", len(rt.host.Identities()))
+	}
+	errs := make(chan error, len(radios))
+	for _, rt := range radios[1:] {
+		go func() { errs <- rt.host.Run(ctx) }()
+	}
+	err = primary.host.Run(ctx)
+	stop() // one radio stopping stops the others
+	for range radios[1:] {
+		if e := <-errs; err == nil || errors.Is(err, context.Canceled) {
+			err = e
+		}
+	}
+	for _, rt := range radios {
+		_ = rt.host.SaveIdentities()
+	}
+	if err == nil || errors.Is(err, context.Canceled) {
 		log.Info("stopped")
 		return nil
 	}
 	return err
+}
+
+// radioRuntime is one radio's running stack.
+type radioRuntime struct {
+	rc    config.RadioConfig
+	radio radio.Radio
+	host  *mesh.Host
+	api   *phoneapi.Manager
+	udp   *udp.Link
+}
+
+// startRadio opens a radio's modem, builds its host and identities and starts its client
+// API and UDP link. The host itself is run by the caller.
+func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (*radioRuntime, error) {
+	if err := os.MkdirAll(rc.StateDir, 0o700); err != nil {
+		return nil, fmt.Errorf("state dir: %w", err)
+	}
+	var r radio.Radio
+	switch rc.Radio.Driver {
+	case "kiss":
+		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "kiss") }
+		opts := kiss.Options{Device: rc.Radio.Device, Baud: rc.Radio.Baud, Logf: logf}
+		r = lazy.New(func(ctx context.Context) (radio.Radio, error) { return kiss.Open(ctx, opts) },
+			radio.Info{Driver: "kiss", Device: rc.Radio.Device}, 5*time.Second, logf)
+	default:
+		r = null.New()
+	}
+
+	host, err := mesh.NewHost(rc.MeshConfig(), r, log)
+	if err != nil {
+		r.Close()
+		return nil, err
+	}
+	if err := loadIdentities(rc.Config, host, log); err != nil {
+		r.Close()
+		return nil, err
+	}
+	api := phoneapi.NewManager(host, log)
+	go api.Run(ctx)
+
+	rt := &radioRuntime{rc: rc, radio: r, host: host, api: api}
+	if rc.Links.UDPMulticast.Enabled {
+		var groups []string
+		if g := rc.Links.UDPMulticast.Group; g != "" && !strings.Contains(g, ":") {
+			groups = strings.Split(g, ",")
+		}
+		rt.udp, err = udp.New(host, groups, 0, "", log)
+		if err != nil {
+			r.Close()
+			return nil, err
+		}
+		go func() {
+			if err := rt.udp.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("UDP link stopped", "err", err)
+			}
+		}()
+	}
+	return rt, nil
 }
 
 // loadIdentities restores identities from the state dir, or creates the relay persona and the
@@ -190,31 +269,35 @@ func newUniqueIdentity(host *mesh.Host, long, short string) (*mesh.Identity, err
 	return nil, errors.New("couldn't find a free node number")
 }
 
-// runMDNS keeps the advertised _meshtastic._tcp services in step with the identities.
-func runMDNS(ctx context.Context, host *mesh.Host, log *slog.Logger) {
+// runMDNS keeps the advertised _meshtastic._tcp services in step with every radio's identities.
+func runMDNS(ctx context.Context, hosts []*mesh.Host, log *slog.Logger) {
 	r := mdns.New(log)
 	update := func() {
 		var svcs []mdns.Service
-		for _, id := range host.Identities() {
-			if id.IsRelay || !id.Enabled || id.APIPort <= 0 {
-				continue
+		for _, host := range hosts {
+			for _, id := range host.Identities() {
+				if id.IsRelay || !id.Enabled || id.APIPort <= 0 {
+					continue
+				}
+				u := id.UserCopy()
+				svcs = append(svcs, mdns.Service{Instance: fmt.Sprintf("%s (%s)", u.LongName, id.NodeID()), Port: id.APIPort,
+					TXT: map[string]string{"id": id.NodeID(), "shortname": u.ShortName, "pio_env": "repeatertastic"}})
 			}
-			u := id.UserCopy()
-			svcs = append(svcs, mdns.Service{Instance: fmt.Sprintf("%s (%s)", u.LongName, id.NodeID()), Port: id.APIPort,
-				TXT: map[string]string{"id": id.NodeID(), "shortname": u.ShortName, "pio_env": "repeatertastic"}})
 		}
 		r.SetServices(svcs)
 	}
 	update()
-	events, unsub := host.Bus.Subscribe(16)
-	defer unsub()
-	go func() {
-		for e := range events {
-			if e.Type == "identity" {
-				update()
+	for _, host := range hosts {
+		events, unsub := host.Bus.Subscribe(16)
+		defer unsub()
+		go func() {
+			for e := range events {
+				if e.Type == "identity" {
+					update()
+				}
 			}
-		}
-	}()
+		}()
+	}
 	if err := r.Run(ctx); err != nil {
 		log.Warn("mDNS advertising disabled", "err", err)
 	}

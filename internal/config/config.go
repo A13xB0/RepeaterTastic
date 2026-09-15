@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,7 +29,135 @@ type Config struct {
 	LogLevel   string     `yaml:"log_level" json:"log_level"`
 	Identities []Identity `yaml:"identities" json:"identities"`
 
+	// Radios are additional radios on the same site, each on its own preset. The
+	// top-level radio/mesh/relay/airtime/links/identities above are the "main" radio.
+	Radios []RadioInstance `yaml:"radios,omitempty" json:"radios,omitempty"`
+	Site   Site            `yaml:"site,omitempty" json:"site,omitempty"`
+
 	path string
+}
+
+// RadioInstance is one extra radio: its own modem, preset, relay persona and identities.
+type RadioInstance struct {
+	ID         string     `yaml:"id" json:"id"`     // short and stable: names the state dir and ?radio= in the API
+	Name       string     `yaml:"name" json:"name"` // shown in the GUI
+	Radio      Radio      `yaml:"radio" json:"radio"`
+	Mesh       Mesh       `yaml:"mesh" json:"mesh"`
+	Relay      Relay      `yaml:"relay" json:"relay"`
+	Airtime    Airtime    `yaml:"airtime" json:"airtime"`
+	Links      Links      `yaml:"links" json:"links"`
+	Identities []Identity `yaml:"identities" json:"identities"`
+}
+
+// Site holds settings shared by every radio on the mast.
+type Site struct {
+	// DutyCyclePct caps the summed transmit airtime of all radios over the last hour,
+	// on top of each radio's own limit. 0 = no site-wide cap.
+	DutyCyclePct float64 `yaml:"duty_cycle_percent" json:"duty_cycle_percent"`
+}
+
+// MainRadioID is the ID of the radio described by the top-level config.
+const MainRadioID = "main"
+
+// RadioConfig is one radio's view of the configuration: shared settings from the
+// file, per-radio sections from the radio's own block, and its own state dir.
+type RadioConfig struct {
+	ID   string
+	Name string
+	*Config
+}
+
+// RadioConfigs lists every radio, main first. Extra radios get their own state dir
+// (state_dir/radios/<id>) so identities and history never mix.
+func (c *Config) RadioConfigs() []RadioConfig {
+	out := []RadioConfig{{ID: MainRadioID, Name: "Main", Config: c}}
+	for _, ri := range c.Radios {
+		v := *c
+		v.Radio, v.Mesh, v.Relay, v.Airtime, v.Links, v.Identities = ri.Radio, ri.Mesh, ri.Relay, ri.Airtime, ri.Links, ri.Identities
+		v.StateDir = filepath.Join(c.StateDir, "radios", ri.ID)
+		v.Radios = nil
+		name := ri.Name
+		if name == "" {
+			name = ri.ID
+		}
+		out = append(out, RadioConfig{ID: ri.ID, Name: name, Config: &v})
+	}
+	return out
+}
+
+// fillRadioDefaults gives extra radios the defaults a top-level radio would get, inheriting
+// the region and NodeInfo interval from the main radio. Extra relays default to mute:
+// a new radio on a mast shouldn't start repeating until someone decides it should.
+func (c *Config) fillRadioDefaults() {
+	d := Default()
+	for i := range c.Radios {
+		r := &c.Radios[i]
+		if r.Radio.Driver == "" {
+			r.Radio.Driver = d.Radio.Driver
+		}
+		if r.Radio.Baud == 0 {
+			r.Radio.Baud = d.Radio.Baud
+		}
+		if r.Mesh.Region == "" {
+			r.Mesh.Region = c.Mesh.Region
+		}
+		if r.Mesh.HopLimit == 0 {
+			r.Mesh.HopLimit = d.Mesh.HopLimit
+		}
+		if r.Relay.Role == "" {
+			r.Relay.Role = mesh.RoleMute
+		}
+		if r.Relay.LongName == "" {
+			r.Relay.LongName = "RepeaterTastic " + r.ID + " Relay"
+		}
+		if r.Relay.ShortName == "" {
+			r.Relay.ShortName = strings.ToUpper(r.ID)
+			if len(r.Relay.ShortName) > 4 {
+				r.Relay.ShortName = r.Relay.ShortName[:4]
+			}
+		}
+		if r.Airtime.NodeInfoInterval == 0 {
+			r.Airtime.NodeInfoInterval = c.Airtime.NodeInfoInterval
+		}
+	}
+}
+
+var radioIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,23}$`)
+
+func (c *Config) validateRadios() error {
+	seenID := map[string]bool{MainRadioID: true}
+	seenDev := map[string]string{}
+	seenPort := map[int]string{}
+	for i, rc := range c.RadioConfigs() {
+		if i > 0 {
+			if !radioIDPattern.MatchString(rc.ID) {
+				return fmt.Errorf("radios: id %q must be 1-24 lowercase letters, digits or dashes", rc.ID)
+			}
+			if seenID[rc.ID] {
+				return fmt.Errorf("radios: id %q is used twice (%q is the top-level radio)", rc.ID, MainRadioID)
+			}
+			seenID[rc.ID] = true
+			if err := rc.Config.validateOne(); err != nil {
+				return fmt.Errorf("radios[%s]: %w", rc.ID, err)
+			}
+		}
+		if rc.Radio.Driver == "kiss" && rc.Radio.Device != "" {
+			if other, ok := seenDev[rc.Radio.Device]; ok {
+				return fmt.Errorf("radios %s and %s both use %s", other, rc.ID, rc.Radio.Device)
+			}
+			seenDev[rc.Radio.Device] = rc.ID
+		}
+		for _, id := range rc.Identities {
+			if id.APIPort <= 0 {
+				continue
+			}
+			if other, ok := seenPort[id.APIPort]; ok {
+				return fmt.Errorf("api_port %d is used by radios %s and %s", id.APIPort, other, rc.ID)
+			}
+			seenPort[id.APIPort] = rc.ID
+		}
+	}
+	return nil
 }
 
 type Radio struct {
@@ -127,6 +257,7 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	c.fillRadioDefaults()
 	c.path = path
 	return c, c.Validate()
 }
@@ -158,6 +289,17 @@ func (c *Config) PresetValue() (phy.Preset, error) {
 }
 
 func (c *Config) Validate() error {
+	if err := c.validateOne(); err != nil {
+		return err
+	}
+	if c.Site.DutyCyclePct < 0 || c.Site.DutyCyclePct > 100 {
+		return fmt.Errorf("site.duty_cycle_percent must be between 0 and 100")
+	}
+	return c.validateRadios()
+}
+
+// validateOne checks one radio's sections.
+func (c *Config) validateOne() error {
 	if _, err := c.PresetValue(); err != nil {
 		return err
 	}
@@ -187,4 +329,11 @@ func (c *Config) MeshConfig() mesh.Config {
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
 	}
+}
+
+// MeshConfig is MeshConfig with this radio's ID set.
+func (rc RadioConfig) MeshConfig() mesh.Config {
+	m := rc.Config.MeshConfig()
+	m.RadioID = rc.ID
+	return m
 }

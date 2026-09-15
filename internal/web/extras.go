@@ -128,7 +128,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	next.Mesh.TxPowerDBm, next.Mesh.FreqOffsetMHz = d.Radio.TxPowerDBm, d.Radio.FrequencyOffsetMHz
 	next.Relay.Role, next.Relay.LongName, next.Relay.ShortName = d.Relay.Role, d.Relay.LongName, d.Relay.ShortName
 	next.Links.LocalDMOverRF = d.Relay.LocalDM == "also_rf"
-	if d.Airtime.DutyCyclePercent != s.host.RadioParams().Region.DutyCyclePct {
+	if d.Airtime.DutyCyclePercent != s.hostFor(r).RadioParams().Region.DutyCyclePct {
 		next.Airtime.DutyCyclePct = d.Airtime.DutyCyclePercent
 	}
 	next.Airtime.IdentitySharePct = d.Airtime.IdentitySharePercent
@@ -146,7 +146,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if rel := s.host.Relay(); rel != nil && (next.Relay.LongName != old.Relay.LongName || next.Relay.ShortName != old.Relay.ShortName) {
+	if rel := s.hostFor(r).Relay(); rel != nil && (next.Relay.LongName != old.Relay.LongName || next.Relay.ShortName != old.Relay.ShortName) {
 		rel.SetOwner(next.Relay.LongName, next.Relay.ShortName)
 		s.saveIdentities()
 	}
@@ -169,14 +169,14 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	res := map[string]any{"ok": false, "driver": "kiss", "firmware": "", "name": "", "sync_word_ok": false, "error": ""}
 	// The running modem already owns this port: report it rather than opening it twice.
 	if req.Device == "" || req.Device == s.cfg.Radio.Device {
-		info := s.host.Radio().Info()
+		info := s.hostFor(r).Radio().Info()
 		st := s.radioStats(r.Context())
 		res["driver"], res["firmware"], res["name"] = info.Driver, info.Firmware, info.Name
 		res["ok"] = st.Connected
-		res["sync_word_ok"] = s.host.RadioConfigured()
+		res["sync_word_ok"] = s.hostFor(r).RadioConfigured()
 		if !st.Connected {
 			res["error"] = "the modem isn't answering on " + s.cfg.Radio.Device
-		} else if !s.host.RadioConfigured() {
+		} else if !s.hostFor(r).RadioConfigured() {
 			res["error"] = "the modem answers but rejected Meshtastic's sync word: flash the RepeaterTastic KISS firmware"
 		}
 		writeJSON(w, http.StatusOK, res)
@@ -242,7 +242,7 @@ func (s *Server) restartAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "the relay persona has no client API")
 		return
 	}
-	s.opt.API.Restart(r.Context(), id.NodeNum)
+	s.radioFor(r).api.Restart(r.Context(), id.NodeNum)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -256,8 +256,8 @@ func (s *Server) markRead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad conversation key")
 		return
 	}
-	s.host.Messages.MarkRead(id.NodeNum, key)
-	s.host.Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
+	s.hostFor(r).Messages.MarkRead(id.NodeNum, key)
+	s.hostFor(r).Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -279,7 +279,7 @@ type rfHistory struct {
 
 const rfKeep = 7 * 24 * 60
 
-func (s *Server) sampleRF(ctx context.Context) {
+func (s *Server) sampleRF(ctx context.Context, rc *radioCtx) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	var lastRx, lastTx uint64
@@ -288,17 +288,17 @@ func (s *Server) sampleRF(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			st := s.radioStats(ctx)
-			rx, tx := s.host.Counters.Rx.Load(), s.host.Counters.Tx.Load()
+			st := rc.stats(ctx)
+			rx, tx := rc.host.Counters.Rx.Load(), rc.host.Counters.Tx.Load()
 			p := rfPoint{Time: now.Truncate(time.Minute).UnixMilli(), NoiseFloorDBm: float64(st.NoiseFloorDBm),
-				ChannelUtil: s.host.Air.ChannelUtilPercent(now), Rx: rx - lastRx, Tx: tx - lastTx}
+				ChannelUtil: rc.host.Air.ChannelUtilPercent(now), Rx: rx - lastRx, Tx: tx - lastTx}
 			lastRx, lastTx = rx, tx
-			s.rf.mu.Lock()
-			s.rf.points = append(s.rf.points, p)
-			if len(s.rf.points) > rfKeep {
-				s.rf.points = s.rf.points[len(s.rf.points)-rfKeep:]
+			rc.rf.mu.Lock()
+			rc.rf.points = append(rc.rf.points, p)
+			if len(rc.rf.points) > rfKeep {
+				rc.rf.points = rc.rf.points[len(rc.rf.points)-rfKeep:]
 			}
-			s.rf.mu.Unlock()
+			rc.rf.mu.Unlock()
 		}
 	}
 }
@@ -318,9 +318,10 @@ func (s *Server) statsRF(w http.ResponseWriter, r *http.Request) {
 	window := windowParam(r)
 	bucket := bucketFor(window)
 	cut := time.Now().Add(-window).UnixMilli()
-	s.rf.mu.Lock()
-	src := append([]rfPoint(nil), s.rf.points...)
-	s.rf.mu.Unlock()
+	rc := s.radioFor(r)
+	rc.rf.mu.Lock()
+	src := append([]rfPoint(nil), rc.rf.points...)
+	rc.rf.mu.Unlock()
 	type acc struct {
 		p         rfPoint
 		n, nNoise int
@@ -365,7 +366,7 @@ func (s *Server) statsIdentities(w http.ResponseWriter, r *http.Request) {
 	cut := now.Add(-window).UnixMilli()
 	airtime := map[string]float64{}
 	var relayMs float64
-	for _, b := range s.host.Air.Buckets(now, window) {
+	for _, b := range s.hostFor(r).Air.Buckets(now, window) {
 		for k, v := range b.ByIdentity {
 			airtime[wire.NodeID(k)] += v
 		}
@@ -381,14 +382,14 @@ func (s *Server) statsIdentities(w http.ResponseWriter, r *http.Request) {
 	}
 	stats := map[string]*stat{}
 	var order []string
-	for _, id := range s.host.Identities() {
+	for _, id := range s.hostFor(r).Identities() {
 		st := &stat{NodeID: id.NodeID(), AirtimeMs: airtime[id.NodeID()]}
 		if id.IsRelay {
 			st.AirtimeMs += relayMs
 		}
 		stats[id.NodeID()] = st
 		order = append(order, id.NodeID())
-		for _, m := range s.host.Messages.Window(id.NodeNum, cut) {
+		for _, m := range s.hostFor(r).Messages.Window(id.NodeNum, cut) {
 			switch m.Status {
 			case "acked":
 				st.AckOK++
@@ -398,10 +399,10 @@ func (s *Server) statsIdentities(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	relayID := ""
-	if rel := s.host.Relay(); rel != nil {
+	if rel := s.hostFor(r).Relay(); rel != nil {
 		relayID = rel.NodeID()
 	}
-	for _, p := range s.host.Packets.List(5000, 0, func(p *mesh.PacketRecord) bool { return p.Time >= cut }) {
+	for _, p := range s.hostFor(r).Packets.List(5000, 0, func(p *mesh.PacketRecord) bool { return p.Time >= cut }) {
 		switch {
 		case p.Direction == "tx" && p.Kind == "ours":
 			if st := stats[p.From]; st != nil {
@@ -435,8 +436,8 @@ type traceWait struct {
 	pending map[string]time.Time // identity|target → deadline
 }
 
-func (s *Server) watchTraceroutes(ctx context.Context) {
-	events, unsub := s.host.Bus.Subscribe(64)
+func (s *Server) watchTraceroutes(ctx context.Context, rc *radioCtx) {
+	events, unsub := rc.host.Bus.Subscribe(64)
 	defer unsub()
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -457,9 +458,12 @@ func (s *Server) watchTraceroutes(ctx context.Context) {
 			s.traces.mu.Lock()
 			for k, deadline := range s.traces.pending {
 				if now.After(deadline) {
-					delete(s.traces.pending, k)
 					parts := strings.SplitN(k, "|", 2)
-					s.host.Bus.Publish(mesh.Event{Type: "traceroute", Data: map[string]any{
+					if num, err := wire.ParseNodeID(parts[0]); err != nil || rc.host.Identity(num) == nil {
+						continue // another radio's traceroute
+					}
+					delete(s.traces.pending, k)
+					rc.host.Bus.Publish(mesh.Event{Type: "traceroute", Data: map[string]any{
 						"identity": parts[0], "target": parts[1], "route": []string{}, "snr_towards": []float64{},
 						"route_back": []string{}, "snr_back": []float64{}, "error": "no response within 60 s"}})
 				}
@@ -480,7 +484,7 @@ func (s *Server) expectTraceroute(from, target string) {
 func (s *Server) linkJSON() map[string]any {
 	u := map[string]any{"name": "udp", "type": "udp_multicast", "enabled": s.cfg.Links.UDPMulticast.Enabled,
 		"connected": false, "rx": 0, "tx": 0, "detail": "239.0.0.69:4403 + 224.0.0.69:4403"}
-	if l := s.opt.UDP; l != nil {
+	if l := s.radios[0].udp; l != nil {
 		u["connected"], u["rx"], u["tx"] = l.Connected(), l.Rx.Load(), l.Tx.Load()
 	}
 	return u
@@ -510,7 +514,7 @@ func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out := s.linkJSON()
-	running := s.opt.UDP != nil
+	running := s.radioFor(r).udp != nil
 	out["restart_required"] = running != s.cfg.Links.UDPMulticast.Enabled
 	writeJSON(w, http.StatusOK, out)
 }

@@ -108,12 +108,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------------------- status
 
 func (s *Server) statusJSON(r *http.Request) map[string]any {
-	h := s.host
+	rc := s.radioFor(r)
+	h := rc.host
 	now := time.Now()
 	rp := h.RadioParams()
 	hc := h.Config()
 	info := h.Radio().Info()
-	st := s.radioStats(r.Context())
+	st := rc.stats(r.Context())
 	txMs, rxMs := h.Air.HourTotals(now)
 	duty := hc.DutyCyclePct
 	if duty == 0 {
@@ -134,7 +135,8 @@ func (s *Server) statusJSON(r *http.Request) map[string]any {
 	c := &h.Counters
 	return map[string]any{
 		"version": s.opt.Version, "uptime_s": int(now.Sub(h.Started()).Seconds()),
-		"radio": map[string]any{"driver": info.Driver, "device": s.cfg.Radio.Device, "firmware": info.Firmware, "name": info.Name,
+		"radio_id": rc.id, "radio_name": rc.name, "site": s.siteJSON(),
+		"radio": map[string]any{"driver": info.Driver, "device": s.radioConfig(rc).Radio.Device, "firmware": info.Firmware, "name": info.Name,
 			"connected": st.Connected, "configured": h.RadioConfigured(), "reconnects": st.Reconnects, "rx": st.RxPackets,
 			"tx": st.TxPackets, "errors": st.Errors, "noise_floor_dbm": st.NoiseFloorDBm, "queue": h.QueueLen()},
 		"phy":   phyJSON(rp, primary),
@@ -167,6 +169,10 @@ func (s *Server) putRelay(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if rc := s.radioFor(r); rc != s.radios[0] {
+		s.putExtraRelay(w, r, rc, req.Role)
+		return
+	}
 	s.cfgMu.Lock()
 	next := *s.cfg
 	next.Relay.Role = req.Role
@@ -181,9 +187,10 @@ func (s *Server) putRelay(w http.ResponseWriter, r *http.Request) {
 // ------------------------------------------------------------------------------------ identities
 
 func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
+	rc := s.radioOf(id)
 	now := time.Now()
 	u := id.UserCopy()
-	rp := s.host.RadioParams()
+	rp := rc.host.RadioParams()
 	display := rp.PresetName()
 	var chans []map[string]any
 	for i := 0; i < mesh.MaxChannels; i++ {
@@ -202,8 +209,8 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 			"psk": base64.StdEncoding.EncodeToString(st.GetPsk()), "hash": wire.ChannelHash(dn, key, st.GetUseAead()),
 			"uplink": st.GetUplinkEnabled(), "downlink": st.GetDownlinkEnabled(), "locked": i == 0})
 	}
-	txTotal, _ := s.host.Air.HourTotals(now)
-	mine := s.host.Air.IdentityHourMs(now, id.NodeNum)
+	txTotal, _ := rc.host.Air.HourTotals(now)
+	mine := rc.host.Air.IdentityHourMs(now, id.NodeNum)
 	share := 0.0
 	if txTotal > 0 {
 		share = mine / txTotal * 100
@@ -214,7 +221,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		if bind == "" {
 			bind = "0.0.0.0"
 		}
-		_, running := s.opt.API.Status(id.NodeNum)
+		_, running := rc.api.Status(id.NodeNum)
 		api = map[string]any{"bind": bind, "port": id.APIPort, "clients": id.ClientCount(), "listening": running}
 	}
 	return map[string]any{
@@ -223,7 +230,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		"is_relay": id.IsRelay, "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
 		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id),
-		"unread": s.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
+		"unread": rc.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
 	}
 }
 
@@ -242,7 +249,7 @@ func (s *Server) identityParam(w http.ResponseWriter, r *http.Request) *mesh.Ide
 		writeError(w, http.StatusBadRequest, "node id must look like !a1c40e07")
 		return nil
 	}
-	id := s.host.Identity(num)
+	id := s.hostFor(r).Identity(num)
 	if id == nil {
 		writeError(w, http.StatusNotFound, "no identity "+wire.NodeID(num)+" on this host")
 	}
@@ -251,7 +258,7 @@ func (s *Server) identityParam(w http.ResponseWriter, r *http.Request) *mesh.Ide
 
 func (s *Server) listIdentities(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
-	for _, id := range s.host.Identities() {
+	for _, id := range s.hostFor(r).Identities() {
 		out = append(out, s.identityJSON(id))
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -259,8 +266,10 @@ func (s *Server) listIdentities(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) nextFreePort() int {
 	used := map[int]bool{}
-	for _, id := range s.host.Identities() {
-		used[id.APIPort] = true
+	for _, rc := range s.radios { // API ports are per host, not per radio
+		for _, id := range rc.host.Identities() {
+			used[id.APIPort] = true
+		}
 	}
 	for p := 4403; p < 4503; p++ {
 		if !used[p] {
@@ -302,10 +311,10 @@ func (s *Server) previewKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var collision any
-	if c := s.host.DB.LastByteCollision(id.NodeNum); c != 0 {
+	if c := s.hostFor(r).DB.LastByteCollision(id.NodeNum); c != 0 {
 		collision = wire.NodeID(c)
 	}
-	if s.host.Identity(id.NodeNum) != nil {
+	if s.hostFor(r).Identity(id.NodeNum) != nil {
 		collision = id.NodeID()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"private_key": base64.StdEncoding.EncodeToString(id.PrivateKey),
@@ -322,10 +331,19 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 		APIBind    string  `json:"api_bind"`
 		Role       string  `json:"role"`
 		ShareLimit float64 `json:"share_limit_pct"`
+		RadioID    string  `json:"radio_id"` // "" = ?radio= or the main radio
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
+	rc := s.radioFor(r)
+	if req.RadioID != "" {
+		if rc = s.radioByID(req.RadioID); rc == nil {
+			writeError(w, http.StatusBadRequest, "no radio "+req.RadioID)
+			return
+		}
+	}
+	host := rc.host
 	if strings.TrimSpace(req.LongName) == "" {
 		writeError(w, http.StatusBadRequest, "long_name is required")
 		return
@@ -345,27 +363,33 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		if priv != nil || s.host.DB.LastByteCollision(id.NodeNum) == 0 {
+		if priv != nil || host.DB.LastByteCollision(id.NodeNum) == 0 {
 			break
 		}
 	}
 	if req.APIPort == 0 {
 		req.APIPort = s.nextFreePort()
 	}
-	for _, other := range s.host.Identities() {
-		if other.APIPort == req.APIPort && (other.APIBind == req.APIBind || other.APIBind == "" || req.APIBind == "") {
-			writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s", req.APIPort, other.NodeID()))
-			return
+	for _, orc := range s.radios { // one host, one port space, whatever the radio
+		for _, other := range orc.host.Identities() {
+			if other.APIPort == req.APIPort && (other.APIBind == req.APIBind || other.APIBind == "" || req.APIBind == "") {
+				writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s", req.APIPort, other.NodeID()))
+				return
+			}
 		}
 	}
 	id.APIPort, id.APIBind, id.ShareLimitPct = req.APIPort, req.APIBind, req.ShareLimit
+	// Only the relay persona repeats, so a new identity says so unless asked otherwise.
+	if req.Role == "" {
+		req.Role = pb.Config_DeviceConfig_CLIENT_MUTE.String()
+	}
 	if req.Role != "" {
 		if err := id.SetRole(req.Role); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	if err := s.host.AddIdentity(id); err != nil {
+	if err := host.AddIdentity(id); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -374,8 +398,10 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) saveIdentities() {
-	if err := s.host.SaveIdentities(); err != nil {
-		s.log.Error("saving identities", "err", err)
+	for _, rc := range s.radios {
+		if err := rc.host.SaveIdentities(); err != nil {
+			s.log.Error("saving identities", "radio", rc.id, "err", err)
+		}
 	}
 }
 
@@ -421,7 +447,7 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		id.Enabled = *req.Enabled
 	}
 	if req.APIPort != nil && !id.IsRelay {
-		for _, other := range s.host.Identities() {
+		for _, other := range s.hostFor(r).Identities() {
 			if other != id && other.APIPort == *req.APIPort {
 				writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s", *req.APIPort, other.NodeID()))
 				return
@@ -432,12 +458,12 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 	if req.APIBind != nil {
 		id.APIBind = *req.APIBind
 	}
-	s.host.DB.Update(id.NodeNum, func(e *mesh.NodeEntry) { e.User = id.UserCopy() })
-	s.host.ChannelsChanged()
-	s.host.Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
+	s.hostFor(r).DB.Update(id.NodeNum, func(e *mesh.NodeEntry) { e.User = id.UserCopy() })
+	s.hostFor(r).ChannelsChanged()
+	s.hostFor(r).Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
 	s.saveIdentities()
 	if long != "" || short != "" {
-		s.host.RequestNodeInfo(id, wire.Broadcast)
+		s.hostFor(r).RequestNodeInfo(id, wire.Broadcast)
 	}
 	writeJSON(w, http.StatusOK, s.identityJSON(id))
 }
@@ -447,7 +473,7 @@ func (s *Server) deleteIdentity(w http.ResponseWriter, r *http.Request) {
 	if id == nil {
 		return
 	}
-	if err := s.host.RemoveIdentity(id.NodeNum); err != nil {
+	if err := s.hostFor(r).RemoveIdentity(id.NodeNum); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -501,7 +527,7 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "channel 0 is the shared primary channel; its role can't change")
 			return
 		}
-		if req.Name != s.host.Config().PrimaryChannel {
+		if req.Name != s.hostFor(r).Config().PrimaryChannel {
 			writeError(w, http.StatusConflict,
 				"the primary channel name is shared by every identity because it picks the frequency; change it under Configuration → Radio")
 			return
@@ -514,7 +540,7 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 	old := id.ChannelCopy(idx)
 	ch := &pb.Channel{Index: int32(idx), Role: role, Settings: &pb.ChannelSettings{Name: req.Name, Psk: psk,
 		UplinkEnabled: req.Uplink, DownlinkEnabled: req.Downlink, ModuleSettings: old.GetSettings().GetModuleSettings()}}
-	if err := s.host.SetChannel(id, ch); err != nil {
+	if err := s.hostFor(r).SetChannel(id, ch); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -527,9 +553,9 @@ func (s *Server) getChannelURL(w http.ResponseWriter, r *http.Request) {
 	if id == nil {
 		return
 	}
-	rp := s.host.RadioParams()
+	rp := s.hostFor(r).RadioParams()
 	set := &pb.ChannelSet{LoraConfig: &pb.Config_LoRaConfig{UsePreset: true, ModemPreset: rp.Preset, Region: rp.Region.Code,
-		HopLimit: s.host.Config().HopLimit, TxEnabled: true}}
+		HopLimit: s.hostFor(r).Config().HopLimit, TxEnabled: true}}
 	for i := 0; i < mesh.MaxChannels; i++ {
 		if ch := id.ChannelCopy(i); ch != nil && ch.Role != pb.Channel_DISABLED {
 			set.Settings = append(set.Settings, ch.Settings)
@@ -562,19 +588,19 @@ func (s *Server) postChannelURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "that doesn't look like a Meshtastic channel URL (https://meshtastic.org/e/#…)")
 		return
 	}
-	primaryName := s.host.Config().PrimaryChannel
+	primaryName := s.hostFor(r).Config().PrimaryChannel
 	next := 1
 	for i, st := range set.Settings {
 		if i == 0 && (st.GetName() == primaryName || st.GetName() == "") {
 			ch := id.ChannelCopy(0)
 			ch.Settings.Psk = st.Psk
-			_ = s.host.SetChannel(id, ch)
+			_ = s.hostFor(r).SetChannel(id, ch)
 			continue
 		}
 		if next >= mesh.MaxChannels {
 			break
 		}
-		_ = s.host.SetChannel(id, &pb.Channel{Index: int32(next), Role: pb.Channel_SECONDARY, Settings: st})
+		_ = s.hostFor(r).SetChannel(id, &pb.Channel{Index: int32(next), Role: pb.Channel_SECONDARY, Settings: st})
 		next++
 	}
 	s.saveIdentities()
@@ -588,7 +614,7 @@ func (s *Server) conversations(w http.ResponseWriter, r *http.Request) {
 	if id == nil {
 		return
 	}
-	convs := s.host.Messages.Conversations(id.NodeNum, id.NodeID())
+	convs := s.hostFor(r).Messages.Conversations(id.NodeNum, id.NodeID())
 	// Every enabled channel is a conversation even before anything is said on it:
 	// the chat page only opens listed conversations, so a new identity could
 	// otherwise send DMs but never post in a channel.
@@ -620,11 +646,11 @@ func (s *Server) conversationTitle(id *mesh.Identity, key string) string {
 				return n
 			}
 		}
-		return s.host.RadioParams().PresetName()
+		return s.radioOf(id).host.RadioParams().PresetName()
 	}
 	num, err := wire.ParseNodeID(strings.TrimPrefix(key, "dm:"))
 	if err == nil {
-		if e, ok := s.host.DB.Get(num); ok && e.User != nil {
+		if e, ok := s.radioOf(id).host.DB.Get(num); ok && e.User != nil {
 			return e.User.LongName
 		}
 	}
@@ -642,7 +668,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
-	writeJSON(w, http.StatusOK, s.host.Messages.List(id.NodeNum, id.NodeID(), q.Get("conversation"), before, limit))
+	writeJSON(w, http.StatusOK, s.hostFor(r).Messages.List(id.NodeNum, id.NodeID(), q.Get("conversation"), before, limit))
 }
 
 func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
@@ -672,12 +698,12 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if req.WantAck != nil {
 		wantAck = *req.WantAck
 	}
-	pid, err := s.host.SendText(id, to, req.Channel, req.Text, wantAck)
+	pid, err := s.hostFor(r).SendText(id, to, req.Channel, req.Text, wantAck)
 	if err != nil && pid == 0 {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	for _, m := range s.host.Messages.List(id.NodeNum, id.NodeID(), "", 0, 20) {
+	for _, m := range s.hostFor(r).Messages.List(id.NodeNum, id.NodeID(), "", 0, 20) {
 		if m.ID == pid && m.Direction == "out" {
 			writeJSON(w, http.StatusAccepted, m)
 			return
@@ -738,9 +764,9 @@ func nodeJSON(e mesh.NodeEntry, knownBy []string) map[string]any {
 	return n
 }
 
-func (s *Server) localIDs() []string {
+func (s *Server) localIDs(h *mesh.Host) []string {
 	var ids []string
-	for _, id := range s.host.Identities() {
+	for _, id := range h.Identities() {
 		if id.Enabled {
 			ids = append(ids, id.NodeID())
 		}
@@ -750,8 +776,8 @@ func (s *Server) localIDs() []string {
 
 func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
-	known := s.localIDs()
-	for _, e := range s.host.DB.Snapshot() {
+	known := s.localIDs(s.hostFor(r))
+	for _, e := range s.hostFor(r).DB.Snapshot() {
 		out = append(out, nodeJSON(e, known))
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -771,9 +797,9 @@ func (s *Server) fromIdentity(w http.ResponseWriter, r *http.Request) (*mesh.Ide
 	}
 	var from *mesh.Identity
 	if req.From == "" {
-		from = s.host.Relay()
+		from = s.hostFor(r).Relay()
 	} else if n, err := wire.ParseNodeID(req.From); err == nil {
-		from = s.host.Identity(n)
+		from = s.hostFor(r).Identity(n)
 	}
 	if from == nil {
 		writeError(w, http.StatusBadRequest, "from must be one of this host's identities")
@@ -787,7 +813,7 @@ func (s *Server) traceroute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.host.Traceroute(from, target); err != nil {
+	if err := s.hostFor(r).Traceroute(from, target); err != nil {
 		writeError(w, http.StatusTooManyRequests, "traceroute not sent: "+err.Error())
 		return
 	}
@@ -800,7 +826,7 @@ func (s *Server) requestNodeInfo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.host.RequestNodeInfo(from, target)
+	s.hostFor(r).RequestNodeInfo(from, target)
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent"})
 }
 
@@ -810,11 +836,11 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad node id")
 		return
 	}
-	if s.host.Identity(num) != nil {
+	if s.hostFor(r).Identity(num) != nil {
 		writeError(w, http.StatusConflict, "that node is one of this host's identities; delete it under Identities")
 		return
 	}
-	s.host.DB.Delete(num)
+	s.hostFor(r).DB.Delete(num)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -830,7 +856,7 @@ func (s *Server) listPackets(w http.ResponseWriter, r *http.Request) {
 	node, port, kind := q.Get("node"), q.Get("port"), q.Get("kind")
 	dir, channel, text := q.Get("direction"), q.Get("channel"), strings.ToLower(q.Get("q"))
 	since, _ := strconv.ParseInt(q.Get("since"), 10, 64)
-	writeJSON(w, http.StatusOK, s.host.Packets.List(limit, before, func(p *mesh.PacketRecord) bool {
+	writeJSON(w, http.StatusOK, s.hostFor(r).Packets.List(limit, before, func(p *mesh.PacketRecord) bool {
 		switch {
 		case node != "" && p.From != node && p.To != node:
 			return false
@@ -864,7 +890,7 @@ func windowParam(r *http.Request) time.Duration {
 
 func (s *Server) statsAirtime(w http.ResponseWriter, r *http.Request) {
 	buckets := []map[string]any{}
-	for _, b := range s.host.Air.Buckets(time.Now(), windowParam(r)) {
+	for _, b := range s.hostFor(r).Air.Buckets(time.Now(), windowParam(r)) {
 		by := map[string]float64{}
 		for k, v := range b.ByIdentity {
 			by[wire.NodeID(k)] = v
@@ -878,7 +904,7 @@ func (s *Server) statsAirtime(w http.ResponseWriter, r *http.Request) {
 func (s *Server) statsPorts(w http.ResponseWriter, r *http.Request) {
 	cut := time.Now().Add(-windowParam(r)).UnixMilli()
 	counts := map[string][2]int{}
-	for _, p := range s.host.Packets.List(5000, 0, func(p *mesh.PacketRecord) bool { return p.Time >= cut && p.Port != "" }) {
+	for _, p := range s.hostFor(r).Packets.List(5000, 0, func(p *mesh.PacketRecord) bool { return p.Time >= cut && p.Port != "" }) {
 		c := counts[p.Port]
 		if p.Direction == "tx" {
 			c[1]++
@@ -904,7 +930,7 @@ func (s *Server) applyConfig(r *http.Request, next *config.Config) error {
 	if err := next.Validate(); err != nil {
 		return err
 	}
-	if err := s.host.UpdateConfig(r.Context(), next.MeshConfig()); err != nil {
+	if err := s.hostFor(r).UpdateConfig(r.Context(), next.MeshConfig()); err != nil {
 		return err
 	}
 	s.cfgMu.Lock()
@@ -1072,7 +1098,7 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 	y, _ := yaml.Marshal(s.cfg)
 	s.cfgMu.Unlock()
 	b := backupFile{Format: "repeatertastic-backup-1", Created: time.Now().UnixMilli(), Version: s.opt.Version, Config: string(y)}
-	for _, id := range s.host.Identities() {
+	for _, id := range s.hostFor(r).Identities() {
 		b.Identities = append(b.Identities, id.Record())
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="repeatertastic-backup-%s.json"`, time.Now().Format("2006-01-02")))
@@ -1127,7 +1153,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
-	ch, unsub := s.host.Bus.Subscribe(512)
+	ch, unsub := s.hostFor(r).Bus.Subscribe(512)
 	defer unsub()
 	send := func(event string, v any) bool {
 		b, err := json.Marshal(v)
@@ -1162,7 +1188,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			case "identity":
 				idStr, _ := e.Data.(string)
 				num, _ := wire.ParseNodeID(idStr)
-				if id := s.host.Identity(num); id != nil {
+				if id := s.hostFor(r).Identity(num); id != nil {
 					payload = s.identityJSON(id)
 				} else {
 					payload = map[string]any{"node_id": idStr, "deleted": true}
@@ -1170,11 +1196,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			case "node":
 				idStr, _ := e.Data.(string)
 				num, _ := wire.ParseNodeID(idStr)
-				en, ok := s.host.DB.Get(num)
+				en, ok := s.hostFor(r).DB.Get(num)
 				if !ok {
 					continue
 				}
-				payload = nodeJSON(en, s.localIDs())
+				payload = nodeJSON(en, s.localIDs(s.hostFor(r)))
 			}
 			if !send(e.Type, payload) {
 				return

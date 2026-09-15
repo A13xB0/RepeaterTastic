@@ -37,6 +37,30 @@ are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are 
 
 `PUT /api/v1/relay` `{"role": "client" | "router" | "mute"}` → status.relay
 
+## Radios
+
+A host can run several radios (see `radios:` in the example config). Every endpoint works on the
+**main** radio by default; add `?radio=<id>` to use another. Endpoints under
+`/identities/{node_id}/…` find the identity's radio by themselves. `POST /identities` also takes
+`"radio_id"`. Status carries `radio_id`, `radio_name` and `site`.
+
+`GET /api/v1/radios` →
+
+```json
+{"radios": [{"id": "main", "name": "Main", "main": true, "device": "/dev/ttyUSB0", "driver": "kiss",
+             "firmware": "MeshCore KISS v2", "connected": true, "configured": true, "noise_floor_dbm": -111,
+             "phy": {"…": "as status.phy"}, "relay": {"role": "mute", "node_id": "!be77562b", "long_name": "Relay"},
+             "identities": 3, "tx_pct": 0.1, "channel_util_pct": 6.2, "overlaps": ["mf"]}],
+ "site": {"radios": 2, "duty_limit_pct": 0, "tx_pct": 0.3}}
+```
+
+`overlaps` lists radios whose channel overlaps this one's; overlapping radios take turns to
+transmit. `site` is `null` for a single radio without a site airtime cap. `PUT /relay?radio=<id>`
+changes an extra radio's relay role. The configuration endpoints still describe the main radio;
+extra radios are configured in the YAML file.
+
+New identities default to `role: CLIENT_MUTE`: only each radio's relay persona repeats.
+
 ## Identities
 
 `GET /api/v1/identities` → `[Identity]`

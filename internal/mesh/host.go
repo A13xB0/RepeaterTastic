@@ -54,12 +54,24 @@ type Config struct {
 	NodeInfoInterval  time.Duration
 	LocalDMOverRF     bool
 	StateDir          string
+	// RadioID names this radio when a site runs several ("main" for the first).
+	RadioID string
 }
 
 // Counters are cumulative statistics.
 type Counters struct {
 	Rx, RxDupe, RxUndecryptable, RxBad, Tx, TxFailed, Relayed, RelayCancelled, AckOK, AckFail, DroppedDuty atomic.Uint64
 }
+
+// TxGate coordinates transmissions between the radios of one site. Acquire blocks until
+// this host may key up and returns a release func to call when the transmission is over.
+// It returns ErrSiteDutyCycle when the site-wide airtime budget is spent.
+type TxGate interface {
+	Acquire(ctx context.Context, h *Host) (release func(), err error)
+}
+
+// ErrSiteDutyCycle is returned by a TxGate when the site's shared airtime budget is used up.
+var ErrSiteDutyCycle = errors.New("site duty cycle limit reached")
 
 // Link is an extra packet interface (UDP multicast, host link, MQTT) carrying encrypted MeshPackets.
 type Link interface {
@@ -125,6 +137,9 @@ type Host struct {
 	stateDir     string
 	radioOK      atomic.Bool
 	nodeInfoAsks sync.Map // uint32 → time.Time
+
+	gateMu sync.RWMutex
+	gate   TxGate
 }
 
 // NewHost validates the PHY and prepares a host. Call AddIdentity for each node, then Run.
@@ -177,6 +192,27 @@ func (h *Host) RadioParams() phy.RadioParams {
 }
 
 func (h *Host) Radio() radio.Radio { return h.radio }
+
+// RadioID is the site-unique name of this host's radio.
+func (h *Host) RadioID() string {
+	if id := h.Config().RadioID; id != "" {
+		return id
+	}
+	return "main"
+}
+
+// SetTxGate installs the site's transmit coordinator; nil removes it.
+func (h *Host) SetTxGate(g TxGate) {
+	h.gateMu.Lock()
+	h.gate = g
+	h.gateMu.Unlock()
+}
+
+func (h *Host) txGate() TxGate {
+	h.gateMu.RLock()
+	defer h.gateMu.RUnlock()
+	return h.gate
+}
 func (h *Host) Started() time.Time { return h.started }
 
 // SetRelayRole changes the relay persona role at runtime.
@@ -485,9 +521,28 @@ func (h *Host) txLoop(ctx context.Context) {
 			h.log.Error("encoding frame", "err", err)
 			continue
 		}
+		release := func() {}
+		if g := h.txGate(); g != nil {
+			rel, gerr := g.Acquire(ctx, h)
+			if errors.Is(gerr, ErrSiteDutyCycle) {
+				h.Counters.DroppedDuty.Add(1)
+				if !it.relay {
+					if o := h.Identity(it.origin); o != nil {
+						h.nakLocal(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
+					}
+				}
+				h.log.Warn("site duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
+				continue
+			}
+			if gerr != nil {
+				return // context cancelled while waiting for another radio
+			}
+			release = rel
+		}
 		sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
 		err = h.radio.Send(sctx, frame)
 		cancel()
+		release()
 		if err != nil {
 			h.Counters.TxFailed.Add(1)
 			h.log.Warn("transmit failed", "id", it.pkt.Id, "err", err)

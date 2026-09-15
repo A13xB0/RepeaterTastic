@@ -42,6 +42,23 @@ web:
   # Tiles for the Nodes & map page. The public OSM servers discourage heavy use; point this at your own tile server for a busy site.
   map_tile_url: https://tile.openstreetmap.org/{z}/{x}/{y}.png
 
+# More radios on the same mast, each on its own preset and modem. The sections above are the
+# "main" radio. Extra radios keep their identities in state_dir/radios/<id>, default to a mute
+# relay, and take turns to transmit with any radio whose channel overlaps theirs (in EU_868,
+# LongFast, MediumFast, MediumSlow and ShortFast all sit on 869.525 MHz). LongTurbo's 500 kHz
+# doesn't fit EU_868's 250 kHz sub-band, and LongSlow lands on 869.4625 MHz / 125 kHz.
+# radios:
+#   - id: mf
+#     name: MediumFast
+#     radio: {driver: kiss, device: /dev/serial/by-id/usb-...-if00, baud: 115200}
+#     mesh: {preset: MEDIUM_FAST, tx_power_dbm: 20, hop_limit: 3}
+#     relay: {role: mute, long_name: RepeaterTastic MF Relay, short_name: RPMF}
+#     identities:
+#       - {long_name: MF Desk, short_name: MFD, api_port: 4410}
+#
+# site:
+#   duty_cycle_percent: 0   # summed airtime cap over all radios per hour; 0 = only each radio's own limit
+
 state_dir: /var/lib/repeatertastic
 log_level: info
 
