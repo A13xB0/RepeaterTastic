@@ -19,6 +19,21 @@ const emit = defineEmits<{ close: [] }>()
 const router = useRouter()
 
 const node = computed(() => (props.nodeId ? live.nodes[props.nodeId] : undefined))
+// With several radios: what each one knows about this node.
+const sightings = ref<{ radio_id: string; radio_name: string; last_heard: number; snr: number; hops_away: number; via_mqtt: boolean }[]>([])
+watch(
+  () => [props.nodeId, live.radios.length] as const,
+  async ([id, radios]) => {
+    sightings.value = []
+    if (!id || radios < 2) return
+    try {
+      sightings.value = await api.get(`/nodes/${enc(id)}/sightings`)
+    } catch {
+      /* optional */
+    }
+  },
+  { immediate: true },
+)
 const senders = computed(() => live.identities.filter((i) => i.enabled))
 const from = ref('')
 const traces = ref<(TracerouteEvent & { time: number })[]>([])
@@ -137,6 +152,16 @@ const nextHop = computed(() => (node.value?.next_hop ? nodeByLastByte(node.value
           <div class="text-2xs text-ink-3">Hops away</div>
           <div class="text-base font-semibold tabular-nums">{{ node.hops_away ?? '—' }}</div>
         </div>
+      </div>
+
+      <div v-if="sightings.length > 1" class="rounded-xl border border-line-soft px-3 py-2">
+        <div class="eyebrow mb-1">Heard by radio</div>
+        <ul class="grid gap-1 text-xs">
+          <li v-for="sg in sightings" :key="sg.radio_id" class="flex flex-wrap items-baseline justify-between gap-2">
+            <span class="font-medium">{{ sg.radio_name }}</span>
+            <span class="tabular-nums text-ink-3">{{ relTime(sg.last_heard, now) }} · {{ sg.hops_away < 0 ? 'hops ?' : sg.hops_away === 0 ? 'direct' : `${sg.hops_away} hop${sg.hops_away === 1 ? '' : 's'}` }} · SNR {{ sg.snr.toFixed(1) }}{{ sg.via_mqtt ? ' · MQTT' : '' }}</span>
+          </li>
+        </ul>
       </div>
 
       <dl class="kv">

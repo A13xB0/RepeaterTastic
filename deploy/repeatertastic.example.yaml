@@ -15,7 +15,17 @@ mesh:
   override_frequency_mhz: 0
   frequency_offset_mhz: 0
   tx_power_dbm: 20        # SX1262 boards max out at 22 dBm; 0 = region limit. Check antenna gain and local rules.
+  hw_model: auto          # hardware identities advertise: auto = the modem's board (Heltec V3 → HELTEC_V3), or e.g. PORTDUINO
   hop_limit: 3
+
+# Fixed site position, broadcast on a timer and answered on request (also used for MQTT map reports).
+position:
+  latitude: 0             # both 0 = no position
+  longitude: 0
+  altitude: 0             # metres above sea level
+  precision_bits: 32      # 32 = exact, 16 ≈ 360 m, 13 ≈ 3 km
+  interval: 3h            # minimum 30m
+  identities: relay       # relay (the relay persona only) or all
 
 relay:
   role: client            # client (relay like a normal node) | router (relay first) | mute (never relay)
@@ -25,12 +35,43 @@ relay:
 airtime:
   duty_cycle_percent: 0   # 0 = region default (EU_868: 10%)
   override_duty_cycle: false
-  nodeinfo_interval: 3h
+  identity_share_percent: 25   # share of the budget one identity may use before it's flagged "over share"
+  nodeinfo_interval: 3h        # at least 10m
+  telemetry_interval: 0s       # relay device telemetry; 0s = off, at least 30m
 
 links:
   local_dm_over_rf: false # DMs between identities on this host stay local
   udp_multicast:
     enabled: false        # join the LAN mesh of native meshtasticd nodes (224.0.0.69 + 239.0.0.69)
+  # Meshtastic MQTT broker connections (a list; see docs/mqtt.md). Recommended for a site on the
+  # air: a gateway on the default channel only, downlink off (or on one gateway per mesh), no
+  # private channels, relay_mqtt off.
+  mqtt:
+    - name: public
+      enabled: false
+      address: mqtt.meshtastic.org:1883   # public broker: zero-hop, default key only, positions coarsened
+      username: meshdev
+      password: large4cats
+      tls: false
+      root: ""                  # "" = msh/<region>, e.g. msh/EU_868
+      mode: gateway             # gateway | uplink_only | map_only | monitor | bridge (needs bridge_acknowledged: true)
+      gateway: relay            # relay persona, or an identity's node id like !a1c40e07
+      format: encrypted         # encrypted | json | both
+      channel_selection: identity  # identity switches | override (lists below) | combine
+      uplink_channels: []
+      downlink_channels: []
+      ok_to_mqtt: false         # set OK_TO_MQTT on our packets: other gateways may uplink them
+      relay_mqtt: false         # false = this connection's packets never go on air (ignore_mqtt)
+      cross_link: false         # pass packets to/from other connections that also allow it
+      uplink_per_minute: 120
+      downlink_per_minute: 30
+      map_report:
+        enabled: false
+        interval: 1h
+        position_precision: 14  # bits kept: 14 ≈ 1.5 km, 16 ≈ 360 m
+        latitude: 0
+        longitude: 0
+        altitude: 0
 
 mdns:
   enabled: true          # advertise each identity as _meshtastic._tcp for app discovery
@@ -39,6 +80,28 @@ web:
   enabled: true
   bind: 0.0.0.0
   port: 8080
+  session_ttl: 168h      # how long a browser login lasts
+  # Tiles for the Nodes & map page ({s} {z} {x} {y} {r}). Default: CARTO Positron (OpenStreetMap data).
+  # tile.openstreetmap.org refuses browsers on a LAN address, so don't use it here.
+  # {api_key} is filled from REPEATERTASTIC_MAP_API_KEY, else the key built into release binaries.
+  map_tile_url: https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key={api_key}
+
+# More radios on the same mast, each on its own preset and modem. The sections above are the
+# "main" radio. Extra radios keep their identities in state_dir/radios/<id>, default to a mute
+# relay, and take turns to transmit with any radio whose channel overlaps theirs (in EU_868,
+# LongFast, MediumFast, MediumSlow and ShortFast all sit on 869.525 MHz). LongTurbo's 500 kHz
+# doesn't fit EU_868's 250 kHz sub-band, and LongSlow lands on 869.4625 MHz / 125 kHz.
+# radios:
+#   - id: mf
+#     name: MediumFast
+#     radio: {driver: kiss, device: /dev/serial/by-id/usb-...-if00, baud: 115200}
+#     mesh: {preset: MEDIUM_FAST, tx_power_dbm: 20, hop_limit: 3}
+#     relay: {role: mute, long_name: RepeaterTastic MF Relay, short_name: RPMF}
+#     identities:
+#       - {long_name: MF Desk, short_name: MFD, api_port: 4410}
+#
+# site:
+#   duty_cycle_percent: 0   # summed airtime cap over all radios per hour; 0 = only each radio's own limit
 
 state_dir: /var/lib/repeatertastic
 log_level: info
@@ -49,3 +112,7 @@ identities:
   - long_name: Base Camp
     short_name: BASE
     api_port: 4403
+
+# Features still being proven; all off by default.
+# experimental:
+#   multi_radio_identities: false   # identities on several radios: each channel slot on one radio (docs/radios.md)

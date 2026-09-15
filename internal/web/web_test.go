@@ -149,3 +149,74 @@ func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
 		t.Fatalf("spa fallback %d", code)
 	}
 }
+
+// A new identity has no message history, but its channels must still be listed as
+// conversations: the chat page can only open a conversation that is listed, so without
+// this a fresh identity could send DMs but never post in a channel.
+func TestConversationsListChannelsWithoutHistory(t *testing.T) {
+	srv := testWeb(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse", "region": "EU_868", "preset": "LONG_FAST"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+	_, a, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Base Camp", "short_name": "BASE", "api_port": 0})
+	aID := a["node_id"].(string)
+
+	keys := func() map[string]string {
+		t.Helper()
+		code, _, list := call(t, srv, "GET", "/api/v1/identities/"+aID+"/conversations", tok, nil)
+		if code != 200 {
+			t.Fatalf("conversations: %d", code)
+		}
+		out := map[string]string{}
+		for _, c := range list {
+			m := c.(map[string]any)
+			out[m["key"].(string)] = m["title"].(string)
+		}
+		return out
+	}
+
+	if got := keys(); got["ch:0"] != "LongFast" || len(got) != 1 {
+		t.Fatalf("fresh identity conversations = %v, want only ch:0 LongFast", got)
+	}
+
+	code, _, _ := call(t, srv, "PUT", "/api/v1/identities/"+aID+"/channels/1", tok,
+		map[string]any{"name": "Ops", "psk": "AQ==", "role": "SECONDARY"})
+	if code != 200 {
+		t.Fatalf("add secondary channel: %d", code)
+	}
+	if got := keys(); got["ch:1"] != "Ops" || got["ch:0"] != "LongFast" || len(got) != 2 {
+		t.Fatalf("after adding a channel conversations = %v, want ch:0 and ch:1", got)
+	}
+
+	call(t, srv, "PUT", "/api/v1/identities/"+aID+"/channels/1", tok, map[string]any{"name": "Ops", "role": "DISABLED"})
+	if got := keys(); len(got) != 1 {
+		t.Fatalf("disabled channel still listed: %v", got)
+	}
+}
+
+func TestPasswordChangeKeepsThisSessionAndSignOutEverywhere(t *testing.T) {
+	srv := testWeb(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, a, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	_, b, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tokA, tokB := a["token"].(string), b["token"].(string)
+
+	code, res, _ := call(t, srv, "PUT", "/api/v1/auth/password", tokA, map[string]any{"current": "correct horse", "new": "battery staple"})
+	fresh, _ := res["token"].(string)
+	if code != 200 || fresh == "" {
+		t.Fatalf("password change %d %v", code, res)
+	}
+	if code, _, _ := call(t, srv, "GET", "/api/v1/status", fresh, nil); code != 200 {
+		t.Fatalf("fresh session after password change: %d", code)
+	}
+	if code, _, _ := call(t, srv, "GET", "/api/v1/status", tokB, nil); code != 401 {
+		t.Fatalf("other session still valid after password change: %d", code)
+	}
+
+	if code, _, _ := call(t, srv, "POST", "/api/v1/auth/logout-all", fresh, nil); code != 204 {
+		t.Fatalf("logout-all: %d", code)
+	}
+	if code, _, _ := call(t, srv, "GET", "/api/v1/status", fresh, nil); code != 401 {
+		t.Fatalf("session still valid after signing out everywhere: %d", code)
+	}
+}

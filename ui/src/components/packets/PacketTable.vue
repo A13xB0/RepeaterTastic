@@ -4,7 +4,7 @@ import { ArrowDownLeft, ArrowUpRight, Lock } from '@lucide/vue'
 import type { Packet } from '@/api/types'
 import KindChip from '@/components/ui/KindChip.vue'
 import { nodeLabel } from '@/store/live'
-import { clock, portLabel, snrClass, BROADCAST } from '@/lib/format'
+import { BROADCAST, airtime, clock, portLabel, snrClass } from '@/lib/format'
 
 withDefaults(defineProps<{ packets: Packet[]; compact?: boolean; flashSeq?: number }>(), { compact: false, flashSeq: 0 })
 const emit = defineEmits<{ select: [p: Packet] }>()
@@ -60,7 +60,7 @@ const emit = defineEmits<{ select: [p: Packet] }>()
           <td :class="['num', snrClass(p.snr)]">{{ p.snr == null ? '—' : p.snr.toFixed(1) }}</td>
           <td class="num text-ink-2 max-sm:hidden">{{ p.rssi ?? '—' }}</td>
           <td v-if="!compact" class="num text-ink-3 max-lg:hidden">{{ p.size }} B</td>
-          <td v-if="!compact" class="num text-ink-3 max-lg:hidden">{{ p.airtime_ms }} ms</td>
+          <td v-if="!compact" class="num text-ink-3 max-lg:hidden">{{ airtime(p.airtime_ms) }}</td>
           <td class="max-w-[22rem] truncate text-ink-2 max-xl:hidden" :title="p.summary">{{ p.summary }}</td>
         </tr>
       </tbody>

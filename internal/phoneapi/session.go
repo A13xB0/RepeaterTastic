@@ -129,10 +129,14 @@ func (s *Session) startConfig(nonce uint32) {
 	s.configDone = false
 	s.mu.Unlock()
 
-	own := s.ownNodeInfo()
-	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_MyInfo{MyInfo: s.myInfo()}})
-	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_DeviceuiConfig{DeviceuiConfig: &pb.DeviceUIConfig{}}})
-	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: own}})
+	// A nodes-only request (the Android app's Stage 2) goes straight to the other nodes, as the
+	// firmware does: the app treats any my_info as the start of a new handshake, so re-sending
+	// it here made the app ignore this stage's config_complete and give up after 12 s.
+	if nonce != nonceOnlyNodes {
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_MyInfo{MyInfo: s.myInfo()}})
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_DeviceuiConfig{DeviceuiConfig: &pb.DeviceUIConfig{}}})
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: s.ownNodeInfo()}})
+	}
 	if nonce != nonceOnlyNodes {
 		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Metadata{Metadata: s.metadata()}})
 		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_RegionPresets{RegionPresets: regionPresetMap()}})
@@ -147,7 +151,7 @@ func (s *Session) startConfig(nonce uint32) {
 		}
 	}
 	if nonce != nonceOnlyConfig {
-		for _, e := range s.host.DB.Snapshot() {
+		for _, e := range s.host.NodesFor(s.id) {
 			if e.Num == s.id.NodeNum || (e.User == nil && e.LastHeard.IsZero()) {
 				continue
 			}
@@ -194,6 +198,7 @@ func (s *Session) ownNodeInfo() *pb.NodeInfo {
 	e, _ := s.host.DB.Get(s.id.NodeNum)
 	e.Num = s.id.NodeNum
 	e.User = s.id.UserCopy()
+	e.User.HwModel = s.host.Hardware()
 	e.LastHeard = time.Now()
 	ni := e.NodeInfo()
 	ni.HopsAway = nil
@@ -211,7 +216,7 @@ func (s *Session) metadata() *pb.DeviceMetadata {
 		HasEthernet:        true,
 		Role:               s.id.UserCopy().Role,
 		PositionFlags:      811,
-		HwModel:            pb.HardwareModel_PORTDUINO,
+		HwModel:            s.host.Hardware(),
 		HasRemoteHardware:  false,
 		HasPKC:             true,
 	}
@@ -236,8 +241,16 @@ func (s *Session) configByType(t pb.AdminMessage_ConfigType) *pb.Config {
 			Role: u.Role, RebroadcastMode: pb.Config_DeviceConfig_ALL,
 			NodeInfoBroadcastSecs: uint32(hc.NodeInfoInterval / time.Second)}}}
 	case pb.AdminMessage_POSITION_CONFIG:
+		_, fixed := s.id.FixedPosition()
+		secs := s.id.PositionInterval()
+		if secs == 0 {
+			secs = 3 * 3600
+			if iv := hc.Position.Interval; iv > 0 {
+				secs = uint32(iv / time.Second)
+			}
+		}
 		return &pb.Config{PayloadVariant: &pb.Config_Position{Position: &pb.Config_PositionConfig{
-			GpsMode: pb.Config_PositionConfig_NOT_PRESENT, PositionBroadcastSecs: 43200}}}
+			GpsMode: pb.Config_PositionConfig_NOT_PRESENT, PositionBroadcastSecs: secs, FixedPosition: fixed}}}
 	case pb.AdminMessage_POWER_CONFIG:
 		return &pb.Config{PayloadVariant: &pb.Config_Power{Power: &pb.Config_PowerConfig{}}}
 	case pb.AdminMessage_NETWORK_CONFIG:
@@ -246,7 +259,7 @@ func (s *Session) configByType(t pb.AdminMessage_ConfigType) *pb.Config {
 		return &pb.Config{PayloadVariant: &pb.Config_Display{Display: &pb.Config_DisplayConfig{}}}
 	case pb.AdminMessage_LORA_CONFIG:
 		return &pb.Config{PayloadVariant: &pb.Config_Lora{Lora: &pb.Config_LoRaConfig{
-			UsePreset: true, ModemPreset: rp.Preset, Region: rp.Region.Code, HopLimit: hc.HopLimit, TxEnabled: true,
+			UsePreset: true, ModemPreset: rp.Preset, Region: rp.Region.Code, HopLimit: s.hopLimit(hc.HopLimit), TxEnabled: true,
 			TxPower: int32(rp.TxPowerDBm), ChannelNum: uint32(rp.Slot + 1), OverrideDutyCycle: hc.OverrideDutyCycle,
 			Bandwidth: uint32(rp.BwKHz), SpreadFactor: uint32(rp.SF), CodingRate: uint32(rp.CR),
 			OverrideFrequency: float32(hc.OverrideFreqMHz), FrequencyOffset: float32(hc.FreqOffsetMHz)}}}
@@ -407,4 +420,12 @@ func randomU32() uint32 {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return binary.LittleEndian.Uint32(b[:])
+}
+
+// hopLimit is what the client sees as the node's hop limit: the identity's cap when it has one.
+func (s *Session) hopLimit(radio uint32) uint32 {
+	if limit := s.id.MaxHops(); limit > 0 && limit < radio {
+		return limit
+	}
+	return radio
 }

@@ -1,0 +1,30 @@
+# RepeaterTastic with Docker Compose. Copy to docker-compose.yml, set the modem device, then:
+#   docker compose up -d
+# and open http://<host>:8080 to set the admin password.
+services:
+  repeatertastic:
+    image: ghcr.io/a13xb0/repeatertastic:latest
+    # build: ..                     # or build from a checkout
+    container_name: repeatertastic
+    restart: unless-stopped
+    # Host networking lets the Meshtastic apps find identities over mDNS and joins the UDP
+    # multicast LAN mesh. Without them, remove this line and uncomment `ports`.
+    network_mode: host
+    # ports:
+    #   - "8080:8080"               # web GUI and API
+    #   - "4403-4410:4403-4410"     # one client-API port per identity
+    devices:
+      # The modem: prefer /dev/serial/by-id/... on the host so it survives replugging.
+      - /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0:/dev/ttyUSB0
+    group_add:
+      - "20"                        # the host's dialout group id (getent group dialout), for the serial port
+    environment:
+      REPEATERTASTIC_RADIO_DEVICE: /dev/ttyUSB0
+      TZ: Europe/London
+      # REPEATERTASTIC_MAP_API_KEY: ...   # your own map tile key instead of the built-in one
+      # REPEATERTASTIC_WEB_PORT: "8080"
+    volumes:
+      - repeatertastic-data:/data     # config, identity keys and chats: back this up
+
+volumes:
+  repeatertastic-data:

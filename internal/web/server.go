@@ -13,24 +13,68 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/A13xB0/RepeaterTastic/internal/config"
+	"github.com/A13xB0/RepeaterTastic/internal/links/mqtt"
 	"github.com/A13xB0/RepeaterTastic/internal/links/udp"
 	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
 	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
 	"github.com/A13xB0/RepeaterTastic/internal/radio"
+	"github.com/A13xB0/RepeaterTastic/internal/site"
+	"github.com/A13xB0/RepeaterTastic/internal/wire"
 )
 
 type Options struct {
 	Config  *config.Config
-	Host    *mesh.Host
+	Host    *mesh.Host // the main radio
 	API     *phoneapi.Manager
 	Logs    *logbuf.Buffer
 	UDP     *udp.Link
+	MQTT    []*mqtt.Link
+	Radios  []Radio    // additional radios on the same site
+	Site    *site.Site // nil with a single radio and no site budget
 	Version string
 	Log     *slog.Logger
+	// MapAPIKey fills {api_key} in the map tile URL (empty drops the api_key parameter).
+	MapAPIKey string
+	// MapKeySource says where the key came from ("built in", "environment", "none"), never the key.
+	MapKeySource string
+	// LogLevel is the daemon's live log level; nil when the caller doesn't share it.
+	LogLevel *slog.LevelVar
+	// Federation joins the radios for experimental multi-radio identities (nil = not available).
+	Federation *mesh.Federation
+	// Restart shuts the daemon down cleanly for its supervisor to start again (nil = exit 75 at once).
+	Restart func()
+}
+
+// Radio is an additional radio served by the same web GUI.
+type Radio struct {
+	ID, Name string
+	Config   *config.Config // that radio's view of the configuration
+	Host     *mesh.Host
+	API      *phoneapi.Manager
+	UDP      *udp.Link
+	MQTT     []*mqtt.Link
+}
+
+// radioCtx is everything the web server keeps per radio.
+type radioCtx struct {
+	id, name string
+	cfg      *config.Config // nil for the main radio: it follows Server.cfg, which the config API replaces
+	host     *mesh.Host
+	api      *phoneapi.Manager
+	udp      *udp.Link
+	mqtt     []*mqtt.Link
+
+	// Modem stats cost serial round trips; share one poll between all viewers.
+	statsMu   sync.Mutex
+	statsAt   time.Time
+	lastStats radio.Stats
+
+	rf rfHistory
 }
 
 type Server struct {
@@ -44,25 +88,74 @@ type Server struct {
 	cfgMu      sync.Mutex
 	loginFails sync.Map // ip → *loginState
 
-	// Modem stats cost serial round trips; share one poll between all viewers.
-	statsMu   sync.Mutex
-	statsAt   time.Time
-	lastStats radio.Stats
-
-	rf     rfHistory
+	radios []*radioCtx // main first
 	traces traceWait
+
+	// booted is the configuration the daemon started with, to tell which saved changes still
+	// need a restart.
+	booted *config.Config
+	// restorePending is set once a backup has been staged for the next start.
+	restorePending atomic.Bool
 }
 
-func (s *Server) radioStats(ctx context.Context) radio.Stats {
-	s.statsMu.Lock()
-	defer s.statsMu.Unlock()
-	if time.Since(s.statsAt) > 5*time.Second {
+func (rc *radioCtx) stats(ctx context.Context) radio.Stats {
+	rc.statsMu.Lock()
+	defer rc.statsMu.Unlock()
+	if time.Since(rc.statsAt) > 5*time.Second {
 		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		s.lastStats = s.host.Radio().Stats(cctx)
+		rc.lastStats = rc.host.Radio().Stats(cctx)
 		cancel()
-		s.statsAt = time.Now()
+		rc.statsAt = time.Now()
 	}
-	return s.lastStats
+	return rc.lastStats
+}
+
+// radioStats is the main radio's modem stats (kept for callers without a request).
+func (s *Server) radioStats(ctx context.Context) radio.Stats { return s.radios[0].stats(ctx) }
+
+// radioFor picks the radio a request is about: the radio holding the identity in the
+// path, else ?radio=<id>, else the main radio. Every endpoint therefore keeps working
+// unchanged on a single-radio host.
+func (s *Server) radioFor(r *http.Request) *radioCtx {
+	if r != nil {
+		if raw := r.PathValue("id"); raw != "" {
+			if num, err := wire.ParseNodeID(raw); err == nil {
+				for _, rc := range s.radios {
+					if rc.host.Identity(num) != nil {
+						return rc
+					}
+				}
+			}
+		}
+		if want := r.URL.Query().Get("radio"); want != "" {
+			for _, rc := range s.radios {
+				if rc.id == want {
+					return rc
+				}
+			}
+		}
+	}
+	return s.radios[0]
+}
+
+func (s *Server) hostFor(r *http.Request) *mesh.Host { return s.radioFor(r).host }
+
+// radioOf finds the radio an identity lives on.
+func (s *Server) radioOf(id *mesh.Identity) *radioCtx {
+	for _, rc := range s.radios {
+		if rc.host.Identity(id.NodeNum) == id {
+			return rc
+		}
+	}
+	return s.radios[0]
+}
+
+// radioConfig is a radio's current configuration view.
+func (s *Server) radioConfig(rc *radioCtx) *config.Config {
+	if rc.cfg != nil {
+		return rc.cfg
+	}
+	return s.cfg
 }
 
 type loginState struct {
@@ -77,6 +170,11 @@ func New(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opt: o, cfg: o.Config, host: o.Host, auth: a, log: o.Log.With("component", "web"), mux: http.NewServeMux()}
+	s.booted = cloneConfig(o.Config)
+	s.radios = append(s.radios, &radioCtx{id: config.MainRadioID, name: o.Config.RadioConfigs()[0].Name, host: o.Host, api: o.API, udp: o.UDP, mqtt: o.MQTT})
+	for _, x := range o.Radios {
+		s.radios = append(s.radios, &radioCtx{id: x.ID, name: x.Name, cfg: x.Config, host: x.Host, api: x.API, udp: x.UDP, mqtt: x.MQTT})
+	}
 	s.traces.pending = map[string]time.Time{}
 	a.ttl = func() time.Duration {
 		s.cfgMu.Lock()
@@ -91,8 +189,10 @@ func New(o Options) (*Server, error) {
 func (s *Server) Handler() http.Handler { return s.mux }
 
 func (s *Server) Run(ctx context.Context) error {
-	go s.sampleRF(ctx)
-	go s.watchTraceroutes(ctx)
+	for _, rc := range s.radios {
+		go s.sampleRF(ctx, rc)
+		go s.watchTraceroutes(ctx, rc)
+	}
 	addr := net.JoinHostPort(s.cfg.Web.Bind, strconv.Itoa(s.cfg.Web.Port))
 	srv := &http.Server{Addr: addr, Handler: securityHeaders(s.mux), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -116,7 +216,9 @@ func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-		w.Header().Set("Referrer-Policy", "same-origin")
+		// Not same-origin: map tile servers (OpenStreetMap's policy) refuse requests without a
+		// Referer. Cross-origin requests still only see the origin, never paths or queries.
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.ServeHTTP(w, r)
 	})
 }
@@ -134,8 +236,19 @@ func (s *Server) routes() {
 	setup("POST /api/v1/phy/preview", s.phyPreview)
 	setup("POST /api/v1/setup/probe", s.probe)
 	priv("PUT /api/v1/auth/password", s.changePassword)
+	priv("POST /api/v1/auth/logout-all", s.logoutAll)
 
 	priv("GET /api/v1/status", s.getStatus)
+	priv("GET /api/v1/radios", s.listRadios)
+	priv("POST /api/v1/radios", s.addRadio)
+	priv("PATCH /api/v1/radios/{id}", s.patchRadio)
+	priv("PUT /api/v1/radios/{id}", s.putRadio)
+	priv("DELETE /api/v1/radios/{id}", s.deleteRadio)
+	priv("GET /api/v1/experimental", s.getExperimental)
+	priv("PUT /api/v1/experimental", s.putExperimental)
+	priv("GET /api/v1/site", s.getSite)
+	priv("PUT /api/v1/site", s.putSite)
+	priv("POST /api/v1/restart", s.restartDaemon)
 	priv("PUT /api/v1/relay", s.putRelay)
 
 	priv("GET /api/v1/identities", s.listIdentities)
@@ -143,6 +256,9 @@ func (s *Server) routes() {
 	priv("POST /api/v1/identities/preview-key", s.previewKey)
 	priv("PATCH /api/v1/identities/{id}", s.patchIdentity)
 	priv("DELETE /api/v1/identities/{id}", s.deleteIdentity)
+	priv("POST /api/v1/identities/{id}/move", s.moveIdentity)
+	priv("GET /api/v1/identities/{id}/route", s.routePreview)
+	priv("GET /api/v1/nodes/{id}/sightings", s.nodeSightings)
 	priv("GET /api/v1/identities/{id}/key", s.getKey)
 	priv("PUT /api/v1/identities/{id}/channels/{index}", s.putChannel)
 	priv("GET /api/v1/identities/{id}/channels/url", s.getChannelURL)
@@ -185,8 +301,8 @@ func (s *Server) routes() {
 func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if tok == "" {
-			tok = r.URL.Query().Get("token")
+		if tok == "" && strings.HasSuffix(r.URL.Path, "/events") {
+			tok = r.URL.Query().Get("token") // EventSource can't send headers; nowhere else, so tokens stay out of URLs and logs
 		}
 		if !s.auth.Valid(tok) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
@@ -209,6 +325,13 @@ func (s *Server) spa() http.Handler {
 			p = "index.html"
 		}
 		if _, err := fs.Stat(dist, p); err != nil {
+			// A missing asset is a 404, not the app page: a tab still running an older build asks
+			// for chunks that no longer exist, and must see the failure so it can reload.
+			if strings.HasPrefix(p, "assets/") {
+				w.Header().Set("Cache-Control", "no-store")
+				http.NotFound(w, r)
+				return
+			}
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
 			p = "index.html"

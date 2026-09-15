@@ -6,7 +6,7 @@ import Drawer from '@/components/ui/Drawer.vue'
 import KindChip from '@/components/ui/KindChip.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import { decodeHeader, hexDump } from '@/lib/header'
-import { dateTime, hex, portLabel, BROADCAST } from '@/lib/format'
+import { BROADCAST, airtime, dateTime, hex, num, portLabel } from '@/lib/format'
 import { nodeByLastByte, nodeLabel } from '@/store/live'
 
 const props = defineProps<{ packet: Packet | null }>()
@@ -78,11 +78,11 @@ function lastByteName(b: number) {
         </dd>
         <dt>Signal</dt>
         <dd class="tabular-nums">
-          <template v-if="packet.direction === 'rx'">SNR {{ packet.snr?.toFixed(2) }} dB · RSSI {{ packet.rssi }} dBm</template>
+          <template v-if="packet.direction === 'rx'">SNR {{ packet.snr?.toFixed(2) }} dB · RSSI {{ num(packet.rssi, 0) }} dBm</template>
           <template v-else>transmitted</template>
         </dd>
         <dt>Size · airtime</dt>
-        <dd class="tabular-nums">{{ packet.size }} bytes · {{ packet.airtime_ms }} ms</dd>
+        <dd class="tabular-nums">{{ packet.size }} bytes · {{ airtime(packet.airtime_ms) }}</dd>
         <dt>Relay node</dt>
         <dd><span class="mono">0x{{ packet.relay_node.toString(16).padStart(2, '0') }}</span> <span class="text-ink-3">{{ lastByteName(packet.relay_node) }}</span></dd>
       </dl>

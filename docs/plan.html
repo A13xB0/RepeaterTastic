@@ -1,4 +1,4 @@
-<title>Hopstatic</title>
+<title>RepeaterTastic</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
@@ -187,8 +187,8 @@ footer ul{padding-left:18px}
 <main>
 <header class="top">
   <div class="eyebrow"><span>Build plan · v0.1</span><span>15 Sep 2026</span><span>Target: Meshtastic 2.7 – 2.8</span></div>
-  <h1>Hopstatic</h1>
-  <p class="lede">An openHop-style host for Meshtastic. A Pi (or any Linux box) runs many virtual Meshtastic nodes in software, all sharing one dumb LoRa modem. Each node gets its own TCP API port that the official apps can connect to, and the nodes route to each other locally. <span class="muted">“Hopstatic” is a working name.</span></p>
+  <h1>RepeaterTastic</h1>
+  <p class="lede">An openHop-style host for Meshtastic. A Pi (or any Linux box) runs many virtual Meshtastic nodes in software, all sharing one dumb LoRa modem. Each node gets its own TCP API port that the official apps can connect to, and the nodes route to each other locally. <span class="muted"></span></p>
 </header>
 
 <section id="verdict">
@@ -440,7 +440,7 @@ Persistence   255           # the host runs the Meshtastic contention window, th
   <tbody>
     <tr><td><b>Local DM</b><br><span class="muted small">identity → identity, same host</span></td><td>Delivered in software, with a synthesised ACK and no RF (default). The option <code>local_dm: also_rf</code> copies openHop's always-transmit behaviour for people who want local traffic visible on the mesh.</td></tr>
     <tr><td><b>Local broadcast</b></td><td>Delivered straight to every local identity on that channel, then transmitted once. When a relayed copy comes back, the packet history drops it for delivery but counts it as an implicit ACK.</td></tr>
-    <tr><td><b>UDP multicast</b></td><td><span class="mono">239.0.0.69:4403</span>, carrying encrypted <code>MeshPacket</code> protobufs. This is what native <code>meshtasticd</code> uses, so Hopstatic can share a LAN mesh with real meshtasticd nodes and other Hopstatic hosts. Treat it as another interface, with its own history entry and no RF airtime.</td></tr>
+    <tr><td><b>UDP multicast</b></td><td><span class="mono">239.0.0.69:4403</span>, carrying encrypted <code>MeshPacket</code> protobufs. This is what native <code>meshtasticd</code> uses, so RepeaterTastic can share a LAN mesh with real meshtasticd nodes and other RepeaterTastic hosts. Treat it as another interface, with its own history entry and no RF airtime.</td></tr>
     <tr><td><b>Host ↔ host</b> (WAN)</td><td>The same MeshPacket stream over authenticated TCP or WireGuard, for joining two sites. Per-link rules control which channels and ports cross.</td></tr>
     <tr><td><b>MQTT gateway</b></td><td><code>msh/2/e/&lt;channel&gt;/!gateway</code> with <code>ServiceEnvelope</code>. Uplink and downlink are set per channel and are off by default.</td></tr>
   </tbody>
@@ -449,13 +449,13 @@ Persistence   255           # the host runs the Meshtastic contention window, th
 
 <section id="gui">
 <h2>Web GUI</h2>
-<p>The layout copies openHop's dashboard so openHop users feel at home: a sidebar of views, a top bar showing radio health and relay mode, and live data pushed over WebSockets. openHop's UI (<code>openHop_RepeaterUI</code>, MIT, read at <code>acb5162</code>) is built with Vue 3, TypeScript, Vite, Pinia, Tailwind, Chart.js and Leaflet. Its API client is generated from the backend's <code>openapi.yaml</code>. Hopstatic uses the same stack and the same codegen step.</p>
+<p>The layout copies openHop's dashboard so openHop users feel at home: a sidebar of views, a top bar showing radio health and relay mode, and live data pushed over WebSockets. openHop's UI (<code>openHop_RepeaterUI</code>, MIT, read at <code>acb5162</code>) is built with Vue 3, TypeScript, Vite, Pinia, Tailwind, Chart.js and Leaflet. Its API client is generated from the backend's <code>openapi.yaml</code>. RepeaterTastic uses the same stack and the same codegen step.</p>
 
 <figure>
 <div class="mock-wrap">
 <div class="mock" role="img" aria-label="Wireframe of the Identities view with example data">
   <div class="mock-side">
-    <div class="mock-brand">Hopstatic</div>
+    <div class="mock-brand">RepeaterTastic</div>
     <div class="mock-nav">Dashboard</div>
     <div class="mock-nav on">Identities</div>
     <div class="mock-nav">Nodes &amp; map</div>
@@ -480,7 +480,7 @@ Persistence   255           # the host runs the Meshtastic contention window, th
       <table>
         <thead><tr><th>Node</th><th>API</th><th>Apps</th><th>Outbox</th><th>Airtime 1 h</th><th>Status</th></tr></thead>
         <tbody>
-          <tr><td><b>Hopstatic Relay</b><span class="sub mono">!3f0a91c2 · relay persona</span></td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">9.8 s</td><td><span class="chip info">Relaying</span></td></tr>
+          <tr><td><b>RepeaterTastic Relay</b><span class="sub mono">!3f0a91c2 · relay persona</span></td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">9.8 s</td><td><span class="chip info">Relaying</span></td></tr>
           <tr><td><b>Base Camp</b><span class="sub mono">!a1c40e07 · BASE</span></td><td class="mono">:4403</td><td class="mono">1</td><td class="mono">0</td><td class="mono">3.2 s</td><td><span class="chip ok">Online</span></td></tr>
           <tr><td><b>Ops Desk</b><span class="sub mono">!5b9e2213 · OPS</span></td><td class="mono">:4404</td><td class="mono">0</td><td class="mono">12</td><td class="mono">1.1 s</td><td><span class="chip warn">No app</span></td></tr>
           <tr><td><b>Weather Bot</b><span class="sub mono">!7d21e4a9 · WX</span></td><td class="mono">:4405</td><td class="mono">1</td><td class="mono">0</td><td class="mono">133.6 s</td><td><span class="chip crit">Over share</span></td></tr>
@@ -496,7 +496,7 @@ Persistence   255           # the host runs the Meshtastic contention window, th
 
 <h3>Views</h3>
 <div class="tbl"><table>
-  <thead><tr><th>Hopstatic view</th><th>openHop equivalent</th><th>What it does</th></tr></thead>
+  <thead><tr><th>RepeaterTastic view</th><th>openHop equivalent</th><th>What it does</th></tr></thead>
   <tbody>
     <tr><td><b>Setup wizard</b></td><td>Setup</td><td>Detects the modem (<code>/dev/serial/by-id</code>, Ping, version) and checks it accepts the sync-word command. You pick region and preset and see the computed frequency live, then set the relay role and admin password.</td></tr>
     <tr><td><b>Dashboard</b></td><td>Dashboard</td><td>Headline figures (RX, TX, duplicates, relays, ACK success) and a live packet table showing from → to, port, channel, hops, SNR and RSSI. Each packet is tagged <em>ours</em>, <em>relayed</em>, <em>dup</em> or <em>undecryptable</em>. Also an airtime chart against the duty-cycle line, a noise-floor sparkline and a breakdown by port.</td></tr>
@@ -580,7 +580,7 @@ WS   /ws/identities/{node}/api           raw client-API frames for browser chat<
 
 <section id="layout">
 <h2>Repo and config</h2>
-<pre><code>hopstatic/
+<pre><code>repeatertastic/
   radio/      kiss.py  spi.py  udp_sim.py          # one LoRaRadio interface
   phy/        presets.py  regions.py  freqslot.py  airtime.py
   wire/       header.py  channel_crypto.py  pki.py  xeddsa.py  pb/   # generated protobufs
@@ -604,7 +604,7 @@ ui/                # Vue 3 + TS + Vite + Pinia + Tailwind; built into web/static
 
 relay:
   role: client                 # client | router | mute
-  long_name: "Hopstatic Relay"
+  long_name: "RepeaterTastic Relay"
   short_name: "HOPR"
 
 airtime:
@@ -640,7 +640,7 @@ links:
 <section id="testing">
 <h2>Testing</h2>
 <ul>
-  <li><b>Reference peer without RF.</b> <code>meshtasticd</code> native in Docker with UDP multicast enabled. Point Hopstatic's <code>udp_sim</code> radio at the same group and the whole stack, including routing, runs in CI against real firmware logic.</li>
+  <li><b>Reference peer without RF.</b> <code>meshtasticd</code> native in Docker with UDP multicast enabled. Point RepeaterTastic's <code>udp_sim</code> radio at the same group and the whole stack, including routing, runs in CI against real firmware logic.</li>
   <li><b>Golden vectors.</b> Give meshtasticd fixed keys and capture every packet type. Unit tests must reproduce the bytes exactly.</li>
   <li><b>Bench RF.</b> Two Heltec V3s, one on stock Meshtastic and one on the KISS modem, with attenuators or dummy loads. Script scenarios with the Python API on the stock node.</li>
   <li><b>Apps.</b> A manual checklist per release for Android and iOS: connect, handshake, DM with ticks, channel message, rename, add a secondary channel, reconnect replay.</li>
@@ -663,7 +663,7 @@ links:
     <tr><td>Last-byte collisions with neighbours confuse next-hop routing</td><td><span class="chip info">Low</span></td><td>Pick keys whose last byte avoids heard neighbours, and warn when a collision appears later.</td></tr>
     <tr><td>Half duplex: packets arriving during our TX are lost</td><td><span class="chip info">Low</span></td><td>Inherent to any single radio. Count the losses. A second modem as a dedicated receiver is possible later.</td></tr>
     <tr><td>Frequency slot mismatch in regions whose band doesn't divide evenly (2.7 vs 2.8 rounding)</td><td><span class="chip info">Low</span></td><td>Allow an explicit <code>frequency</code> override. EU_868, EU_433 and US are unaffected.</td></tr>
-    <tr><td>Licence: Meshtastic protobufs and firmware are GPL-3.0</td><td><span class="chip info">Low</span></td><td>Licence Hopstatic GPL-3.0. openhop_core (MIT) can be used inside it. Avoid using the Meshtastic name or logo in branding.</td></tr>
+    <tr><td>Licence: Meshtastic protobufs and firmware are GPL-3.0</td><td><span class="chip info">Low</span></td><td>Licence RepeaterTastic GPL-3.0. openhop_core (MIT) can be used inside it. Avoid using the Meshtastic name or logo in branding.</td></tr>
   </tbody>
 </table></div>
 </section>
@@ -671,12 +671,12 @@ links:
 <section id="decisions">
 <h2>Decisions for you</h2>
 <div class="decisions">
-  <div class="decision"><h3>Standalone project or part of openHop?</h3><p class="rec"><b>Recommend standalone,</b> in Python, importing <code>openhop_core.hardware</code> for the radio drivers. The protocols share nothing above the radio, and one modem can't serve both networks at once (different sync word and frequency). A host could still run openHop and Hopstatic side by side with two modems, and a shared web UI can come later.</p></div>
+  <div class="decision"><h3>Standalone project or part of openHop?</h3><p class="rec"><b>Recommend standalone,</b> in Python, importing <code>openhop_core.hardware</code> for the radio drivers. The protocols share nothing above the radio, and one modem can't serve both networks at once (different sync word and frequency). A host could still run openHop and RepeaterTastic side by side with two modems, and a shared web UI can come later.</p></div>
   <div class="decision"><h3>Should the host relay?</h3><p class="rec"><b>Recommend configurable, defaulting to <code>client</code>.</b> Use <code>router</code> only for a well-sited box, and <code>mute</code> for indoor Pis that only host identities.</p></div>
   <div class="decision"><h3>Local DMs: software only, or over the air too?</h3><p class="rec"><b>Recommend software only.</b> It saves airtime and still works when the radio is unplugged.</p></div>
   <div class="decision"><h3>Fork openHop's UI or build a new one?</h3><p class="rec"><b>Recommend a new app on the same stack and layout,</b> reusing openHop's generic components under their MIT notice. A straight fork would mean carrying and deleting thousands of lines of MeshCore views. Keep the look close enough that someone running both feels at home.</p></div>
   <div class="decision"><h3>Upstream the modem patch to MeshCore?</h3><p class="rec"><b>Recommend yes.</b> It's generic (sync word and preamble), it helps openHop, and it avoids maintaining a fork of the firmware.</p></div>
-  <div class="decision"><h3>Name</h3><p>“Hopstatic” is a placeholder. The final name should avoid the Meshtastic trademark.</p></div>
+  <div class="decision"><h3>Name</h3><p>“RepeaterTastic” is a placeholder. The final name should avoid the Meshtastic trademark.</p></div>
 </div>
 </section>
 

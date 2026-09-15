@@ -1,35 +1,42 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Download, KeyRound, Plus, RotateCcw, TriangleAlert, Trash, Upload } from '@lucide/vue'
-import { api, API_BASE, enc, token as authToken } from '@/api/client'
-import type { ApiToken, Config, ConfigPutResult, Phy, Region, SerialPort } from '@/api/types'
+import { Download, KeyRound, Plus, RotateCcw, Trash, Upload } from '@lucide/vue'
+import { api, API_BASE, enc, setToken as setAuthToken, token as authToken } from '@/api/client'
+import type { ApiToken, Config, ConfigPutResult, Region, SerialPort } from '@/api/types'
 import { live, refreshStatus } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import MqttConnections from '@/components/config/MqttConnections.vue'
+import RadiosPanel from '@/components/config/RadiosPanel.vue'
+import ExperimentalPanel from '@/components/config/ExperimentalPanel.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
-import { relTime } from '@/lib/format'
+import { num, relTime } from '@/lib/format'
 
-type Tab = 'radio' | 'relay' | 'airtime' | 'web' | 'backup'
-const tabs: { id: Tab; label: string }[] = [
-  { id: 'radio', label: 'Radio' },
+type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
+const allTabs: { id: Tab; label: string }[] = [
+  { id: 'radio', label: 'Radios' },
   { id: 'relay', label: 'Relay' },
   { id: 'airtime', label: 'Airtime & duty' },
+  { id: 'position', label: 'Position & hardware' },
+  { id: 'mqtt', label: 'MQTT' },
   { id: 'web', label: 'Web & API tokens' },
+  { id: 'experimental', label: 'Experimental' },
   { id: 'backup', label: 'Backup & restore' },
 ]
+// The radio list, web settings, tokens and backups belong to the host, so they only show on the main radio.
+const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'experimental'].includes(t.id)))
 const route = useRoute()
 const router = useRouter()
-const tab = computed<Tab>(() => (tabs.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio'))
+const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio')) // 'radios' (old link) → Radios
 const setTab = (t: Tab) => router.replace({ name: 'config', params: { tab: t } })
 
 const saved = ref<Config | null>(null)
 const form = ref<Config | null>(null)
 const saving = ref(false)
-const restartRequired = ref(false)
 
 async function load() {
   const c = await api.get<Config>('/config')
@@ -37,22 +44,25 @@ async function load() {
   form.value = structuredClone(c)
 }
 
-const section = computed(() => (tab.value === 'web' ? 'web' : tab.value === 'backup' ? null : tab.value))
+const section = computed(() => (['backup', 'experimental', 'radio'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
+// The Position tab edits two config sections.
+const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
 const dirty = computed(() => {
-  const s = section.value
-  if (!s || !form.value || !saved.value) return false
-  return JSON.stringify(form.value[s]) !== JSON.stringify(saved.value[s])
+  if (!form.value || !saved.value) return false
+  return sections.value.some((s) => JSON.stringify(form.value![s]) !== JSON.stringify(saved.value![s]))
 })
 
 async function save() {
-  const s = section.value
-  if (!s || !form.value) return
+  if (!sections.value.length || !form.value) return
   saving.value = true
   try {
-    const r = await api.put<ConfigPutResult>('/config', { [s]: form.value[s] })
+    const body: Record<string, unknown> = {}
+    for (const s of sections.value) body[s] = form.value[s]
+    const r = await api.put<ConfigPutResult>('/config', body)
     saved.value = r.config
-    form.value = { ...form.value, [s]: structuredClone(r.config[s]) }
-    restartRequired.value ||= r.restart_required
+    const next = { ...form.value }
+    for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(r.config[s])
+    form.value = next
     toast(r.restart_required ? 'Saved. Restart the daemon to apply.' : 'Saved and applied')
     refreshStatus().catch(() => {})
   } catch (e) {
@@ -62,26 +72,29 @@ async function save() {
   }
 }
 function revert() {
-  const s = section.value
-  if (!s || !form.value || !saved.value) return
-  form.value = { ...form.value, [s]: structuredClone(saved.value[s]) }
+  if (!form.value || !saved.value) return
+  const next = { ...form.value }
+  for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(saved.value[s])
+  form.value = next
 }
+
+async function confirmDutyOverride() {
+  if (!form.value?.airtime.override_duty_cycle) return
+  const ok = await confirmDialog({
+    title: 'Ignore the duty-cycle limit?',
+    body: `This radio will transmit without the hourly airtime budget. ${form.value.radio.region} sets a legal duty-cycle limit, and a busy relay can exceed it. Only turn this on if you know your site and licence allow it.`,
+    confirm: 'Ignore the limit',
+    danger: true,
+  })
+  if (!ok && form.value) form.value.airtime.override_duty_cycle = false
+}
+
+const hwModels = ['AUTO', 'HELTEC_V3', 'HELTEC_V4', 'HELTEC_WIRELESS_TRACKER', 'RAK4631', 'SEEED_XIAO_S3', 'XIAO_NRF52_KIT', 'TBEAM', 'T_ECHO', 'PORTDUINO']
 
 // ---- radio
 const ports = ref<SerialPort[]>([])
 const regions = ref<Region[]>([])
-const phy = ref<Phy | null>(null)
 const region = computed(() => regions.value.find((r) => r.name === form.value?.radio.region))
-async function preview() {
-  if (!form.value) return
-  try {
-    phy.value = await api.post<Phy>('/phy/preview', { region: form.value.radio.region, preset: form.value.radio.preset, primary_channel: form.value.radio.primary_channel, tx_power_dbm: form.value.radio.tx_power_dbm })
-  } catch {
-    phy.value = null
-  }
-}
-watch(() => form.value && [form.value.radio.region, form.value.radio.preset, form.value.radio.primary_channel, form.value.radio.tx_power_dbm], preview)
-const freqChanged = computed(() => !!phy.value && !!live.status && Math.abs(phy.value.frequency_mhz - live.status.phy.frequency_mhz) > 1e-6)
 
 // ---- web: password + tokens
 const pw = ref({ current: '', next: '', repeat: '' })
@@ -89,9 +102,10 @@ const pwBusy = ref(false)
 async function changePassword() {
   pwBusy.value = true
   try {
-    await api.put('/auth/password', { current: pw.value.current, new: pw.value.next })
+    const r = await api.put<{ token: string }>('/auth/password', { current: pw.value.current, new: pw.value.next })
+    if (r?.token) setAuthToken(r.token)
     pw.value = { current: '', next: '', repeat: '' }
-    toast('Password changed')
+    toast('Password changed. Other browsers have been signed out.')
   } catch (e) {
     toastError(e)
   } finally {
@@ -159,12 +173,11 @@ async function restore() {
     toastError(new Error('That file is not valid JSON'))
     return
   }
-  if (!(await confirmDialog({ title: 'Restore this backup?', body: `Config and identity keys from ${f.name} replace what is on this host now. Download a backup of the current state first if you might need it.`, confirm: 'Restore', danger: true }))) return
+  if (!(await confirmDialog({ title: 'Restore this backup?', body: `The config and identity keys from ${f.name} replace what's on this host when the daemon next restarts. Download a backup of the current state first if you might need it.`, confirm: 'Restore', danger: true }))) return
   restoring.value = true
   try {
     const r = await api.post<{ restart_required: boolean }>('/restore', body)
-    restartRequired.value ||= r.restart_required
-    toast('Backup restored')
+    toast(r.restart_required ? 'Backup restored. Restart the daemon to load its identities.' : 'Backup restored')
     load()
   } catch (e) {
     toastError(e)
@@ -176,7 +189,6 @@ async function restore() {
 onMounted(async () => {
   try {
     await load()
-    preview()
   } catch (e) {
     toastError(e)
   }
@@ -185,7 +197,22 @@ onMounted(async () => {
   loadTokens().catch(() => {})
 })
 
-const presetLabel = (p: string) => p.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join('')
+// Loads one tile around the site from the saved (key-filled) URL.
+const tileTest = ref('')
+const tileError = ref(false)
+function testTile() {
+  const url = live.status?.map?.tile_url
+  if (!url) return
+  const lat = form.value?.position.latitude || 55.95
+  const lon = form.value?.position.longitude || -3.19
+  const z = 10
+  const x = Math.floor(((lon + 180) / 360) * 2 ** z)
+  const r = (lat * Math.PI) / 180
+  const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z)
+  tileError.value = false
+  tileTest.value = url.replace('{s}', 'a').replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)).replace('{r}', '')
+}
+
 const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${location.origin}${API_BASE}/status`)
 </script>
 
@@ -198,10 +225,6 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
       </div>
     </div>
 
-    <div v-if="restartRequired" class="mb-4 flex items-center gap-2.5 rounded-xl border border-warn/30 bg-warn/10 px-4 py-2.5 text-[13px]">
-      <TriangleAlert class="size-4 shrink-0 text-warn" />
-      <span>Some saved changes need a restart: <span class="mono">sudo systemctl restart repeatertastic</span></span>
-    </div>
 
     <section class="card overflow-hidden">
       <div class="tabs px-3 sm:px-4" role="tablist">
@@ -211,60 +234,8 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
       <div v-if="!form" class="p-6"><div class="h-48 animate-pulse rounded-xl bg-sunken" /></div>
 
       <div v-else class="p-4 sm:p-6">
-        <!-- RADIO -->
-        <div v-if="tab === 'radio'" class="grid gap-6 lg:grid-cols-[1fr_20rem]">
-          <div class="grid content-start gap-4 sm:grid-cols-2">
-            <div class="sm:col-span-2">
-              <label class="label" for="c-port">Modem serial port</label>
-              <input id="c-port" v-model="form.radio.port" class="input mono" list="c-ports" />
-              <datalist id="c-ports"><option v-for="p in ports" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
-              <p class="hint">Driver <span class="mono">{{ form.radio.type }}</span>. Prefer <span class="mono">/dev/serial/by-id/…</span> so the path survives reboots. Changing it needs a restart.</p>
-            </div>
-            <div>
-              <label class="label" for="c-region">Region</label>
-              <select id="c-region" v-model="form.radio.region" class="input">
-                <option v-for="r in regions" :key="r.name" :value="r.name">{{ r.name }}</option>
-              </select>
-            </div>
-            <div>
-              <label class="label" for="c-preset">Modem preset</label>
-              <select id="c-preset" v-model="form.radio.preset" class="input">
-                <option v-for="p in region?.presets ?? [form.radio.preset]" :key="p" :value="p">{{ presetLabel(p) }}</option>
-              </select>
-            </div>
-            <div>
-              <label class="label" for="c-primary">Primary channel name</label>
-              <input id="c-primary" v-model="form.radio.primary_channel" class="input" maxlength="11" placeholder="empty = preset name" />
-            </div>
-            <div>
-              <label class="label" for="c-offset">Frequency offset (MHz)</label>
-              <input id="c-offset" v-model.number="form.radio.frequency_offset_mhz" type="number" step="0.001" class="input tabular-nums" />
-            </div>
-            <div class="sm:col-span-2">
-              <label class="label" for="c-power">TX power · {{ form.radio.tx_power_dbm }} dBm <span class="font-normal text-ink-3">(region max {{ region?.power_limit_dbm ?? '…' }} dBm)</span></label>
-              <input id="c-power" v-model.number="form.radio.tx_power_dbm" type="range" min="1" :max="region?.power_limit_dbm ?? 30" class="w-full accent-[var(--brand)]" />
-            </div>
-          </div>
-          <aside class="rounded-xl border border-line-soft bg-raised p-4">
-            <div class="eyebrow">Resulting PHY</div>
-            <template v-if="phy">
-              <div class="mt-2 text-[28px] font-semibold leading-none tracking-tight tabular-nums">{{ (phy.frequency_mhz + (form.radio.frequency_offset_mhz || 0)).toFixed(3) }}<span class="ml-1 text-sm font-normal text-ink-3">MHz</span></div>
-              <div class="mt-1 text-xs text-ink-3">slot {{ phy.slot + 1 }}/{{ phy.num_slots }} · "{{ phy.primary_channel }}"</div>
-              <dl class="kv mt-4 !grid-cols-[auto_1fr] text-xs">
-                <dt>Bandwidth</dt><dd class="tabular-nums">{{ phy.bw_khz }} kHz</dd>
-                <dt>Spreading factor</dt><dd>SF{{ phy.sf }}</dd>
-                <dt>Coding rate</dt><dd>4/{{ phy.cr }}</dd>
-                <dt>Sync word</dt><dd class="mono">0x{{ phy.sync_word.toString(16).toUpperCase() }}</dd>
-                <dt>Preamble</dt><dd>{{ phy.preamble }} symbols</dd>
-                <dt>TX power</dt><dd>{{ phy.tx_power_dbm }} dBm</dd>
-              </dl>
-              <p v-if="freqChanged" class="mt-3 rounded-lg bg-warn/10 px-2.5 py-2 text-xs text-warn">
-                This moves the radio off {{ live.status?.phy.frequency_mhz.toFixed(3) }} MHz. Every identity will leave its current mesh.
-              </p>
-            </template>
-            <div v-else class="mt-2 h-24 animate-pulse rounded-lg bg-sunken" />
-          </aside>
-        </div>
+        <!-- RADIOS: the site's radios; each is edited in a modal -->
+        <RadiosPanel v-if="tab === 'radio'" :ports="ports" :regions="regions" @restart="refreshStatus()" />
 
         <!-- RELAY -->
         <div v-else-if="tab === 'relay'" class="grid max-w-2xl gap-4 sm:grid-cols-[1fr_8rem]">
@@ -295,7 +266,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
         <!-- AIRTIME -->
         <div v-else-if="tab === 'airtime'" class="grid max-w-3xl gap-4 sm:grid-cols-2">
           <div>
-            <label class="label" for="c-duty">Duty cycle limit · {{ form.airtime.duty_cycle_percent }}%</label>
+            <label class="label" for="c-duty">Duty cycle limit · {{ num(form.airtime.duty_cycle_percent) }}%</label>
             <input id="c-duty" v-model.number="form.airtime.duty_cycle_percent" type="range" min="1" :max="Math.max(region?.duty_cycle_pct ?? 100, 1)" step="0.5" class="w-full accent-[var(--brand)]" />
             <p class="hint">Rolling one-hour TX budget shared by all identities. {{ form.radio.region }} allows {{ region?.duty_cycle_pct ?? '…' }}%.</p>
           </div>
@@ -311,37 +282,78 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             </select>
             <p class="hint">Staggered across identities so they don't all transmit at once.</p>
           </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="label" for="c-pos">Position</label>
-              <select id="c-pos" v-model="form.airtime.position" class="input">
-                <option value="off">Off</option>
-                <option value="fixed">Fixed</option>
-              </select>
-            </div>
-            <div>
-              <label class="label" for="c-tel">Telemetry</label>
-              <select id="c-tel" v-model="form.airtime.telemetry" class="input">
-                <option value="off">Off</option>
-                <option value="device">Device</option>
-              </select>
-            </div>
+          <div>
+            <label class="label" for="c-tel">Relay device telemetry</label>
+            <select id="c-tel" v-model="form.airtime.telemetry_interval" class="input">
+              <option value="off">Off</option>
+              <option v-for="v in ['30m', '1h', '3h', '6h', '12h']" :key="v" :value="v">every {{ v }}</option>
+            </select>
+            <p class="hint">The relay persona reports uptime, channel use and TX airtime like a mains-powered node. Skipped when the channel is busy.</p>
+          </div>
+          <div class="sm:col-span-2 rounded-xl border border-line-soft px-3.5 py-3">
+            <label class="flex items-start gap-2 text-[13px]">
+              <input v-model="form.airtime.override_duty_cycle" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" @change="confirmDutyOverride" />
+              <span :class="form.airtime.override_duty_cycle ? 'text-bad' : ''">Ignore the duty-cycle limit<span class="block text-xs text-ink-3">Transmits without an hourly budget. {{ form.radio.region }} limits transmit time by law ({{ region?.duty_cycle_pct ?? '…' }}%); you're responsible for staying legal.</span></span>
+            </label>
+          </div>
+          <p class="hint sm:col-span-2">Contention window: CW {{ form.airtime.cw_min }}–{{ form.airtime.cw_max }}, fixed to match the firmware so this site waits its turn like every other node. Position broadcasts are set on Position &amp; hardware.</p>
+        </div>
+
+        <!-- POSITION & HARDWARE -->
+        <div v-else-if="tab === 'position'" class="grid max-w-3xl gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <h4 class="eyebrow mb-1">Site position</h4>
+            <p class="hint !mt-0">A fixed location broadcast like a fixed node and answered on request. Both zero means no position.</p>
+          </div>
+          <div>
+            <label class="label" for="p-lat">Latitude</label>
+            <input id="p-lat" v-model.number="form.position.latitude" type="number" step="0.000001" min="-90" max="90" class="input tabular-nums" />
+          </div>
+          <div>
+            <label class="label" for="p-lon">Longitude</label>
+            <input id="p-lon" v-model.number="form.position.longitude" type="number" step="0.000001" min="-180" max="180" class="input tabular-nums" />
+          </div>
+          <div>
+            <label class="label" for="p-alt">Altitude (m above sea level)</label>
+            <input id="p-alt" v-model.number="form.position.altitude" type="number" class="input tabular-nums" />
+          </div>
+          <div>
+            <label class="label" for="p-bits">Precision · {{ form.position.precision_bits === 32 ? 'exact' : `${form.position.precision_bits} bits` }}</label>
+            <input id="p-bits" v-model.number="form.position.precision_bits" type="range" min="10" max="32" step="1" class="w-full accent-[var(--brand)]" />
+            <p class="hint">32 is exact; 16 ≈ 360 m, 13 ≈ 3 km.</p>
+          </div>
+          <div>
+            <label class="label" for="p-int">Broadcast interval</label>
+            <select id="p-int" v-model="form.position.interval" class="input">
+              <option v-for="v in ['30m', '1h', '3h', '6h', '12h', '24h']" :key="v" :value="v">every {{ v }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="p-who">Broadcast from</label>
+            <select id="p-who" v-model="form.position.identities" class="input">
+              <option value="relay">The relay persona only</option>
+              <option value="all">Every identity</option>
+            </select>
           </div>
           <div class="sm:col-span-2">
-            <h4 class="eyebrow mb-2 mt-2">Contention window</h4>
-            <div class="grid grid-cols-2 gap-3 sm:max-w-sm">
-              <div>
-                <label class="label" for="c-cwmin">CW min</label>
-                <input id="c-cwmin" v-model.number="form.airtime.cw_min" type="number" min="1" max="15" class="input tabular-nums" />
-              </div>
-              <div>
-                <label class="label" for="c-cwmax">CW max</label>
-                <input id="c-cwmax" v-model.number="form.airtime.cw_max" type="number" min="1" max="15" class="input tabular-nums" />
-              </div>
-            </div>
-            <p class="hint">Firmware defaults are 3 and 8. Wider windows mean fewer collisions and higher latency.</p>
+            <h4 class="eyebrow mb-1 mt-2">Hardware</h4>
+          </div>
+          <div>
+            <label class="label" for="p-hw">Advertised hardware model</label>
+            <select id="p-hw" v-model="form.hardware.hw_model" class="input">
+              <option v-for="m in hwModels" :key="m" :value="m">{{ m === 'AUTO' ? `Auto (the modem's board)` : m }}</option>
+            </select>
+            <p class="hint">
+              Now advertising <span class="mono">{{ saved?.hardware.effective }}</span><template v-if="saved?.hardware.modem"> · modem reports “{{ saved.hardware.modem }}”</template>.
+            </p>
           </div>
         </div>
+
+        <!-- MQTT -->
+        <MqttConnections v-else-if="tab === 'mqtt'" v-model="form.mqtt" />
+
+        <!-- EXPERIMENTAL -->
+        <ExperimentalPanel v-else-if="tab === 'experimental'" />
 
         <!-- WEB -->
         <div v-else-if="tab === 'web'" class="grid gap-8 xl:grid-cols-2">
@@ -360,6 +372,30 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
                 <select id="c-ttl" v-model="form.web.session_ttl" class="input">
                   <option v-for="v in ['1h', '12h', '24h', '168h', '720h']" :key="v" :value="v">{{ v }}</option>
                 </select>
+              </div>
+              <div>
+                <label class="label" for="c-log">Log level</label>
+                <select id="c-log" v-model="form.web.log_level" class="input">
+                  <option v-for="v in ['debug', 'info', 'warn', 'error']" :key="v" :value="v">{{ v }}</option>
+                </select>
+              </div>
+              <label class="flex items-start gap-2 text-[13px] sm:col-span-2">
+                <input v-model="form.web.mdns" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" />
+                <span>Advertise identities on the LAN (mDNS)<span class="block text-xs text-ink-3">Lets the Meshtastic apps discover each identity's port. Needs a restart.</span></span>
+              </label>
+            </div>
+            <div class="rounded-xl border border-line-soft p-4">
+              <h4 class="card-title mb-3">Map tiles</h4>
+              <label class="label" for="c-tiles">Tile URL</label>
+              <input id="c-tiles" v-model.trim="form.web.map_tile_url" class="input mono" placeholder="default: CARTO Positron" />
+              <p class="hint">
+                Leaflet template with <span class="mono">{z}</span>, <span class="mono">{x}</span>, <span class="mono">{y}</span>; <span class="mono">{s}</span> and <span class="mono">{r}</span> are optional and
+                <span class="mono">{api_key}</span> is filled from the {{ form.web.map_key_source === 'none' ? 'environment (none set)' : `${form.web.map_key_source} key` }}. Empty uses the default.
+              </p>
+              <div class="mt-3 flex flex-wrap items-center gap-3">
+                <button type="button" class="btn btn-sm" @click="testTile">Test saved tiles</button>
+                <img v-if="tileTest" :src="tileTest" alt="Test map tile near the site" width="96" height="96" class="rounded-lg border border-line-soft" @error="tileError = true" @load="tileError = false" />
+                <span v-if="tileTest && tileError" class="text-xs text-bad">That tile didn't load. Check the URL and key.</span>
               </div>
             </div>
             <form class="rounded-xl border border-line-soft p-4" @submit.prevent="changePassword">
@@ -402,7 +438,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
           <div class="rounded-xl border border-line-soft p-5">
             <Download class="size-5 text-brand" />
             <h4 class="card-title mt-2">Download backup</h4>
-            <p class="mt-1 text-[13px] text-ink-3">One JSON file with the config and every identity's private key. Store it like a password.</p>
+            <p class="mt-1 text-[13px] text-ink-3">One JSON file with the config (including MQTT passwords) and every identity's private key. Store it like a password.</p>
             <button class="btn mt-4" :disabled="downloading" @click="download"><Spinner v-if="downloading" /><Download v-else class="size-4" />Download backup</button>
           </div>
           <div class="rounded-xl border border-line-soft p-5">

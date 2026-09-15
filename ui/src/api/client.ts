@@ -14,6 +14,35 @@ function readToken(): string | null {
 
 export const token = ref<string | null>(readToken())
 
+// The radio this browser is looking at on a multi-radio host. "main" (or nothing) is the default
+// radio, so single-radio hosts never see a ?radio= at all.
+const RADIO_KEY = 'rt-radio'
+function readRadio(): string {
+  try {
+    return localStorage.getItem(RADIO_KEY) || 'main'
+  } catch {
+    return 'main'
+  }
+}
+export const radio = ref<string>(readRadio())
+
+/** Switch radio and reload, so every view, cache and the event stream start clean. */
+export function setRadio(id: string) {
+  try {
+    localStorage.setItem(RADIO_KEY, id)
+  } catch {
+    /* storage unavailable: the switch lasts until the reload only */
+  }
+  radio.value = id
+  window.location.reload()
+}
+
+/** Adds ?radio= for a non-main radio. */
+export function withRadio(path: string): string {
+  if (!radio.value || radio.value === 'main' || /[?&]radio=/.test(path)) return path
+  return path + (path.includes('?') ? '&' : '?') + 'radio=' + encodeURIComponent(radio.value)
+}
+
 export function setToken(t: string | null) {
   token.value = t
   try {
@@ -45,7 +74,7 @@ export async function request<T>(method: Method, path: string, body?: unknown, o
   if (opts.auth !== false && token.value) headers.Authorization = `Bearer ${token.value}`
   let res: Response
   try {
-    res = await fetch(API_BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+    res = await fetch(API_BASE + withRadio(path), { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   } catch {
     throw new ApiError(0, 'Cannot reach the RepeaterTastic daemon')
   }

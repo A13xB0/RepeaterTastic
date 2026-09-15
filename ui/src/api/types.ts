@@ -24,8 +24,39 @@ export interface Phy {
   primary_channel: string
 }
 
+export interface RadioSummary {
+  id: string
+  name: string
+  main: boolean
+  device: string
+  driver: string
+  firmware: string
+  connected: boolean
+  configured: boolean
+  noise_floor_dbm: number
+  phy: Status['phy']
+  relay: { role: string; node_id?: string; long_name?: string }
+  identities: number
+  tx_pct: number
+  channel_util_pct: number
+  overlaps: string[] | null
+}
+
+export interface RadiosResponse {
+  radios: RadioSummary[]
+  site: { radios: number; duty_limit_pct: number; tx_pct: number } | null
+  /** Radios added or removed in the config that start or stop at the next restart. */
+  pending: { id: string; name: string; device: string; driver?: string; region?: string; preset?: string; tx_power_dbm?: number; relay_role?: string; action: 'start' | 'remove' }[]
+  restart_required: boolean
+}
+
 export interface Status {
   version: string
+  radio_id?: string
+  radio_name?: string
+  map?: { tile_url: string }
+  /** Saved changes the running daemon hasn't picked up yet. */
+  restart_reasons?: string[] | null
   uptime_s: number
   radio: {
     driver: string
@@ -72,6 +103,13 @@ export interface Channel {
   uplink: boolean
   downlink: boolean
   locked: boolean
+  /** With identities on several radios (experimental): the one radio this slot is on. */
+  radio?: string
+  radio_name?: string
+  /** Set when the slot's chosen radio left the site; it runs on the default radio meanwhile. */
+  radio_removed?: string
+  /** Set when the slot's radio was added but hasn't started; it runs on the default radio until the restart. */
+  radio_pending?: string
 }
 
 export interface Identity {
@@ -90,10 +128,23 @@ export interface Identity {
   share_pct: number
   /** Proposed: configured slice of the hourly duty budget (percent of the budget). */
   share_limit_pct?: number
+  /** Cap on the hop limit of packets this identity sends; 0 = the radio's hop limit. */
+  hop_limit?: number
+  /** Own fixed position (null = uses the radio's site position). */
+  position?: { latitude: number; longitude: number; altitude: number } | null
+  position_secs?: number
   /** Proposed: unread browser-chat messages across all conversations. */
   unread?: number
   created_at: number
   channels: Channel[]
+  api_bind?: string
+  /** Experimental routing across radios (kept while the switch is off). */
+  multi_radio?: MultiRadio | null
+  /** Radios the identity is on right now (home first). */
+  radios?: string[]
+  /** The radio this identity is on. */
+  radio_id?: string
+  radio_name?: string
 }
 
 export interface KeyPreview {
@@ -127,6 +178,8 @@ export interface Message {
   rssi: number | null
   snr: number | null
   hops: number | null
+  /** The radio a multi-radio identity heard or sent it on. */
+  radio?: string
 }
 
 export interface MeshNode {
@@ -269,6 +322,69 @@ export interface Link {
   tx: number
   /** Proposed: human-readable endpoint, e.g. "239.0.0.69:4403". */
   detail?: string
+  dropped?: number
+  // MQTT only
+  broker?: string
+  root?: string
+  tls?: boolean
+  downlink?: string[] | null
+  uplink?: string[] | null
+  connection?: string
+  mode?: MqttMode
+  format?: string
+  gateway?: string
+  gateway_id?: string
+  cross_link?: boolean
+  ok_to_mqtt?: boolean
+  relay_mqtt?: boolean
+  // UDP only
+  group?: string
+  map_report?: boolean
+}
+
+/** Experimental: an identity's routing across radios. */
+export interface MultiRadio {
+  /** Where slot 0 lives, new channels start and DMs fall back ("" = home). */
+  default_radio?: string
+  /** Slot index → the one radio that slot is on. */
+  channels?: Record<string, string>
+  /** "auto" (best heard), "default", or a radio id. */
+  dm?: string
+  fallback?: boolean
+}
+
+export type MqttMode = 'gateway' | 'uplink_only' | 'map_only' | 'monitor' | 'bridge'
+
+/** One MQTT broker connection of a radio. */
+export interface MqttConnection {
+  /** The saved name (read-only); empty for a new connection. */
+  key: string
+  name: string
+  enabled: boolean
+  address: string
+  username: string
+  /** Write-only: empty keeps the saved password. */
+  password: string
+  password_set: boolean
+  clear_password: boolean
+  tls: boolean
+  root: string
+  mode: MqttMode
+  /** "relay" or an identity's node id. */
+  gateway: string
+  format: 'encrypted' | 'json' | 'both'
+  uplink_channels: string[]
+  downlink_channels: string[]
+  channel_selection: 'identity' | 'override' | 'combine'
+  ignore_consent: boolean
+  ok_to_mqtt: boolean
+  relay_mqtt: boolean
+  relay_hops: number
+  cross_link: boolean
+  bridge_acknowledged: boolean
+  downlink_per_minute: number
+  uplink_per_minute: number
+  map_report: { enabled: boolean; interval: string; position_precision: number; latitude: number; longitude: number }
 }
 
 /** Proposed: effective config shape for GET/PUT /config (mirrors the YAML file). */
@@ -281,18 +397,29 @@ export interface Config {
     primary_channel: string
     tx_power_dbm: number
     frequency_offset_mhz: number
+    baud: number
+    hop_limit: number
+    channel_num: number
+    override_frequency_mhz: number
   }
   relay: { role: RelayRole; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
   airtime: {
     duty_cycle_percent: number
     identity_share_percent: number
     nodeinfo_interval: string
-    position: 'off' | 'fixed'
-    telemetry: 'off' | 'device'
+    /** "off" or a duration such as "3h". */
+    telemetry_interval: string
+    override_duty_cycle: boolean
+    /** Read-only: the firmware's contention window. */
     cw_min: number
     cw_max: number
   }
-  web: { bind: string; port: number; session_ttl: string }
+  web: { bind: string; port: number; session_ttl: string; map_tile_url: string; map_key_source: string; mdns: boolean; log_level: string }
+  position: { latitude: number; longitude: number; altitude: number; precision_bits: number; interval: string; identities: 'relay' | 'all' }
+  hardware: { hw_model: string; effective: string; modem: string }
+  mqtt: MqttConnection[]
+  radio_id: string
+  main: boolean
 }
 
 export interface ConfigPutResult {

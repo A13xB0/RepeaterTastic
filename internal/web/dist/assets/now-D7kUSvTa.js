@@ -1,1 +1,0 @@
-import{V as e}from"./runtime-core.esm-bundler-ub-Ihima.js";var t=e(Date.now());setInterval(()=>t.value=Date.now(),1e3);export{t};

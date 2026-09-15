@@ -17,6 +17,7 @@ type txItem struct {
 	origin   uint32 // identity that originated it (0 for relays)
 	attempts int    // channel-busy deferrals
 	seq      uint64
+	plain    *pb.Data // our own packets' payload, so the packet log can show what was sent
 }
 
 // TxQueue holds packets waiting for their contention delay. Relays can be cancelled when a
@@ -142,4 +143,21 @@ func (q *TxQueue) Next(ctx context.Context) (*txItem, error) {
 		}
 		t.Stop()
 	}
+}
+
+// DropOrigin removes every queued packet an identity originated and returns their packet IDs.
+func (q *TxQueue) DropOrigin(origin uint32) []uint32 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var ids []uint32
+	kept := q.items[:0]
+	for _, it := range q.items {
+		if it.origin == origin {
+			ids = append(ids, it.pkt.GetId())
+			continue
+		}
+		kept = append(kept, it)
+	}
+	q.items = kept
+	return ids
 }

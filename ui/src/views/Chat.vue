@@ -3,9 +3,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Check, CheckCheck, CircleAlert, Clock3, Hash, Lock, MessageCirclePlus, Search, Send } from '@lucide/vue'
-import { api, enc, qs } from '@/api/client'
+import { api, enc, qs, radio as currentRadio, setRadio } from '@/api/client'
 import type { Conversation, Message } from '@/api/types'
-import { live, nodeLabel, on } from '@/store/live'
+import { live, nodeLabel, on, refreshAllIdentities } from '@/store/live'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -23,6 +23,19 @@ const identityId = computed(() => {
 })
 const identity = computed(() => live.identities.find((i) => i.node_id === identityId.value))
 const convKey = computed(() => (route.params.conversation as string | undefined) || '')
+
+// A chat link for an identity on another radio (or one that has just moved) switches the page to
+// that radio instead of showing an empty chat.
+watch(
+  () => [identityId.value, live.identities.length, live.radios.length] as const,
+  async ([id, loaded, radios]) => {
+    if (!id || !loaded || radios < 2 || live.identities.some((i) => i.node_id === id)) return
+    await refreshAllIdentities()
+    const there = live.allIdentities.find((i) => i.node_id === id)
+    if (there?.radio_id && there.radio_id !== currentRadio.value) setRadio(there.radio_id)
+  },
+  { immediate: true },
+)
 
 const conversations = ref<Conversation[]>([])
 const loadingConvs = ref(false)
@@ -329,6 +342,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
                   <div class="mt-0.5 flex items-center gap-1.5 px-1 text-2xs tabular-nums text-ink-3">
                     <Lock v-if="r.m.pki" class="size-2.5" />
                     <span>{{ clock(r.m.time, false) }}</span>
+                    <span v-if="r.m.radio" :title="`${r.m.direction === 'in' ? 'Heard' : 'Sent'} on ${r.m.radio}`">· via {{ r.m.radio.split(', ').map((x) => live.radios.find((rr) => rr.id === x)?.name ?? x).join(' + ') }}</span>
                     <template v-if="r.m.direction === 'in' && r.m.snr != null">
                       <span>· SNR {{ r.m.snr.toFixed(1) }}</span><span v-if="r.m.hops != null">· {{ r.m.hops }} hop{{ r.m.hops === 1 ? '' : 's' }}</span>
                     </template>

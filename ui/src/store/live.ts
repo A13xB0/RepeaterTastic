@@ -1,7 +1,7 @@
 // Small reactive store fed by REST snapshots plus the SSE stream (/api/v1/events).
 import { markRaw, reactive, shallowRef, triggerRef } from 'vue'
-import { API_BASE, api, token } from '@/api/client'
-import type { Identity, LogLine, MeshNode, Message, Packet, RfStats, Status, TracerouteEvent } from '@/api/types'
+import { API_BASE, api, radio, setRadio, token, withRadio } from '@/api/client'
+import type { Identity, LogLine, MeshNode, Message, Packet, RadioSummary, RadiosResponse, RfStats, Status, TracerouteEvent } from '@/api/types'
 
 const PACKET_BUFFER = 400
 const LOG_BUFFER = 1500
@@ -30,7 +30,70 @@ export const live = reactive({
   /** Noise-floor points from /stats/rf so sparklines aren't empty right after login. */
   noiseSeed: [] as number[],
   lastEvent: 0,
+  /** Every radio on this host (one entry on a single-radio host). */
+  radios: [] as RadioSummary[],
+  site: null as RadiosResponse['site'],
+  /** Identities on every radio (only fetched when the host has more than one). */
+  allIdentities: [] as Identity[],
+  /** Experimental: identities on several radios is switched on. */
+  multiRadioIdentities: false,
+  /** Radios added in the config that start at the next restart. */
+  pendingRadios: [] as { id: string; name: string; preset?: string }[],
 })
+
+/** A radio's display name from its id (running or waiting to start). */
+export function radioName(id: string): string {
+  return live.radios.find((r) => r.id === id)?.name ?? live.pendingRadios.find((r) => r.id === id)?.name ?? id
+}
+
+export interface RadioChoice {
+  id: string
+  name: string
+  detail: string
+  pending: boolean
+}
+
+const presetLabel = (p?: string) => (p ? p.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join('') : '')
+
+/** Radios a channel slot, default radio or DM can be put on: running ones, then ones that start at the next restart. */
+export function radioChoices(): RadioChoice[] {
+  return [
+    ...live.radios.map((r) => ({ id: r.id, name: r.name, pending: false,
+      detail: `${r.phy.preset_name} · ${r.phy.frequency_mhz.toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz` })),
+    ...live.pendingRadios.map((r) => ({ id: r.id, name: r.name || r.id, pending: true, detail: `${presetLabel(r.preset)} · starts at restart` })),
+  ]
+}
+
+/** Multi-radio choices apply: the experimental switch is on and the site has more than one radio. */
+export function multiRadioActive(): boolean {
+  return live.multiRadioIdentities && live.radios.length + live.pendingRadios.length > 1
+}
+
+export async function refreshAllIdentities() {
+  if (live.radios.length < 2) {
+    live.allIdentities = live.identities
+    return
+  }
+  try {
+    live.allIdentities = await api.get<Identity[]>('/identities?radio=all')
+  } catch {
+    /* keep the last list */
+  }
+}
+
+export async function refreshRadios() {
+  try {
+    const r = await api.get<RadiosResponse>('/radios')
+    live.radios = r.radios
+    live.site = r.site
+    live.pendingRadios = (r.pending ?? []).filter((p) => p.action === 'start').map((p) => ({ id: p.id, name: p.name, preset: p.preset }))
+    api.get<{ multi_radio_identities: boolean }>('/experimental').then((x) => (live.multiRadioIdentities = x.multi_radio_identities), () => {})
+    // A remembered radio that no longer exists falls back to the main one.
+    if (radio.value !== 'main' && !r.radios.some((x) => x.id === radio.value)) setRadio('main')
+  } catch {
+    live.radios = []
+  }
+}
 
 /** Newest first. Shallow so hundreds of packets don't become deep proxies. */
 export const packets = shallowRef<Packet[]>([])
@@ -60,15 +123,28 @@ function sample(s: Status) {
   if (live.history.length > HISTORY) live.history.splice(0, live.history.length - HISTORY)
 }
 
+// The daemon version this page was loaded against. When status reports another one the daemon
+// was updated, and the next navigation loads the new GUI instead of running the old one.
+let loadedVersion: string | null = null
+export const newBuild = { available: false }
+
 export function setStatus(s: Status) {
+  if (s.version) {
+    loadedVersion ??= s.version
+    if (s.version !== loadedVersion) newBuild.available = true
+  }
   live.status = s
   sample(s)
 }
 
 export function upsertIdentity(i: Identity) {
+  // keep the cross-radio list current too
+  const ai = live.allIdentities.findIndex((x) => x.node_id === i.node_id)
+  if (ai >= 0) live.allIdentities[ai] = i
   const idx = live.identities.findIndex((x) => x.node_id === i.node_id)
   if (idx >= 0) live.identities[idx] = i
-  else live.identities.push(i)
+  // an identity from another radio (edited here as a guest) doesn't join this radio's list
+  else if (!i.radio_id || i.radio_id === radio.value) live.identities.push(i)
 }
 
 export function removeIdentity(id: string) {
@@ -81,10 +157,20 @@ export async function refreshStatus() {
 export async function refreshIdentities() {
   live.identities = await api.get<Identity[]>('/identities')
 }
+// Servers before the NodeInfo-defaults fix left names out for nodes heard without a
+// NodeInfo; views sort and filter on them, so fill the firmware's placeholders here too.
+export function normalizeNode(n: MeshNode): MeshNode {
+  const short = n.node_id.slice(-4)
+  n.long_name ??= `Meshtastic ${short}`
+  n.short_name ??= short
+  n.hw_model ??= 'UNSET'
+  n.role ??= 'CLIENT'
+  return n
+}
 export async function refreshNodes() {
   const list = await api.get<MeshNode[]>('/nodes')
   const map: Record<string, MeshNode> = {}
-  for (const n of list) map[n.node_id] = n
+  for (const n of list) map[n.node_id] = normalizeNode(n)
   live.nodes = map
 }
 export async function refreshPackets() {
@@ -109,7 +195,7 @@ function parse<T>(e: MessageEvent): T | null {
 export function connect() {
   disconnect()
   if (!token.value) return
-  const es = new EventSource(`${API_BASE}/events?token=${encodeURIComponent(token.value)}`)
+  const es = new EventSource(API_BASE + withRadio(`/events?token=${encodeURIComponent(token.value)}`))
   source = es
   es.onopen = () => (live.connected = true)
   es.onerror = () => {
@@ -141,7 +227,7 @@ export function connect() {
   })
   es.addEventListener('node', (e) => {
     const n = parse<MeshNode>(e as MessageEvent)
-    if (n) live.nodes[n.node_id] = n
+    if (n) live.nodes[n.node_id] = normalizeNode(n)
   })
   es.addEventListener('message', (e) => {
     const m = parse<{ identity: string; message: Message }>(e as MessageEvent)
@@ -175,7 +261,7 @@ export async function startLive() {
   started = true
   connect()
   await Promise.allSettled([
-    refreshStatus(), refreshIdentities(), refreshNodes(), refreshPackets(), refreshLogs(),
+    refreshStatus(), refreshIdentities(), refreshNodes(), refreshPackets(), refreshLogs(), refreshRadios(),
     api.get<RfStats>('/stats/rf?window=1h').then((r) => (live.noiseSeed = r.points.slice(-40).map((p) => p.noise_floor_dbm))),
   ])
 }

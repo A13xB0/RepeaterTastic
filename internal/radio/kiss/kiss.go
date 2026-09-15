@@ -757,7 +757,7 @@ func (m *Modem) Info() radio.Info {
 	defer m.mu.Unlock()
 	fw := ""
 	if m.version != 0 {
-		fw = fmt.Sprintf("MeshCore KISS v%d", m.version)
+		fw = fmt.Sprintf("Mesh KISS v%d", m.version)
 	}
 	return radio.Info{Driver: "kiss", Device: m.opts.Device, Firmware: fw, Name: m.name}
 }

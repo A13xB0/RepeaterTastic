@@ -357,6 +357,7 @@ type Manager struct {
 
 	mu      sync.Mutex
 	servers map[uint32]*managed
+	runCtx  context.Context // Run's context: servers live as long as the manager, never a request
 }
 
 type managed struct {
@@ -372,6 +373,9 @@ func NewManager(h *mesh.Host, log *slog.Logger) *Manager {
 
 // Run syncs servers now and whenever an identity changes.
 func (m *Manager) Run(ctx context.Context) {
+	m.mu.Lock()
+	m.runCtx = ctx
+	m.mu.Unlock()
 	events, unsub := m.host.Bus.Subscribe(64)
 	defer unsub()
 	m.Sync(ctx)
@@ -455,9 +459,22 @@ func (m *Manager) Status(num uint32) (addr string, running bool) {
 	return s.srv.Addr().String(), true
 }
 
-// Restart stops an identity's server; the next sync starts it again (dropping connected apps).
+// Restart stops an identity's server and starts it again straight away (dropping connected apps).
 func (m *Manager) Restart(ctx context.Context, num uint32) {
+	m.Stop(num)
 	m.mu.Lock()
+	if m.runCtx != nil {
+		ctx = m.runCtx // a request's context would stop the server as soon as the request ends
+	}
+	m.mu.Unlock()
+	m.Sync(ctx)
+}
+
+// Stop closes an identity's server now (dropping connected apps), e.g. before it moves to
+// another radio's manager and that manager binds the same port.
+func (m *Manager) Stop(num uint32) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if s, ok := m.servers[num]; ok {
 		s.cancel()
 		if s.srv != nil {
@@ -465,6 +482,14 @@ func (m *Manager) Restart(ctx context.Context, num uint32) {
 		}
 		delete(m.servers, num)
 	}
+}
+
+// SyncNow is Sync with the manager's own context, for callers outside Run (after a move).
+func (m *Manager) SyncNow() {
+	m.mu.Lock()
+	ctx := m.runCtx
 	m.mu.Unlock()
-	m.Sync(ctx)
+	if ctx != nil {
+		m.Sync(ctx)
+	}
 }

@@ -4,6 +4,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { MeshNode } from '@/api/types'
+import { live } from '@/store/live'
 
 const props = defineProps<{ nodes: MeshNode[]; selected: string | null }>()
 const emit = defineEmits<{ select: [id: string] }>()
@@ -58,9 +59,14 @@ function escapeHtml(s: string) {
 onMounted(() => {
   if (!el.value) return
   map = L.map(el.value, { zoomControl: true, attributionControl: true, worldCopyJump: true }).setView([55.95, -3.19], 10)
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  // web.map_tile_url on the server; the public OSM tiles when it isn't set
+  const tiles = live.status?.map?.tile_url || 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+  L.tileLayer(tiles, {
+    subdomains: 'abcd',
     maxZoom: 18,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' +
+      (tiles.includes('cartocdn') ? ' &copy; <a href="https://carto.com/attributions">CARTO</a>' : ''),
   }).addTo(map)
   map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>')
   layer = L.layerGroup().addTo(map)

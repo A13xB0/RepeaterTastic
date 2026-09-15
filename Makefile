@@ -1,5 +1,9 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+# MAP_API_KEY (the release pipeline's CARTO_API_KEY secret) is baked into the binary as the
+# default map tile key; REPEATERTASTIC_MAP_API_KEY overrides it at run time. Recipes that use it
+# are silent so the key isn't echoed.
+MAP_API_KEY ?=
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.mapAPIKey=$(MAP_API_KEY)
 GOFLAGS := -trimpath
 DIST := dist
 
@@ -8,8 +12,9 @@ DIST := dist
 all: build
 
 build:
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/repeatertastic ./cmd/repeatertastic
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/kisstool ./cmd/kisstool
+	@echo "building bin/repeatertastic bin/kisstool ($(VERSION))"
+	@CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/repeatertastic ./cmd/repeatertastic
+	@CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/kisstool ./cmd/kisstool
 
 ui:
 	cd ui && npm ci && npm run build

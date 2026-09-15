@@ -1,52 +1,37 @@
 <script setup lang="ts">
-// Channels editor for one identity: slot 0 is the shared primary (locked), 1–7 are per-identity secondaries.
+// One identity's channels at a glance, plus sharing and importing a channel URL. Slots are added,
+// edited and removed on the Channels page only (one place for that).
 import { computed, ref, watch } from 'vue'
-import { Dices, Lock, QrCode as QrIcon } from '@lucide/vue'
+import { Lock, QrCode as QrIcon } from '@lucide/vue'
 import { api, enc } from '@/api/client'
-import type { Channel, ChannelRole, Identity } from '@/api/types'
+import type { ChannelRole, Identity } from '@/api/types'
 import Drawer from '@/components/ui/Drawer.vue'
-import Toggle from '@/components/ui/Toggle.vue'
 import QrCode from '@/components/ui/QrCode.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, upsertIdentity } from '@/store/live'
+import { multiRadioActive, live, radioName, upsertIdentity } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
+import { channelSlots } from '@/lib/channels'
 
-const props = defineProps<{ identityId: string | null; focus?: number }>()
+const props = defineProps<{ identityId: string | null }>()
 const emit = defineEmits<{ close: [] }>()
 
-const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId))
+const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
+const multi = computed(() => multiRadioActive())
 const tab = ref<'edit' | 'share'>('edit')
-const editing = ref<number | null>(null)
-const draft = ref<{ name: string; psk: string; role: ChannelRole; uplink: boolean; downlink: boolean }>({ name: '', psk: '', role: 'SECONDARY', uplink: false, downlink: false })
-const saving = ref(false)
 const shareUrl = ref('')
 const importUrl = ref('')
 const importing = ref(false)
 
 watch(
   () => props.identityId,
-  (id) => {
+  () => {
     tab.value = 'edit'
-    editing.value = null
     shareUrl.value = ''
     importUrl.value = ''
-    if (id && props.focus !== undefined && props.focus > 0) setTimeout(() => startEdit(props.focus!), 0)
   },
 )
 
-function startEdit(index: number) {
-  const ch = identity.value?.channels[index]
-  if (!ch || ch.locked) return
-  editing.value = index
-  draft.value = { name: ch.name, psk: ch.psk, role: ch.role === 'DISABLED' ? 'SECONDARY' : ch.role, uplink: ch.uplink, downlink: ch.downlink }
-}
-
-function randomPsk() {
-  const b = new Uint8Array(32)
-  crypto.getRandomValues(b)
-  draft.value.psk = btoa(String.fromCharCode(...b))
-}
 
 const pskKind = (psk: string) => {
   if (!psk) return 'no encryption'
@@ -55,35 +40,6 @@ const pskKind = (psk: string) => {
   return len === 1 ? `default key #${atob(psk).charCodeAt(0)}` : `AES-${len * 8}`
 }
 
-const draftValid = computed(() => {
-  const d = draft.value
-  if (d.role !== 'DISABLED' && !d.name.trim()) return false
-  if (new TextEncoder().encode(d.name).length > 11) return false
-  if (!d.psk) return true
-  try {
-    return [0, 1, 16, 32].includes(atob(d.psk).length)
-  } catch {
-    return false
-  }
-})
-
-async function saveChannel(index: number, body: Partial<Channel>) {
-  if (!identity.value) return
-  saving.value = true
-  try {
-    upsertIdentity(await api.put<Identity>(`/identities/${enc(identity.value.node_id)}/channels/${index}`, body))
-    editing.value = null
-    toast(`Channel ${index} saved`)
-  } catch (e) {
-    toastError(e)
-  } finally {
-    saving.value = false
-  }
-}
-
-function disable(ch: Channel) {
-  saveChannel(ch.index, { name: '', psk: '', role: 'DISABLED', uplink: false, downlink: false })
-}
 
 async function loadShare() {
   if (!identity.value) return
@@ -122,64 +78,27 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
       </div>
 
       <div v-if="tab === 'edit'" class="space-y-2">
-        <div
-          v-for="ch in identity.channels"
-          :key="ch.index"
-          :class="['rounded-xl border transition-colors', editing === ch.index ? 'border-brand/50 bg-brand/5' : 'border-line-soft bg-raised/60']"
-        >
-          <div class="flex items-center gap-3 px-3.5 py-2.5">
-            <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sunken text-xs font-semibold tabular-nums text-ink-2">{{ ch.index }}</span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2">
-                <span :class="['truncate text-[13px] font-medium', ch.role === 'DISABLED' && 'text-ink-3']">{{ ch.display_name || (ch.role === 'DISABLED' ? 'Unused' : '(no name)') }}</span>
-                <span :class="['chip', roleCls(ch.role)]">{{ ch.role.toLowerCase() }}</span>
-                <Lock v-if="ch.locked" class="size-3.5 text-ink-3" />
-              </div>
-              <div v-if="ch.role !== 'DISABLED'" class="mt-0.5 text-xs text-ink-3">
-                {{ pskKind(ch.psk) }} · hash <span class="mono">0x{{ ch.hash.toString(16).padStart(2, '0') }}</span>
-                <template v-if="ch.uplink || ch.downlink"> · MQTT {{ [ch.uplink && 'up', ch.downlink && 'down'].filter(Boolean).join('/') }}</template>
-              </div>
+        <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-raised px-3.5 py-2.5 text-[13px]">
+          <span class="text-ink-3">Add, edit and remove channels on the Channels page.</span>
+          <RouterLink to="/channels" class="btn btn-sm" @click="emit('close')">Open Channels</RouterLink>
+        </div>
+        <div v-for="ch in channelSlots(identity)" :key="ch.index" class="flex items-center gap-3 rounded-xl border border-line-soft bg-raised/60 px-3.5 py-2.5">
+          <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sunken text-xs font-semibold tabular-nums text-ink-2">{{ ch.index }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span :class="['truncate text-[13px] font-medium', ch.role === 'DISABLED' && 'text-ink-3']">{{ ch.role === 'DISABLED' ? 'Unused' : ch.display_name }}</span>
+              <span :class="['chip', roleCls(ch.role)]">{{ ch.role.toLowerCase() }}</span>
+              <Lock v-if="ch.index === 0" class="size-3.5 text-ink-3" />
+              <span v-if="multi && ch.role !== 'DISABLED'" :class="['chip', ch.radio_removed ? 'bg-bad/12 text-bad' : 'bg-ink-3/12 text-ink-2']">{{ ch.radio_removed ? 'radio removed' : ch.radio_pending ? `${radioName(ch.radio_pending)} after restart` : radioName(ch.radio ?? identity.radio_id ?? 'main') }}</span>
             </div>
-            <template v-if="ch.locked">
-              <span class="max-w-40 text-right text-2xs leading-tight text-ink-3 max-sm:hidden">Shared primary · set in <RouterLink to="/config/radio" class="text-brand hover:underline">Radio config</RouterLink></span>
-            </template>
-            <template v-else-if="editing !== ch.index">
-              <button v-if="ch.role !== 'DISABLED'" class="btn btn-sm btn-ghost" @click="disable(ch)">Disable</button>
-              <button class="btn btn-sm" @click="startEdit(ch.index)">{{ ch.role === 'DISABLED' ? 'Add' : 'Edit' }}</button>
-            </template>
-          </div>
-
-          <div v-if="editing === ch.index" class="grid gap-3 border-t border-line-soft px-3.5 pb-3.5 pt-3 sm:grid-cols-2">
-            <div>
-              <label class="label" :for="`cn${ch.index}`">Name</label>
-              <input :id="`cn${ch.index}`" v-model="draft.name" class="input" maxlength="11" placeholder="e.g. LothianOps" />
-            </div>
-            <div>
-              <label class="label" :for="`cr${ch.index}`">Role</label>
-              <select :id="`cr${ch.index}`" v-model="draft.role" class="input">
-                <option value="SECONDARY">Secondary</option>
-                <option value="DISABLED">Disabled</option>
-              </select>
-            </div>
-            <div class="sm:col-span-2">
-              <label class="label" :for="`ck${ch.index}`">Pre-shared key (base64) · {{ pskKind(draft.psk) }}</label>
-              <div class="flex gap-2">
-                <input :id="`ck${ch.index}`" v-model="draft.psk" class="input mono" spellcheck="false" placeholder="empty = unencrypted" />
-                <button class="btn shrink-0" title="Random AES-256 key" @click="randomPsk"><Dices class="size-4" /></button>
-                <button class="btn shrink-0" title="Meshtastic default key" @click="draft.psk = 'AQ=='">AQ==</button>
-              </div>
-            </div>
-            <div class="flex flex-wrap items-center gap-5 text-[13px] sm:col-span-2">
-              <label class="flex items-center gap-2"><Toggle v-model="draft.uplink" label="MQTT uplink" />MQTT uplink</label>
-              <label class="flex items-center gap-2"><Toggle v-model="draft.downlink" label="MQTT downlink" />MQTT downlink</label>
-              <div class="ml-auto flex gap-2">
-                <button class="btn btn-sm" @click="editing = null">Cancel</button>
-                <button class="btn btn-sm btn-primary" :disabled="!draftValid || saving" @click="saveChannel(ch.index, { ...draft, name: draft.name.trim() })">
-                  <Spinner v-if="saving" />Save
-                </button>
-              </div>
+            <div v-if="ch.role !== 'DISABLED'" class="mt-0.5 text-xs text-ink-3">
+              {{ pskKind(ch.psk) }} · hash <span class="mono">0x{{ ch.hash.toString(16).padStart(2, '0') }}</span>
+              <template v-if="ch.uplink || ch.downlink"> · MQTT {{ [ch.uplink && 'up', ch.downlink && 'down'].filter(Boolean).join('/') }}</template>
             </div>
           </div>
+          <span v-if="ch.index === 0" class="max-w-44 text-right text-2xs leading-tight text-ink-3 max-sm:hidden">
+            {{ multi ? "The default radio's primary" : 'Shared primary · Configuration → Radios' }}
+          </span>
         </div>
       </div>
 

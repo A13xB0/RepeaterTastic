@@ -58,8 +58,7 @@ func (s *Session) handleAdmin(p *pb.MeshPacket) {
 			changed = true
 		}
 	case *pb.AdminMessage_SetConfig:
-		s.log.Info("ignoring set_config from client; radio settings are managed by the host",
-			"identity", s.id.NodeID(), "section", configName(v.SetConfig))
+		changed = s.applyClientConfig(v.SetConfig)
 	case *pb.AdminMessage_SetModuleConfig:
 		s.log.Info("ignoring set_module_config from client", "identity", s.id.NodeID())
 	case *pb.AdminMessage_RemoveByNodenum:
@@ -76,8 +75,24 @@ func (s *Session) handleAdmin(p *pb.MeshPacket) {
 		if c := v.AddContact; c != nil && c.User != nil && c.NodeNum != 0 {
 			s.host.DB.SetUser(c.NodeNum, c.User)
 		}
+	case *pb.AdminMessage_SetFixedPosition:
+		if pos := v.SetFixedPosition; pos != nil {
+			p := &mesh.IdentityPosition{Latitude: float64(pos.GetLatitudeI()) / 1e7, Longitude: float64(pos.GetLongitudeI()) / 1e7,
+				Altitude: pos.GetAltitude()}
+			if err := s.id.SetFixedPosition(p); err != nil {
+				s.log.Info("fixed position refused", "identity", s.id.NodeID(), "err", err)
+			} else {
+				changed = true
+				s.host.RecordOwnPositions()
+				s.log.Info("fixed position set from client", "identity", s.id.NodeID())
+			}
+		}
+	case *pb.AdminMessage_RemoveFixedPosition:
+		_ = s.id.SetFixedPosition(nil)
+		changed = true
+		s.host.RecordOwnPositions()
 	case *pb.AdminMessage_BeginEditSettings, *pb.AdminMessage_CommitEditSettings, *pb.AdminMessage_SetTimeOnly,
-		*pb.AdminMessage_StoreUiConfig, *pb.AdminMessage_SetFixedPosition, *pb.AdminMessage_RemoveFixedPosition:
+		*pb.AdminMessage_StoreUiConfig:
 		// accepted, nothing to do
 	case *pb.AdminMessage_RebootSeconds, *pb.AdminMessage_ShutdownSeconds, *pb.AdminMessage_FactoryResetDevice,
 		*pb.AdminMessage_FactoryResetConfig, *pb.AdminMessage_NodedbReset, *pb.AdminMessage_RebootOtaSeconds:
@@ -105,4 +120,57 @@ func configName(c *pb.Config) string {
 		return ""
 	}
 	return string(c.ProtoReflect().WhichOneof(c.ProtoReflect().Descriptor().Oneofs().ByName("payload_variant")).Name())
+}
+
+// applyClientConfig applies the parts of a set_config that belong to this identity: its device
+// role, its hop limit cap and its position settings. Everything that would retune the shared
+// radio (region, preset, power, frequency) is refused, since other identities use it too.
+func (s *Session) applyClientConfig(c *pb.Config) (changed bool) {
+	switch v := c.GetPayloadVariant().(type) {
+	case *pb.Config_Device:
+		if role := v.Device.GetRole(); role != s.id.UserCopy().Role {
+			if err := s.id.SetRole(role.String()); err == nil {
+				changed = true
+				s.host.DB.Update(s.id.NodeNum, func(e *mesh.NodeEntry) { e.User = s.id.UserCopy() })
+				s.log.Info("role set from client", "identity", s.id.NodeID(), "role", role.String())
+			}
+		}
+	case *pb.Config_Lora:
+		lora := v.Lora
+		radio := s.host.Config().HopLimit
+		limit := lora.GetHopLimit()
+		if limit >= radio {
+			limit = 0 // at or above the radio's own limit: no cap
+		}
+		if limit != s.id.MaxHops() {
+			if err := s.id.SetMaxHops(limit); err == nil {
+				changed = true
+				s.log.Info("hop limit set from client", "identity", s.id.NodeID(), "hop_limit", lora.GetHopLimit())
+			}
+		}
+		rp := s.host.RadioParams()
+		if lora.GetRegion() != rp.Region.Code || (lora.GetUsePreset() && lora.GetModemPreset() != rp.Preset) {
+			s.log.Info("ignoring radio settings from client; the radio is shared by every identity",
+				"identity", s.id.NodeID())
+		}
+	case *pb.Config_Position:
+		pc := v.Position
+		if secs := pc.GetPositionBroadcastSecs(); secs != s.id.PositionInterval() {
+			if secs != 0 && secs < 1800 {
+				secs = 1800
+			}
+			s.id.SetPositionInterval(secs)
+			changed = true
+		}
+		if !pc.GetFixedPosition() {
+			if _, has := s.id.FixedPosition(); has {
+				_ = s.id.SetFixedPosition(nil)
+				changed = true
+				s.host.RecordOwnPositions()
+			}
+		}
+	default:
+		s.log.Info("ignoring set_config from client; managed by the host", "identity", s.id.NodeID(), "section", configName(c))
+	}
+	return changed
 }

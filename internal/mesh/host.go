@@ -52,8 +52,22 @@ type Config struct {
 	DutyCyclePct      float64 // 0 = region default
 	OverrideDutyCycle bool
 	NodeInfoInterval  time.Duration
+	// TelemetryInterval is how often the relay persona broadcasts DeviceMetrics; 0 = off.
+	TelemetryInterval time.Duration
 	LocalDMOverRF     bool
 	StateDir          string
+	// RadioID names this radio when a site runs several ("main" for the first).
+	RadioID string
+	// OKToMQTT sets the OK_TO_MQTT bit on packets our identities originate: consent for
+	// other nodes' MQTT gateways to uplink them (LoRaConfig.config_ok_to_mqtt).
+	OKToMQTT bool
+	// IgnoreMQTT stops the relay persona rebroadcasting packets that arrived via MQTT
+	// (LoRaConfig.ignore_mqtt), so broker traffic never costs this radio's airtime.
+	IgnoreMQTT bool
+	// HwModel is the hardware identities advertise; UNSET = the modem's own board.
+	HwModel pb.HardwareModel
+	// Position is the site's fixed location, broadcast and answered on request.
+	Position FixedPosition
 }
 
 // Counters are cumulative statistics.
@@ -61,10 +75,45 @@ type Counters struct {
 	Rx, RxDupe, RxUndecryptable, RxBad, Tx, TxFailed, Relayed, RelayCancelled, AckOK, AckFail, DroppedDuty atomic.Uint64
 }
 
+// TxGate coordinates transmissions between the radios of one site. Acquire blocks until
+// this host may key up and returns a release func to call when the transmission is over.
+// It returns ErrSiteDutyCycle when the site-wide airtime budget is spent.
+type TxGate interface {
+	Acquire(ctx context.Context, h *Host) (release func(), err error)
+}
+
+// ErrSiteDutyCycle is returned by a TxGate when the site's shared airtime budget is used up.
+var ErrSiteDutyCycle = errors.New("site duty cycle limit reached")
+
 // Link is an extra packet interface (UDP multicast, host link, MQTT) carrying encrypted MeshPackets.
 type Link interface {
 	Name() string
 	SendPacket(p *pb.MeshPacket)
+}
+
+// ChannelLink is a Link that also wants the channel packets received, first sighting only,
+// with the channel they decoded on and their decoded payload (the MQTT uplink). Packets
+// injected by a link arrive too, marked via_mqtt; the link decides whether to pass them on.
+type ChannelLink interface {
+	Link
+	ChannelPacketHeard(p *pb.MeshPacket, ch ChannelRef, data *pb.Data)
+}
+
+// PlainLink is a Link that also wants our own packets' decoded payload when it is known.
+type PlainLink interface {
+	Link
+	SendPacketPlain(p *pb.MeshPacket, data *pb.Data)
+}
+
+// ChannelRef describes a channel shared by one or more identities on this host.
+type ChannelRef struct {
+	Name     string // display name, e.g. "LongFast"
+	Hash     uint8
+	Uplink   bool // some identity holding this channel has uplink enabled
+	Downlink bool // some identity holding this channel has downlink enabled
+	OKToMQTT bool // the packet's sender allowed MQTT uplink (only set for heard packets)
+	// PublicKey: the channel has no key or a well-known default key, so anyone can read it.
+	PublicKey bool
 }
 
 type pendingTx struct {
@@ -74,6 +123,8 @@ type pendingTx struct {
 	next      time.Time
 	broadcast bool
 	text      bool
+	index     int      // channel index the packet was sent on (for a fallback on another radio)
+	plain     *pb.Data // payload, for the packet log on retransmits
 }
 
 type chanMember struct {
@@ -121,10 +172,21 @@ type Host struct {
 	linkMu sync.RWMutex
 	links  []Link
 
-	started      time.Time
+	started       time.Time
+	nextTelemetry time.Time // run loop only
+
+	fed          *Federation // nil unless the site joins its radios (experimental)
+	guestMu      sync.Mutex
+	guestList    []*Identity
+	guestGen     uint64
+	guestOK      bool
+	guestTimers  map[uint32]*guestTimer // run loop only
 	stateDir     string
 	radioOK      atomic.Bool
 	nodeInfoAsks sync.Map // uint32 → time.Time
+
+	gateMu sync.RWMutex
+	gate   TxGate
 }
 
 // NewHost validates the PHY and prepares a host. Call AddIdentity for each node, then Run.
@@ -177,6 +239,27 @@ func (h *Host) RadioParams() phy.RadioParams {
 }
 
 func (h *Host) Radio() radio.Radio { return h.radio }
+
+// RadioID is the site-unique name of this host's radio.
+func (h *Host) RadioID() string {
+	if id := h.Config().RadioID; id != "" {
+		return id
+	}
+	return "main"
+}
+
+// SetTxGate installs the site's transmit coordinator; nil removes it.
+func (h *Host) SetTxGate(g TxGate) {
+	h.gateMu.Lock()
+	h.gate = g
+	h.gateMu.Unlock()
+}
+
+func (h *Host) txGate() TxGate {
+	h.gateMu.RLock()
+	defer h.gateMu.RUnlock()
+	return h.gate
+}
 func (h *Host) Started() time.Time { return h.started }
 
 // SetRelayRole changes the relay persona role at runtime.
@@ -313,6 +396,43 @@ func (h *Host) ChannelsChanged() {
 	h.chanMu.Lock()
 	h.chanCache = nil
 	h.chanMu.Unlock()
+	if h.fed != nil {
+		h.fed.gen.Add(1) // other radios' guest lists may include this radio's identities
+	}
+}
+
+// Channels lists every distinct channel held by this host's identities.
+func (h *Host) Channels() []ChannelRef {
+	h.channelGroups(0) // build the cache
+	h.chanMu.Lock()
+	defer h.chanMu.Unlock()
+	var out []ChannelRef
+	for _, gs := range h.chanCache {
+		for _, g := range gs {
+			out = append(out, g.ref())
+		}
+	}
+	return out
+}
+
+// ChannelsByHash lists this host's channels with that hash (usually one).
+func (h *Host) ChannelsByHash(hash uint8) []ChannelRef {
+	var out []ChannelRef
+	for _, g := range h.channelGroups(hash) {
+		out = append(out, g.ref())
+	}
+	return out
+}
+
+func (g *chanGroup) ref() ChannelRef {
+	r := ChannelRef{Name: g.name, Hash: g.hash, PublicKey: wire.IsPublicKey(g.key)}
+	for _, m := range g.members {
+		if ch := m.id.ChannelCopy(m.index); ch != nil && ch.GetSettings() != nil {
+			r.Uplink = r.Uplink || ch.GetSettings().GetUplinkEnabled()
+			r.Downlink = r.Downlink || ch.GetSettings().GetDownlinkEnabled()
+		}
+	}
+	return r
 }
 
 func (h *Host) channelGroups(hash uint8) []*chanGroup {
@@ -321,8 +441,11 @@ func (h *Host) channelGroups(hash uint8) []*chanGroup {
 	if h.chanCache == nil {
 		h.chanCache = map[uint8][]*chanGroup{}
 		display := h.presetDisplay()
-		for _, id := range h.Identities() {
+		for _, id := range append(h.Identities(), h.guests()...) {
 			for _, rc := range id.resolvedChannels(display) {
+				if !h.slotOnThisRadio(id, rc.index) {
+					continue // that slot is on another radio
+				}
 				var g *chanGroup
 				for _, x := range h.chanCache[rc.hash] {
 					if string(x.key) == string(rc.key) && x.aead == rc.aead && x.name == rc.name {
@@ -430,8 +553,14 @@ func (h *Host) timerLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-tick.C:
+			if now.Sub(lastSave) > time.Minute {
+				h.RecordOwnPositions()
+			}
 			h.doRetransmissions(now)
 			h.periodicNodeInfo(now)
+			h.periodicPosition(now)
+			h.periodicTelemetry(now)
+			h.periodicGuests(now)
 			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
 				lastSave = now
 				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
@@ -485,9 +614,28 @@ func (h *Host) txLoop(ctx context.Context) {
 			h.log.Error("encoding frame", "err", err)
 			continue
 		}
+		release := func() {}
+		if g := h.txGate(); g != nil {
+			rel, gerr := g.Acquire(ctx, h)
+			if errors.Is(gerr, ErrSiteDutyCycle) {
+				h.Counters.DroppedDuty.Add(1)
+				if !it.relay {
+					if o := h.Identity(it.origin); o != nil {
+						h.nakLocal(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
+					}
+				}
+				h.log.Warn("site duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
+				continue
+			}
+			if gerr != nil {
+				return // context cancelled while waiting for another radio
+			}
+			release = rel
+		}
 		sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
 		err = h.radio.Send(sctx, frame)
 		cancel()
+		release()
 		if err != nil {
 			h.Counters.TxFailed.Add(1)
 			h.log.Warn("transmit failed", "id", it.pkt.Id, "err", err)
@@ -503,16 +651,26 @@ func (h *Host) txLoop(ctx context.Context) {
 		}
 		rec := h.baseRecord(it.pkt, frame, "tx", kind)
 		rec.AirtimeMs = ms
-		if o := h.Identity(it.origin); o != nil {
+		if it.plain != nil {
+			rec.Port, rec.PKI = it.plain.Portnum.String(), it.pkt.PkiEncrypted
+			rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
+		} else if dec := h.decode(it.pkt); dec.ok {
+			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold
+		}
+		if o := h.identityAny(it.origin); o != nil {
 			rec.DecodedBy = o.NodeID()
-			if m, ok := h.Messages.SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
-				h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: o.NodeID(), Message: m}})
+			if m, ok := h.storeFor(o).SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
+				h.publishMessage(o, m)
 			}
 		}
 		h.publishPacket(rec)
 		h.linkMu.RLock()
 		for _, l := range h.links {
-			l.SendPacket(it.pkt)
+			if pl, ok := l.(PlainLink); ok {
+				pl.SendPacketPlain(it.pkt, it.plain)
+			} else {
+				l.SendPacket(it.pkt)
+			}
 		}
 		h.linkMu.RUnlock()
 	}
@@ -567,6 +725,9 @@ func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
 	h.cfgMu.Lock()
 	old := h.rp
 	cfg.StateDir = h.stateDir // fixed at start
+	if cfg.RadioID == "" {
+		cfg.RadioID = h.cfg.RadioID
+	}
 	h.cfg = cfg
 	h.rp = rp
 	h.cfgMu.Unlock()
@@ -596,3 +757,25 @@ func (h *Host) RadioConfigured() bool { return h.radioOK.Load() }
 
 // QueueLen is the number of packets waiting to transmit.
 func (h *Host) QueueLen() int { return h.txq.Len() }
+
+// DropOutgoing cancels an identity's queued transmissions and pending retries (before it moves
+// to another radio). Its unsent messages are marked failed so they can be sent again.
+func (h *Host) DropOutgoing(num uint32, reason string) int {
+	ids := h.txq.DropOrigin(num)
+	h.pmu.Lock()
+	for k, p := range h.pending {
+		if p.origin != nil && p.origin.NodeNum == num {
+			ids = append(ids, p.pkt.GetId())
+			delete(h.pending, k)
+		}
+	}
+	h.pmu.Unlock()
+	failed := 0
+	for _, pid := range ids {
+		if m, ok := h.Messages.SetStatus(num, pid, "failed", reason); ok {
+			failed++
+			h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: wire.NodeID(num), Message: m}})
+		}
+	}
+	return failed
+}

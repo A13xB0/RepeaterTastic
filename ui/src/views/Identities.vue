@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // Identities: the Meshtastic counterpart of openHop's Companions view.
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Import, KeyRound, Layers, MessagesSquare, Pencil, Plus, RotateCcw, Trash } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Identity } from '@/api/types'
-import { live, removeIdentity, upsertIdentity } from '@/store/live'
+import { live, refreshAllIdentities, removeIdentity, upsertIdentity } from '@/store/live'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
@@ -21,12 +21,30 @@ const editing = ref<Identity | null>(null)
 const keyFor = ref<Identity | null>(null)
 const channelsFor = ref<string | null>(null)
 
-const list = computed(() => [...live.identities].sort((a, b) => Number(b.is_relay) - Number(a.is_relay) || (a.api?.port ?? 0) - (b.api?.port ?? 0)))
+// With several radios the list can show this radio's identities or every radio's.
+const multiRadio = computed(() => live.radios.length > 1)
+const scope = ref<'radio' | 'all'>('radio')
+const source = computed(() => (multiRadio.value && scope.value === 'all' ? live.allIdentities : live.identities))
+const radioOrder = computed(() => new Map(live.radios.map((r, i) => [r.id, i])))
+const list = computed(() =>
+  [...source.value].sort(
+    (a, b) =>
+      (radioOrder.value.get(a.radio_id ?? '') ?? 0) - (radioOrder.value.get(b.radio_id ?? '') ?? 0) ||
+      Number(b.is_relay) - Number(a.is_relay) ||
+      (a.api?.port ?? 0) - (b.api?.port ?? 0),
+  ),
+)
+watch(scope, (s) => s === 'all' && refreshAllIdentities())
+let allTimer: number | undefined
+onMounted(() => {
+  allTimer = window.setInterval(() => scope.value === 'all' && refreshAllIdentities(), 10_000)
+})
+onBeforeUnmount(() => clearInterval(allTimer))
 const budgetMs = computed(() => ((live.status?.airtime.duty_limit_pct ?? 10) / 100) * (live.status?.airtime.window_s ?? 3600) * 1000)
 const totals = computed(() => ({
-  apps: live.identities.reduce((s, i) => s + (i.api?.clients ?? 0), 0),
-  outbox: live.identities.reduce((s, i) => s + i.outbox, 0),
-  airtime: live.identities.reduce((s, i) => s + i.airtime_ms_1h, 0),
+  apps: source.value.reduce((s, i) => s + (i.api?.clients ?? 0), 0),
+  outbox: source.value.reduce((s, i) => s + i.outbox, 0),
+  airtime: source.value.reduce((s, i) => s + i.airtime_ms_1h, 0),
 }))
 
 type State = { label: string; cls: string; title: string }
@@ -93,10 +111,15 @@ async function remove(i: Identity) {
       <div>
         <h2 class="page-title">Identities</h2>
         <p class="page-sub">
-          {{ live.identities.length }} nodes on this modem · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
+          {{ source.length }} nodes {{ multiRadio && scope === 'all' ? `on ${live.radios.length} radios` : 'on this modem' }} · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
         </p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
+        <div v-if="multiRadio" class="tabs-pill flex rounded-lg border border-line-soft p-0.5" role="group" aria-label="Which identities">
+          <button v-for="o in [{ v: 'radio', l: 'This radio' }, { v: 'all', l: 'All radios' }] as const" :key="o.v" type="button"
+            :class="['rounded-md px-2.5 py-1 text-xs font-medium', scope === o.v ? 'bg-raised text-ink shadow-sm' : 'text-ink-3 hover:text-ink']"
+            :aria-pressed="scope === o.v" @click="scope = o.v">{{ o.l }}</button>
+        </div>
         <button class="btn" @click="createMode = 'import'"><Import class="size-4" />Import key</button>
         <button class="btn btn-primary" @click="createMode = 'create'"><Plus class="size-4" />New identity</button>
       </div>
@@ -128,6 +151,10 @@ async function remove(i: Identity) {
                       <span class="mono">{{ i.node_id }}</span>
                       <CopyButton :text="i.node_id" label="Node id" />
                       <span>· {{ i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
+                    </div>
+                    <div v-if="multiRadio" class="mt-1 flex flex-wrap gap-1">
+                      <span class="chip bg-ink-3/12 text-ink-2" :title="`Home radio ${i.radio_name}`">{{ i.radio_name }}</span>
+                      <span v-if="(i.radios?.length ?? 1) > 1" class="chip bg-info/12 text-info" :title="`Also on ${i.radios!.slice(1).map((r) => live.radios.find((x) => x.id === r)?.name ?? r).join(', ')} (experimental)`">+{{ i.radios!.length - 1 }} radio{{ i.radios!.length > 2 ? 's' : '' }}</span>
                     </div>
                   </div>
                 </div>
@@ -183,7 +210,7 @@ async function remove(i: Identity) {
             </tr>
           </tbody>
         </table>
-        <div v-if="!live.identities.length" class="empty">Loading identities…</div>
+        <div v-if="!source.length" class="empty">Loading identities…</div>
       </div>
       <div class="border-t border-line-soft px-4 py-2.5 text-xs text-ink-3 sm:px-5">
         Every node number is <span class="mono">crc32(public key)</span>; last bytes must be unique so next-hop routing can tell identities apart.

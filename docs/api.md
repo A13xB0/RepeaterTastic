@@ -1,5 +1,7 @@
 # RepeaterTastic HTTP API (v1)
 
+[← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Web GUI](web-gui.md) · [Several radios](radios.md) · [MQTT](mqtt.md) · [Architecture](architecture.md)
+
 JSON over HTTP, served by the daemon (default `:8080`). The web GUI is embedded at `/`. All endpoints
 are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are strings `"!a1c40e07"`;
 `node_num` is the same value as a number.
@@ -20,13 +22,14 @@ are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are 
 ```json
 {
   "version": "0.1.0", "uptime_s": 5234,
-  "radio": {"driver": "kiss", "device": "/dev/ttyUSB0", "firmware": "MeshCore KISS v2", "name": "Heltec V3",
+  "radio": {"driver": "kiss", "device": "/dev/ttyUSB0", "firmware": "Mesh KISS v2", "name": "Heltec V3",
             "connected": true, "reconnects": 0, "rx": 1203, "tx": 311, "errors": 2, "noise_floor_dbm": -118},
   "phy": {"region": "EU_868", "preset": "LONG_FAST", "preset_name": "LongFast", "frequency_mhz": 869.525,
           "bw_khz": 250, "sf": 11, "cr": 5, "slot": 0, "num_slots": 1, "sync_word": 43, "preamble": 16,
           "tx_power_dbm": 27, "primary_channel": "LongFast"},
   "relay": {"node_id": "!3f0a91c2", "node_num": 1057657282, "long_name": "RepeaterTastic Relay", "short_name": "RPTR",
             "role": "client"},
+  "map": {"tile_url": "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"},
   "airtime": {"window_s": 3600, "tx_ms": 147700, "rx_ms": 402000, "duty_limit_pct": 10, "tx_pct": 4.1,
               "channel_util_pct": 11.2},
   "counters": {"rx": 1203, "rx_dupe": 402, "rx_undecryptable": 77, "tx": 311, "relayed": 120,
@@ -36,7 +39,45 @@ are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are 
 
 `PUT /api/v1/relay` `{"role": "client" | "router" | "mute"}` → status.relay
 
+## Radios
+
+A host can run several radios (see `radios:` in the example config). Every endpoint works on the
+**main** radio by default; add `?radio=<id>` to use another. Endpoints under
+`/identities/{node_id}/…` find the identity's radio by themselves. `POST /identities` also takes
+`"radio_id"`. Status carries `radio_id`, `radio_name` and `site`.
+
+`GET /api/v1/radios` →
+
+```json
+{"radios": [{"id": "main", "name": "Main", "main": true, "device": "/dev/ttyUSB0", "driver": "kiss",
+             "firmware": "Mesh KISS v2", "connected": true, "configured": true, "noise_floor_dbm": -111,
+             "phy": {"…": "as status.phy"}, "relay": {"role": "mute", "node_id": "!be77562b", "long_name": "Relay"},
+             "identities": 3, "tx_pct": 0.1, "channel_util_pct": 6.2, "overlaps": ["mf"]}],
+ "site": {"radios": 2, "duty_limit_pct": 0, "tx_pct": 0.3},
+ "pending": [{"id": "ls", "name": "LongSlow", "device": "/dev/rt-ls", "preset": "LONG_SLOW", "relay_role": "mute", "action": "start"}],
+ "restart_required": true}
+```
+
+`overlaps` lists radios whose channel overlaps this one's; overlapping radios take turns to
+transmit. `site` is `null` for a single radio without a site airtime cap. `PUT /relay?radio=<id>`
+changes an extra radio's relay role. `GET/PUT /config?radio=<id>` edits a radio's own sections.
+
+- `POST /api/v1/radios` `{"id", "name", "driver": "kiss", "device", "region", "preset", "primary_channel", "tx_power_dbm", "relay_role": "mute", "copy_position": true}` → 201 `{"id", "restart_required": true}`. The radio is written to `radios:` and starts at the next restart (`pending` shows it until then).
+- `PATCH /api/v1/radios/{id}` `{"name"}` renames a radio, the main one included (`site.main_radio_name`).
+- `DELETE /api/v1/radios/{id}` removes an extra radio from the config; it stops at the next restart. Its state dir is kept, so re-adding the id brings its identities back.
+- `GET/PUT /api/v1/site` `{"duty_cycle_percent"}` → `{"duty_cycle_percent", "main_radio_name", "running_duty_cycle_percent", "coordinator", "restart_required"}`. Applies live when a site coordinator is running (several radios, or a cap set at start).
+
+New identities default to `role: CLIENT_MUTE`: only each radio's relay persona repeats.
+
 ## Identities
+
+`GET /api/v1/identities[?radio=<id>|all]` → `[Identity]` (each with `radio_id`, `radio_name`, `radios` it's on now, and `multi_radio`)
+
+- `POST /api/v1/identities/{id}/move {"radio_id"}` moves an identity (not a relay persona) to another radio with its key, port and chats; unsent messages are marked failed.
+- Experimental (`GET/PUT /api/v1/experimental {"multi_radio_identities"}`): `PUT /identities/{id}/channels/{index}` takes `"radio"` (slots 1-7; `""` = the default radio), and channels carry `radio`, `radio_name` and `radio_removed`. `PATCH /identities/{id}` takes `"multi_radio": {"default_radio", "dm": "auto"|"default"|"<radio>", "fallback"}` (slot radios are kept; `"channels": {"2": "mf"}` replaces them) or `null`. `GET /identities/{id}/route?to=!node` or `?channel=N` → `{"radios", "radio_names", "reason", "enabled"}`. `GET /nodes/{id}/sightings` → what each radio knows about a node.
+- `GET /api/v1/status` carries `restart_reasons`: saved changes waiting for a restart, as short labels such as `"web address"`, `"mDNS"`, `"site airtime cap"`, `"restored backup"`, `"<radio> added"`, `"<radio> removed"`, `"<radio> modem connection"`, `"<radio> MQTT"` and `"<radio> UDP multicast"`.
+- `POST /api/v1/restart` → 202: shuts the daemon down cleanly and exits with status 75 so its supervisor starts it again (systemd `Restart=on-failure`, a Docker restart policy). Without a supervisor it stays stopped.
+- `POST /api/v1/restore` (a backup file) → `{"restart_required": true}`: the backup is staged and replaces the configuration and identities when the daemon next starts.
 
 `GET /api/v1/identities` → `[Identity]`
 
@@ -57,7 +98,9 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 
 - `POST /api/v1/identities` `{"long_name": "...", "short_name": "...", "private_key": "base64 (optional)", "api_port": 4404}` → Identity (201)
 - `POST /api/v1/identities/preview-key` `{"private_key": "base64 (optional)"}` → `{"private_key", "public_key", "node_id", "node_num", "last_byte": 7, "collision": null | "!xxxxxx07"}` — generate a key and check its last byte against local and heard nodes, before creating
-- `PATCH /api/v1/identities/{node_id}` `{"long_name"?, "short_name"?, "enabled"?, "api_port"?}` → Identity
+- `PATCH /api/v1/identities/{node_id}` `{"long_name"?, "short_name"?, "enabled"?, "api_port"?, "hop_limit"?}` → Identity. `hop_limit` (0-7, 0 = the radio's) caps every packet the identity sends, whatever its client asks for; `POST /identities` takes it too. `position` (`{"latitude", "longitude", "altitude"}`, or `null` to use the radio's site position) and `position_secs` (0 = the radio's, else ≥ 1800) set the identity's own fixed position.
+
+From the Meshtastic app, each identity also takes: Device → role, LoRa → hop limit (as its cap), Position → fixed position (set/remove) and broadcast interval, owner name and channels. Radio-wide LoRa settings (region, preset, power, frequency) from an app are ignored, since every identity shares the radio.
 - `DELETE /api/v1/identities/{node_id}` → 204
 - `GET /api/v1/identities/{node_id}/key` → `{"private_key": "base64", "public_key": "base64"}`
 - `PUT /api/v1/identities/{node_id}/channels/{index}` `{"name", "psk" (base64), "role": "PRIMARY|SECONDARY|DISABLED", "uplink", "downlink"}` → Identity. Index 0 name/role is locked (409 with an explanation).
@@ -67,6 +110,7 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 ## Messages (browser chat)
 
 - `GET /api/v1/identities/{node_id}/conversations` → `[{"key": "ch:0" | "dm:!5b9e2213", "title": "LongFast" | "Ops Desk", "last_text": "…", "last_time": 0, "unread": 2}]`
+  Every enabled channel of the identity is listed, with `last_time: 0` and an empty `last_text` until something is said on it, so a new identity can post in its channels straight away.
 - `GET /api/v1/identities/{node_id}/messages?conversation=ch:0&before=<ms>&limit=50` → `[Message]`
 - `POST /api/v1/identities/{node_id}/messages` `{"to": "!ffffffff", "channel": 0, "text": "hello", "want_ack": true}` → Message (202)
 
@@ -79,6 +123,8 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 ## Nodes (shared node DB)
 
 `GET /api/v1/nodes` → `[Node]`
+
+A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": "Meshtastic 77f6"`, `"short_name": "77f6"`, `"hw_model": "UNSET"`, `"role": "CLIENT"`) and `"has_user": false`, so every node always carries every field.
 
 ```json
 {"node_id": "!5b9e2213", "node_num": 1537090067, "long_name": "Hilltop", "short_name": "HILL", "hw_model": "HELTEC_V3",
@@ -133,7 +179,9 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 - `GET /api/v1/tokens`, `POST /api/v1/tokens {"name"}` → `{"id","name","token"}` (token shown once), `DELETE /api/v1/tokens/{id}`
 - `GET /api/v1/backup` → JSON file download (config + keys); `POST /api/v1/restore`
 - `GET /api/v1/logs?limit=500` → `[{"time","level","msg"}]`
-- `GET /api/v1/links` → `[{"name": "udp", "type": "udp_multicast", "enabled": false, "connected": false, "rx": 0, "tx": 0}]`
+- `GET /api/v1/links[?radio=<id>]` → the UDP link, then one entry per MQTT connection (`{"name": "mqtt:<connection>", "connection", "type": "mqtt", "mode", "format", "gateway", "gateway_id", "enabled", "connected", "broker", "root", "tls", "rx", "tx", "dropped", "uplink": ["LongFast"], "downlink": [], "ok_to_mqtt", "relay_mqtt", "cross_link", "map_report"}`), then the legacy shape:
+- `GET/PUT /api/v1/config` `mqtt` is a list of connections (a single object is accepted on PUT). `password` is write-only (`password_set` says one is saved, `clear_password` removes it); `key` is the saved name, so a renamed connection keeps its password. `mode: "bridge"` needs `bridge_acknowledged: true`.
+- `GET /api/v1/links` (legacy shape) → `[{"name": "udp", "type": "udp_multicast", "enabled": false, "connected": false, "rx": 0, "tx": 0}]`
 
 ## Proposed additions (from the web GUI)
 
@@ -144,9 +192,10 @@ The relay persona is included with `"is_relay": true` and `"api": null`.
 
 - While `GET /setup` reports `needed: true`, these work **without a token** so the wizard can run:
   `GET /serial-ports`, `GET /regions`, `POST /phy/preview`, `POST /setup/probe`.
-- `POST /api/v1/setup/probe` `{"device": "/dev/ttyUSB0"}` → `{"ok": true, "driver": "kiss", "firmware": "MeshCore KISS v2", "name": "Heltec V3", "sync_word_ok": true, "error": ""}` — ping the modem, read its version and check it accepts sync word 0x2B. Always 200; `ok: false` + `error` when nothing answers.
+- `POST /api/v1/setup/probe` `{"device": "/dev/ttyUSB0"}` → `{"ok": true, "driver": "kiss", "firmware": "Mesh KISS v2", "name": "Heltec V3", "sync_word_ok": true, "error": ""}` — ping the modem, read its version and check it accepts sync word 0x2B. Always 200; `ok: false` + `error` when nothing answers.
 - `POST /phy/preview` also accepts `"tx_power_dbm"` (clamped to the region limit in the reply).
-- `PUT /api/v1/auth/password` `{"current": "...", "new": "..."}` → 204 (400 with an error when `current` is wrong or `new` < 8 chars).
+- `PUT /api/v1/auth/password` `{"current": "...", "new": "..."}` → `{"token", "expires"}` (400 with an error when `current` is wrong or `new` < 8 chars). Every other browser session is signed out; the returned token keeps this one signed in.
+- `POST /api/v1/auth/logout-all` → 204: signs out every browser session, this one included. API tokens are unaffected.
 
 ### Identities
 

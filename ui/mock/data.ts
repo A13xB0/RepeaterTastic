@@ -543,7 +543,7 @@ function packetLog(p: Packet, emit?: Emit) {
     ['info', 'RepeaterTastic 0.1.0 starting'],
     ['info', 'config: loaded /etc/repeatertastic/config.yaml'],
     ['info', 'radio: opening kiss modem on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0'],
-    ['info', 'radio: Heltec V3, firmware MeshCore KISS v2 (sync word 0x2B, preamble 16)'],
+    ['info', 'radio: Heltec V3, firmware Mesh KISS v2 (sync word 0x2B, preamble 16)'],
     ['info', 'phy: EU_868 LongFast 869.525 MHz bw 250 kHz sf 11 cr 4/5, slot 1/1, 27 dBm'],
     ['info', 'identity: RepeaterTastic Relay !3f0a91c2 (relay persona, role client)'],
     ['info', 'identity: Base Camp !a1c40e07 api 0.0.0.0:4403'],
@@ -569,7 +569,7 @@ export function status(): Status {
   const phy = resolvePhy(state.config.radio.region, state.config.radio.preset, state.config.radio.primary_channel, state.config.radio.tx_power_dbm)
   return {
     version: '0.1.0', uptime_s: Math.floor((now() - state.startedAt) / 1000),
-    radio: { driver: 'kiss', device: '/dev/ttyUSB0', firmware: 'MeshCore KISS v2', name: 'Heltec V3', connected: true, reconnects: 0,
+    radio: { driver: 'kiss', device: '/dev/ttyUSB0', firmware: 'Mesh KISS v2', name: 'Heltec V3', connected: true, reconnects: 0,
       rx: state.counters.rx, tx: state.counters.tx, errors: 2, noise_floor_dbm: state.noise },
     phy,
     relay: { node_id: relay.node_id, node_num: relay.node_num, long_name: relay.long_name, short_name: relay.short_name, role: state.relayRole },
@@ -636,10 +636,23 @@ export function identityStats(w: StatsWindow): IdentityStat[] {
 // ---------------------------------------------------------------- config, tokens, links
 
 state.config = {
-  radio: { type: 'kiss', port: '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0', region: 'EU_868', preset: 'LONG_FAST', primary_channel: '', tx_power_dbm: 27, frequency_offset_mhz: 0 },
+  radio: { type: 'kiss', port: '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0', region: 'EU_868', preset: 'LONG_FAST', primary_channel: '', tx_power_dbm: 27, frequency_offset_mhz: 0, baud: 115200, hop_limit: 3, channel_num: 0, override_frequency_mhz: 0 },
   relay: { role: 'client', long_name: 'RepeaterTastic Relay', short_name: 'RPTR', local_dm: 'software' },
-  airtime: { duty_cycle_percent: 10, identity_share_percent: 25, nodeinfo_interval: '3h', position: 'off', telemetry: 'off', cw_min: 3, cw_max: 8 },
-  web: { bind: '0.0.0.0', port: 8080, session_ttl: '24h' },
+  airtime: { duty_cycle_percent: 10, identity_share_percent: 25, nodeinfo_interval: '3h', telemetry_interval: 'off', override_duty_cycle: false, cw_min: 3, cw_max: 8 },
+  web: { bind: '0.0.0.0', port: 8080, session_ttl: '24h', map_tile_url: '', map_key_source: 'built in', mdns: true, log_level: 'info' },
+  position: { latitude: 55.9533, longitude: -3.1883, altitude: 47, precision_bits: 32, interval: '3h', identities: 'relay' },
+  hardware: { hw_model: 'AUTO', effective: 'HELTEC_V3', modem: 'Heltec V3' },
+  mqtt: [
+    {
+      key: 'mqtt', name: 'mqtt', enabled: false, address: 'mqtt.meshtastic.org:1883', username: 'meshdev', password: '', password_set: true,
+      clear_password: false, tls: false, root: 'msh/EU_868/Scotland', mode: 'gateway', gateway: 'relay', format: 'encrypted',
+      uplink_channels: [], downlink_channels: [], channel_selection: 'identity', ignore_consent: false, ok_to_mqtt: false,
+      relay_mqtt: false, relay_hops: 0, cross_link: false, bridge_acknowledged: false, downlink_per_minute: 30, uplink_per_minute: 120,
+      map_report: { enabled: false, interval: '1h', position_precision: 14, latitude: 0, longitude: 0 },
+    },
+  ],
+  radio_id: 'main',
+  main: true,
 }
 
 state.tokens = [
@@ -650,7 +663,9 @@ state.tokens = [
 state.links = [
   { name: 'udp', type: 'udp_multicast', enabled: true, connected: true, rx: 5821, tx: 1377, detail: '239.0.0.69:4403 on eth0' },
   { name: 'glasgow-site', type: 'host_link', enabled: true, connected: false, rx: 0, tx: 0, detail: '81.2.69.160:4410 (WireGuard)' },
-  { name: 'mqtt', type: 'mqtt', enabled: false, connected: false, rx: 0, tx: 0, detail: 'mqtt.meshtastic.org · msh/EU_868/2/e' },
+  { name: 'mqtt:mqtt', connection: 'mqtt', type: 'mqtt', enabled: true, connected: true, rx: 214, tx: 1630, dropped: 3, detail: 'mqtt.meshtastic.org:1883 · msh/EU_868/Scotland',
+    root: 'msh/EU_868/Scotland', mode: 'gateway', format: 'encrypted', gateway: 'relay', gateway_id: '!be77562b', uplink: ['LongFast'], downlink: [],
+    ok_to_mqtt: true, relay_mqtt: false, cross_link: false, map_report: true },
 ]
 
 export function newToken() {

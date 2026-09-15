@@ -3,11 +3,13 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Menu, Monitor, Moon, Sun } from '@lucide/vue'
-import { api } from '@/api/client'
+import { api, radio, setRadio } from '@/api/client'
 import type { RelayRole, Status } from '@/api/types'
 import { live } from '@/store/live'
+import AccountMenu from '@/components/layout/AccountMenu.vue'
 import { cycleTheme, themeMode } from '@/composables/theme'
 import { toastError } from '@/composables/toast'
+import { num } from '@/lib/format'
 
 const emit = defineEmits<{ menu: [] }>()
 const route = useRoute()
@@ -41,6 +43,7 @@ const gauge = computed(() => {
   const ratio = s.value.airtime.tx_pct / (s.value.airtime.duty_limit_pct || 100)
   return { pct: Math.min(100, ratio * 100), cls: ratio > 0.9 ? 'bg-bad' : ratio > 0.7 ? 'bg-warn' : 'bg-brand' }
 })
+const overlaps = computed(() => live.radios.find((r) => r.id === radio.value)?.overlaps ?? [])
 const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(16).toUpperCase().padStart(2, '0') : ''))
 </script>
 
@@ -52,9 +55,23 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
       <button class="icon-btn ml-auto" :title="`Theme: ${themeMode}`" @click="cycleTheme">
         <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />
       </button>
+      <AccountMenu />
     </div>
 
     <div v-if="s" class="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2">
+      <div v-if="live.radios.length > 1" class="flex min-w-0 items-center gap-2">
+        <label class="eyebrow" for="radio-pick">Radio</label>
+        <select id="radio-pick" class="input !h-8 !py-0 text-[13px]" :value="radio" @change="setRadio(($event.target as HTMLSelectElement).value)">
+          <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }} · {{ r.phy.preset_name }}</option>
+        </select>
+        <span
+          v-if="overlaps.length"
+          class="chip bg-warn/15 text-warn"
+          :title="`Shares its channel with ${overlaps.join(', ')}: these radios take turns to transmit`"
+        >shared channel</span>
+      </div>
+
+      <div v-if="live.radios.length > 1" class="hidden h-7 w-px bg-line-soft sm:block" />
       <div class="flex min-w-0 items-center gap-2.5" :title="`${s.radio.firmware} · rx ${s.radio.rx} · tx ${s.radio.tx} · errors ${s.radio.errors} · reconnects ${s.radio.reconnects}`">
         <span :class="['dot size-2.5', s.radio.connected ? 'pulse-dot bg-ok text-ok' : 'bg-bad']" />
         <div class="min-w-0 leading-tight">
@@ -70,7 +87,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
           {{ s.phy.region }} <span class="text-ink-3">·</span> {{ s.phy.preset_name }} <span class="text-ink-3">·</span>
           <span class="tabular-nums">{{ s.phy.frequency_mhz.toFixed(3) }} MHz</span>
         </div>
-        <div class="truncate text-2xs text-ink-3 max-sm:hidden">sync {{ syncHex }} · SF{{ s.phy.sf }} / {{ s.phy.bw_khz }} kHz · {{ s.phy.tx_power_dbm }} dBm</div>
+        <div class="truncate text-2xs text-ink-3 max-sm:hidden">sync {{ syncHex }} · SF{{ s.phy.sf }} / {{ num(s.phy.bw_khz) }} kHz · {{ s.phy.tx_power_dbm }} dBm</div>
       </div>
 
       <div class="hidden h-7 w-px bg-line-soft sm:block" />
@@ -78,7 +95,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
       <div class="w-32 leading-tight sm:w-40" :title="`TX airtime in the last ${s.airtime.window_s / 60} min against the region duty cycle`">
         <div class="flex items-baseline justify-between text-2xs text-ink-3">
           <span>Airtime 1 h</span>
-          <span class="text-[13px] font-semibold tabular-nums text-ink">{{ s.airtime.tx_pct.toFixed(1) }}<span class="text-ink-3"> / {{ s.airtime.duty_limit_pct }} %</span></span>
+          <span class="text-[13px] font-semibold tabular-nums text-ink">{{ s.airtime.tx_pct.toFixed(1) }}<span class="text-ink-3"> / {{ num(s.airtime.duty_limit_pct) }} %</span></span>
         </div>
         <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-ink-3/15">
           <div :class="['h-full rounded-full transition-all duration-500', gauge.cls]" :style="{ width: `${Math.max(gauge.pct, 1.5)}%` }" />
@@ -95,6 +112,7 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
         <button class="icon-btn max-lg:hidden" :title="`Theme: ${themeMode}`" @click="cycleTheme">
           <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />
         </button>
+        <AccountMenu class="max-lg:hidden" />
       </div>
     </div>
     <div v-else class="h-9 flex-1 animate-pulse rounded-lg bg-sunken" />

@@ -10,7 +10,7 @@ import Sparkline from '@/components/charts/Sparkline.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import { live } from '@/store/live'
 import { setToken } from '@/api/client'
-import { uptime } from '@/lib/format'
+import { num, uptime } from '@/lib/format'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -92,7 +92,7 @@ function logout() {
           <div class="mt-2 border-t border-line-soft pt-2">
             <div class="flex items-baseline justify-between text-2xs text-ink-3">
               <span>Noise floor</span>
-              <span class="font-semibold tabular-nums text-ink">{{ live.status.radio.noise_floor_dbm }} dBm</span>
+              <span class="font-semibold tabular-nums text-ink">{{ num(live.status.radio.noise_floor_dbm, 0) }} dBm</span>
             </div>
             <Sparkline class="mt-1" :data="noise" :height="22" color="var(--info)" />
           </div>
@@ -138,10 +138,10 @@ function logout() {
 
       <div class="flex items-center gap-2 border-t border-line-soft px-4 py-3">
         <div class="min-w-0 flex-1 text-2xs leading-snug text-ink-3">
-          <div>RepeaterTastic <span class="tabular-nums">v{{ live.status?.version ?? '…' }}</span></div>
+          <div>RepeaterTastic <span class="tabular-nums">v{{ (live.status?.version ?? '…').replace(/^v/, '') }}</span></div>
           <div>UI layout after openHop (MIT)</div>
         </div>
-        <button class="icon-btn" title="Sign out" aria-label="Sign out" @click="logout"><LogOut class="size-4" /></button>
+        <button class="btn btn-sm btn-ghost" title="Sign out" @click="logout"><LogOut class="size-4" />Sign out</button>
       </div>
     </div>
   </aside>

@@ -2,11 +2,12 @@
 // Create or import an identity. The key is previewed first so the node number and last-byte clash are visible before saving.
 import { computed, ref, watch } from 'vue'
 import { RefreshCw, TriangleAlert, CircleCheck } from '@lucide/vue'
-import { api } from '@/api/client'
+import { api, radio } from '@/api/client'
 import type { Identity, KeyPreview } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, nodeLabel, upsertIdentity } from '@/store/live'
+import RadioFields from '@/components/identities/RadioFields.vue'
+import { live, nodeLabel, refreshAllIdentities, upsertIdentity } from '@/store/live'
 import { toast } from '@/composables/toast'
 
 const props = defineProps<{ open: boolean; mode: 'create' | 'import' }>()
@@ -16,7 +17,15 @@ const longName = ref('')
 const shortName = ref('')
 const shortTouched = ref(false)
 const port = ref(4403)
-const role = ref('CLIENT')
+// Only the relay persona repeats; other identities say so by default.
+const role = ref('CLIENT_MUTE')
+const radioId = ref(radio.value)
+// Follows the home radio until chosen separately.
+const defaultChosen = ref('')
+const defaultRadio = computed({
+  get: () => defaultChosen.value || radioId.value,
+  set: (v: string) => (defaultChosen.value = v === radioId.value ? '' : v),
+})
 const tab = ref<'generate' | 'import'>('generate')
 const importKey = ref('')
 const preview = ref<KeyPreview | null>(null)
@@ -29,7 +38,7 @@ const error = ref('')
 const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR']
 
 function nextPort() {
-  const used = new Set(live.identities.map((i) => i.api?.port).filter(Boolean))
+  const used = new Set((live.allIdentities.length ? live.allIdentities : live.identities).map((i) => i.api?.port).filter(Boolean))
   let p = 4403
   while (used.has(p)) p++
   return p
@@ -39,11 +48,14 @@ watch(
   () => props.open,
   (o) => {
     if (!o) return
+    refreshAllIdentities()
     longName.value = ''
     shortName.value = ''
     shortTouched.value = false
     port.value = nextPort()
-    role.value = 'CLIENT'
+    role.value = 'CLIENT_MUTE'
+    radioId.value = radio.value
+    defaultChosen.value = ''
     tab.value = props.mode === 'import' ? 'import' : 'generate'
     importKey.value = ''
     preview.value = null
@@ -96,7 +108,7 @@ watch(tab, (t) => {
 })
 
 const idParts = computed(() => (preview.value ? { head: preview.value.node_id.slice(0, 7), tail: preview.value.node_id.slice(7) } : null))
-const portClash = computed(() => live.identities.some((i) => i.api?.port === port.value))
+const portClash = computed(() => (live.allIdentities.length ? live.allIdentities : live.identities).some((i) => i.api?.port === port.value))
 const canSave = computed(
   () => !!longName.value.trim() && !!shortName.value.trim() && !!preview.value && !portClash.value && (!preview.value.collision || acceptClash.value),
 )
@@ -112,8 +124,11 @@ async function save() {
       private_key: preview.value.private_key,
       api_port: port.value,
       role: role.value,
+      radio_id: live.radios.length > 1 ? radioId.value : undefined,
     })
     upsertIdentity(ident)
+    if (defaultChosen.value && live.multiRadioIdentities)
+      upsertIdentity(await api.patch<Identity>(`/identities/${encodeURIComponent(ident.node_id)}`, { multi_radio: { default_radio: defaultChosen.value, dm: 'auto', fallback: false } }))
     toast(`${ident.long_name} created as ${ident.node_id}`)
     emit('close')
   } catch (e) {
@@ -147,6 +162,7 @@ async function save() {
           <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
         </select>
       </div>
+      <RadioFields v-model:home="radioId" v-model:default-radio="defaultRadio" creating class="sm:col-span-2" />
       <div>
         <label class="label" for="port">API port</label>
         <input id="port" v-model.number="port" type="number" min="1024" max="65535" class="input tabular-nums" />

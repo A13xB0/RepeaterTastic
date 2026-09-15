@@ -110,7 +110,7 @@ async function handle(req: IncomingMessage, res: Res) {
       const dev = String(body.device ?? '')
       await new Promise((r) => setTimeout(r, 900))
       if (dev.includes('ttyAMA')) return json(res, 200, { ok: false, driver: '', firmware: '', name: '', sync_word_ok: false, error: 'no KISS response within 2 s (is this the Pi UART console?)' })
-      return json(res, 200, { ok: true, driver: 'kiss', firmware: 'MeshCore KISS v2 (RepeaterTastic patch)', name: dev.includes('ACM') ? 'RAK4631' : 'Heltec V3', sync_word_ok: true, error: '' })
+      return json(res, 200, { ok: true, driver: 'kiss', firmware: 'Mesh KISS v2 (RepeaterTastic patch)', name: dev.includes('ACM') ? 'RAK4631' : 'Heltec V3', sync_word_ok: true, error: '' })
     }
     case 'POST /auth/login':
       if (body.password !== state.password) return fail(res, 401, 'wrong password')

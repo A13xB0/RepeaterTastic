@@ -40,11 +40,18 @@ func (h *Host) Send(from *Identity, p *pb.MeshPacket) error {
 	if p.Channel >= MaxChannels {
 		return &RoutingError{pb.Routing_NO_CHANNEL}
 	}
+	route, _ := h.sendHosts(from, p.To, int(p.Channel))
 	if d.Portnum == pb.PortNum_TEXT_MESSAGE_APP {
 		m := &Message{ID: p.Id, From: from.NodeID(), To: wire.NodeID(p.To), Channel: int(p.Channel), Text: string(d.Payload),
 			Time: time.Now().UnixMilli(), Direction: "out", Status: "queued", PKI: p.To != wire.Broadcast}
-		h.Messages.Add(from.NodeNum, m)
-		h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: from.NodeID(), Message: *m}})
+		for i, o := range route {
+			if i > 0 {
+				m.Radio += ", "
+			}
+			m.Radio += o.RadioID()
+		}
+		h.storeFor(from).Add(from.NodeNum, m)
+		h.publishMessage(from, *m)
 	}
 
 	if target := h.Identity(p.To); target != nil && target != from {
@@ -59,6 +66,19 @@ func (h *Host) Send(from *Identity, p *pb.MeshPacket) error {
 	if p.To == wire.BroadcastNoLoRa {
 		return nil
 	}
+	if len(route) > 0 { // experimental multi-radio routing
+		var err error
+		for i, o := range route {
+			q := p
+			if i > 0 {
+				q = clonePacket(p)
+			}
+			if e := o.transmit(from, q, true); e != nil && err == nil {
+				err = e
+			}
+		}
+		return err
+	}
 	return h.transmit(from, p, true)
 }
 
@@ -69,6 +89,9 @@ func (h *Host) transmit(from *Identity, p *pb.MeshPacket, reliable bool) error {
 	onAir := clonePacket(p)
 	d := proto.Clone(p.GetDecoded()).(*pb.Data)
 	bf := uint32(0)
+	if h.Config().OKToMQTT {
+		bf |= 1
+	}
 	if d.WantResponse {
 		bf |= 2
 	}
@@ -122,6 +145,9 @@ func (h *Host) transmit(from *Identity, p *pb.MeshPacket, reliable bool) error {
 		onAir.Channel = uint32(rc.hash)
 	}
 	onAir.PayloadVariant = &pb.MeshPacket_Encrypted{Encrypted: enc}
+	if limit := from.MaxHops(); limit > 0 && onAir.HopLimit > limit {
+		onAir.HopLimit = limit
+	}
 	onAir.HopStart = onAir.HopLimit
 	relayByte := wire.LastByte(from.NodeNum)
 	onAir.RelayNode = uint32(relayByte)
@@ -149,14 +175,15 @@ func (h *Host) transmit(from *Identity, p *pb.MeshPacket, reliable bool) error {
 		}
 		frameLen := wire.HeaderLen + len(enc)
 		h.pmu.Lock()
-		h.pending[k] = &pendingTx{pkt: clonePacket(onAir), origin: from, remaining: attempts - 1, broadcast: broadcast,
-			text: p.GetDecoded().GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP,
-			next: now.Add(time.Duration(phy.RetransmissionMs(frameLen, rp, h.Air.ChannelUtilPercent(now))) * time.Millisecond)}
+		h.pending[k] = &pendingTx{pkt: clonePacket(onAir), origin: from, remaining: attempts - 1, broadcast: broadcast, plain: d,
+			index: int(p.Channel),
+			text:  p.GetDecoded().GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP,
+			next:  now.Add(time.Duration(phy.RetransmissionMs(frameLen, rp, h.Air.ChannelUtilPercent(now))) * time.Millisecond)}
 		h.pmu.Unlock()
 	}
 	delay := phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())
 	if !h.txq.Enqueue(&txItem{key: k, pkt: onAir, due: now.Add(time.Duration(delay) * time.Millisecond), prio: onAir.Priority,
-		origin: from.NodeNum}) {
+		origin: from.NodeNum, plain: d}) {
 		h.stopPending(k)
 		return h.failSend(from, p, pb.Routing_TIMEOUT)
 	}
@@ -184,8 +211,8 @@ func (h *Host) nakLocal(id *Identity, reqID uint32, reason pb.Routing_Error) {
 	if reason == pb.Routing_NONE {
 		status = "acked"
 	}
-	if m, ok := h.Messages.SetStatus(id.NodeNum, reqID, status, errString(reason)); ok {
-		h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: id.NodeID(), Message: m}})
+	if m, ok := h.storeFor(id).SetStatus(id.NodeNum, reqID, status, errString(reason)); ok {
+		h.publishMessage(id, m)
 	}
 }
 
@@ -241,8 +268,8 @@ func (h *Host) implicitAck(origin *Identity, heard *pb.MeshPacket) {
 		status = "acked"
 		h.Counters.AckOK.Add(1)
 	}
-	if m, changed := h.Messages.SetStatus(origin.NodeNum, heard.Id, status, ""); changed {
-		h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: origin.NodeID(), Message: m}})
+	if m, changed := h.storeFor(origin).SetStatus(origin.NodeNum, heard.Id, status, ""); changed {
+		h.publishMessage(origin, m)
 	}
 }
 
@@ -273,6 +300,9 @@ func (h *Host) doRetransmissions(now time.Time) {
 	for i, pd := range due {
 		k := keys[i]
 		if pd.remaining <= 0 {
+			if h.tryFallback(pd, k) {
+				continue
+			}
 			h.Counters.AckFail.Add(1)
 			h.nakLocal(pd.origin, k.ID, pb.Routing_MAX_RETRANSMIT)
 			continue
@@ -290,7 +320,7 @@ func (h *Host) doRetransmissions(now time.Time) {
 		h.hist.MarkTx(k, pkt.HopLimit, uint8(pkt.NextHop), now)
 		delay := phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())
 		h.txq.Enqueue(&txItem{key: k, pkt: pkt, due: now.Add(time.Duration(delay) * time.Millisecond), prio: pkt.Priority,
-			origin: pd.origin.NodeNum})
+			origin: pd.origin.NodeNum, plain: pd.plain})
 		h.pmu.Lock()
 		if cur, ok := h.pending[k]; ok && cur == pd {
 			pd.remaining--
