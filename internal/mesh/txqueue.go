@@ -144,3 +144,20 @@ func (q *TxQueue) Next(ctx context.Context) (*txItem, error) {
 		t.Stop()
 	}
 }
+
+// DropOrigin removes every queued packet an identity originated and returns their packet IDs.
+func (q *TxQueue) DropOrigin(origin uint32) []uint32 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var ids []uint32
+	kept := q.items[:0]
+	for _, it := range q.items {
+		if it.origin == origin {
+			ids = append(ids, it.pkt.GetId())
+			continue
+		}
+		kept = append(kept, it)
+	}
+	q.items = kept
+	return ids
+}

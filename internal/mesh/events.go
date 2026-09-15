@@ -192,6 +192,39 @@ func NewMessageStore(max int) *MessageStore {
 	return &MessageStore{per: map[uint32][]*Message{}, max: max, read: map[uint32]map[string]int64{}}
 }
 
+// Take removes an identity's messages and read marks, to move them to another radio's store.
+func (s *MessageStore) Take(identity uint32) ([]*Message, map[string]int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	msgs, read := s.per[identity], s.read[identity]
+	delete(s.per, identity)
+	delete(s.read, identity)
+	s.dirty = true
+	return msgs, read
+}
+
+// Put adds messages and read marks taken from another store.
+func (s *MessageStore) Put(identity uint32, msgs []*Message, read map[string]int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := append(s.per[identity], msgs...)
+	if len(l) > s.max {
+		l = l[len(l)-s.max:]
+	}
+	if len(l) > 0 {
+		s.per[identity] = l
+	}
+	if len(read) > 0 {
+		if s.read[identity] == nil {
+			s.read[identity] = map[string]int64{}
+		}
+		for k, v := range read {
+			s.read[identity][k] = v
+		}
+	}
+	s.dirty = true
+}
+
 func (s *MessageStore) Add(identity uint32, m *Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

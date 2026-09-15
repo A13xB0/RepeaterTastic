@@ -234,7 +234,8 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
 		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id), "hop_limit": id.MaxHops(),
 		"position": identityPositionJSON(id), "position_secs": id.PositionInterval(),
-		"unread": rc.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
+		"unread":   rc.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
+		"radio_id": rc.id, "radio_name": rc.name,
 	}
 }
 
@@ -262,8 +263,14 @@ func (s *Server) identityParam(w http.ResponseWriter, r *http.Request) *mesh.Ide
 
 func (s *Server) listIdentities(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
-	for _, id := range s.hostFor(r).Identities() {
-		out = append(out, s.identityJSON(id))
+	radios := []*radioCtx{s.radioFor(r)}
+	if r.URL.Query().Get("radio") == "all" {
+		radios = s.radios
+	}
+	for _, rc := range radios {
+		for _, id := range rc.host.Identities() {
+			out = append(out, s.identityJSON(id))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -372,6 +379,11 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// One key, one radio: the same node on two radios would answer twice and split its chats.
+	if other := s.radioHolding(id.NodeNum); other != nil {
+		writeError(w, http.StatusConflict, fmt.Sprintf("%s already exists on radio %s; move it there instead of importing it again", id.NodeID(), other.name))
+		return
+	}
 	if req.APIPort == 0 {
 		req.APIPort = s.nextFreePort()
 	}
@@ -404,6 +416,79 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	s.saveIdentities()
 	writeJSON(w, http.StatusCreated, s.identityJSON(id))
+}
+
+// radioHolding is the radio an identity with that node number is on, or nil.
+func (s *Server) radioHolding(num uint32) *radioCtx {
+	for _, rc := range s.radios {
+		if rc.host.Identity(num) != nil {
+			return rc
+		}
+	}
+	return nil
+}
+
+// moveIdentity is POST /identities/{id}/move {"radio_id"}: take the identity off air on its radio
+// and put it on another with the same key, node ID, channels, settings, app port and chats.
+// The primary channel follows the new radio's preset (LongFast becomes MediumFast).
+func (s *Server) moveIdentity(w http.ResponseWriter, r *http.Request) {
+	id := s.identityParam(w, r)
+	if id == nil {
+		return
+	}
+	var req struct {
+		RadioID string `json:"radio_id"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	from, to := s.radioFor(r), s.radioByID(req.RadioID)
+	switch {
+	case to == nil:
+		writeError(w, http.StatusBadRequest, "no radio "+req.RadioID)
+		return
+	case to == from:
+		writeJSON(w, http.StatusOK, s.identityJSON(id))
+		return
+	case id.IsRelay:
+		writeError(w, http.StatusConflict, "a relay persona belongs to its radio and can't be moved")
+		return
+	}
+	for _, other := range to.host.Identities() {
+		if wire.LastByte(other.NodeNum) == wire.LastByte(id.NodeNum) {
+			writeError(w, http.StatusConflict, fmt.Sprintf("%s shares its last byte with %s on %s, so they can't share a radio", id.NodeID(), other.NodeID(), to.name))
+			return
+		}
+	}
+
+	if err := from.host.RemoveIdentity(id.NodeNum); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if from.api != nil {
+		from.api.Stop(id.NodeNum) // free the port before the other radio's manager binds it
+	}
+	dropped := from.host.DropOutgoing(id.NodeNum, "moved to "+to.name+" before it was sent")
+	msgs, read := from.host.Messages.Take(id.NodeNum)
+	if err := to.host.AddIdentity(id); err != nil {
+		_ = from.host.AddIdentity(id) // put it back as it was
+		from.host.Messages.Put(id.NodeNum, msgs, read)
+		if from.api != nil {
+			from.api.SyncNow()
+		}
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	to.host.Messages.Put(id.NodeNum, msgs, read)
+	if dropped > 0 {
+		s.log.Info("unsent messages marked failed by the move", "identity", id.NodeID(), "count", dropped)
+	}
+	if to.api != nil {
+		to.api.SyncNow()
+	}
+	s.saveIdentities()
+	s.log.Info("identity moved", "identity", id.NodeID(), "from", from.id, "to", to.id)
+	writeJSON(w, http.StatusOK, s.identityJSON(id))
 }
 
 func (s *Server) saveIdentities() {
@@ -487,10 +572,20 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		id.Enabled = *req.Enabled
 	}
 	if req.APIPort != nil && !id.IsRelay {
-		for _, other := range s.hostFor(r).Identities() {
-			if other != id && other.APIPort == *req.APIPort {
-				writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s", *req.APIPort, other.NodeID()))
-				return
+		bind := id.APIBind
+		if req.APIBind != nil {
+			bind = *req.APIBind
+		}
+		if *req.APIPort < 1 || *req.APIPort > 65535 {
+			writeError(w, http.StatusBadRequest, "api_port must be 1-65535")
+			return
+		}
+		for _, orc := range s.radios { // one host, one port space, whatever the radio
+			for _, other := range orc.host.Identities() {
+				if other != id && other.APIPort == *req.APIPort && (other.APIBind == bind || other.APIBind == "" || bind == "") {
+					writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s on %s", *req.APIPort, other.NodeID(), orc.name))
+					return
+				}
 			}
 		}
 		id.APIPort = *req.APIPort

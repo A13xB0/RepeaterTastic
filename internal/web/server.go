@@ -237,6 +237,7 @@ func (s *Server) routes() {
 	priv("POST /api/v1/identities/preview-key", s.previewKey)
 	priv("PATCH /api/v1/identities/{id}", s.patchIdentity)
 	priv("DELETE /api/v1/identities/{id}", s.deleteIdentity)
+	priv("POST /api/v1/identities/{id}/move", s.moveIdentity)
 	priv("GET /api/v1/identities/{id}/key", s.getKey)
 	priv("PUT /api/v1/identities/{id}/channels/{index}", s.putChannel)
 	priv("GET /api/v1/identities/{id}/channels/url", s.getChannelURL)

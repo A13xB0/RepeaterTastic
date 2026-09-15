@@ -220,3 +220,71 @@ func TestAddRenameRemoveRadios(t *testing.T) {
 		t.Fatalf("site %d %v", code, res)
 	}
 }
+
+func TestMoveIdentityBetweenRadios(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+
+	_, desk, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk", "short_name": "DESK", "api_port": 4460})
+	deskID := desk["node_id"].(string)
+	if desk["radio_id"] != "main" {
+		t.Fatalf("new identity radio = %v", desk["radio_id"])
+	}
+	// a message still waiting to transmit (the test radio never sends) is marked failed by the move
+	_, busy, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Busy", "api_port": 4462})
+	busyID := busy["node_id"].(string)
+	if code, _, _ := call(t, srv, "POST", "/api/v1/identities/"+busyID+"/messages", tok, map[string]any{"channel": 0, "text": "queued", "want_ack": false}); code >= 300 {
+		t.Fatalf("send %d", code)
+	}
+	if code, res, _ := call(t, srv, "POST", "/api/v1/identities/"+busyID+"/move", tok, map[string]any{"radio_id": "mf"}); code != 200 {
+		t.Fatalf("move busy %d %v", code, res)
+	}
+	_, _, msgs := call(t, srv, "GET", "/api/v1/identities/"+busyID+"/messages?conversation=ch:0", tok, nil)
+	if len(msgs) != 1 || msgs[0].(map[string]any)["status"] != "failed" || msgs[0].(map[string]any)["text"] != "queued" {
+		t.Fatalf("busy identity's messages after the move = %v", msgs)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/identities/"+busyID+"/move", tok, map[string]any{"radio_id": "main"}); code != 200 {
+		t.Fatalf("move busy back %d", code)
+	}
+
+	// relay personas stay put; unknown radios are refused
+	_, _, mainList := call(t, srv, "GET", "/api/v1/identities", tok, nil)
+	relayID := ""
+	for _, x := range mainList {
+		if m := x.(map[string]any); m["is_relay"] == true {
+			relayID = m["node_id"].(string)
+		}
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/identities/"+relayID+"/move", tok, map[string]any{"radio_id": "mf"}); code != 409 {
+		t.Fatalf("relay moved: %d", code)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/identities/"+deskID+"/move", tok, map[string]any{"radio_id": "nope"}); code != 400 {
+		t.Fatalf("move to unknown radio: %d", code)
+	}
+
+	code, moved, _ := call(t, srv, "POST", "/api/v1/identities/"+deskID+"/move", tok, map[string]any{"radio_id": "mf"})
+	if code != 200 || moved["radio_id"] != "mf" || moved["node_id"] != deskID || moved["api"].(map[string]any)["port"] != float64(4460) {
+		t.Fatalf("move %d %v", code, moved)
+	}
+	if ch := moved["channels"].([]any)[0].(map[string]any); ch["display_name"] != "MediumFast" {
+		t.Fatalf("primary channel after move = %v, want MediumFast", ch["display_name"])
+	}
+	if _, _, list := call(t, srv, "GET", "/api/v1/identities", tok, nil); len(list) != 2 {
+		t.Fatalf("main radio lists %d identities, want relay + Busy", len(list))
+	}
+	if _, _, all := call(t, srv, "GET", "/api/v1/identities?radio=all", tok, nil); len(all) != 4 {
+		t.Fatalf("all radios = %d identities, want 2 relays + Desk + Busy", len(all))
+	}
+	// the same key can't be imported onto the other radio
+	_, key, _ := call(t, srv, "GET", "/api/v1/identities/"+deskID+"/key", tok, nil)
+	if code, res, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk again", "private_key": key["private_key"]}); code != 409 {
+		t.Fatalf("duplicate key imported: %d %v", code, res)
+	}
+	// ports are unique across radios when editing too
+	_, other, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Other", "api_port": 4461})
+	if code, _, _ := call(t, srv, "PATCH", "/api/v1/identities/"+other["node_id"].(string), tok, map[string]any{"api_port": 4460}); code != 409 {
+		t.Fatalf("port clash across radios accepted: %d", code)
+	}
+}

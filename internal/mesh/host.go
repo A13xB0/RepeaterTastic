@@ -738,3 +738,25 @@ func (h *Host) RadioConfigured() bool { return h.radioOK.Load() }
 
 // QueueLen is the number of packets waiting to transmit.
 func (h *Host) QueueLen() int { return h.txq.Len() }
+
+// DropOutgoing cancels an identity's queued transmissions and pending retries (before it moves
+// to another radio). Its unsent messages are marked failed so they can be sent again.
+func (h *Host) DropOutgoing(num uint32, reason string) int {
+	ids := h.txq.DropOrigin(num)
+	h.pmu.Lock()
+	for k, p := range h.pending {
+		if p.origin != nil && p.origin.NodeNum == num {
+			ids = append(ids, p.pkt.GetId())
+			delete(h.pending, k)
+		}
+	}
+	h.pmu.Unlock()
+	failed := 0
+	for _, pid := range ids {
+		if m, ok := h.Messages.SetStatus(num, pid, "failed", reason); ok {
+			failed++
+			h.Bus.Publish(Event{Type: "message", Data: MessageEvent{Identity: wire.NodeID(num), Message: m}})
+		}
+	}
+	return failed
+}
