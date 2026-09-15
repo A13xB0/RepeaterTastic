@@ -72,7 +72,7 @@ New identities default to `role: CLIENT_MUTE`: only each radio's relay persona r
 `GET /api/v1/identities[?radio=<id>|all]` → `[Identity]` (each with `radio_id`, `radio_name`, `radios` it's on now, and `multi_radio`)
 
 - `POST /api/v1/identities/{id}/move {"radio_id"}` moves an identity (not a relay persona) to another radio with its key, port and chats; unsent messages are marked failed.
-- Experimental (`GET/PUT /api/v1/experimental {"multi_radio_identities"}`): `PATCH /identities/{id}` takes `"multi_radio": {"radios": ["mf"], "listen": {"0": ["main", "mf"]}, "send": {"0": "all"}, "dm": "auto"|"home"|"<radio>", "fallback": false}` or `null`. `GET /identities/{id}/route?to=!node` or `?channel=N` → `{"radios", "radio_names", "reason", "enabled"}`. `GET /nodes/{id}/sightings` → what each radio knows about a node.
+- Experimental (`GET/PUT /api/v1/experimental {"multi_radio_identities"}`): `PUT /identities/{id}/channels/{index}` takes `"radio"` (slots 1-7; `""` = the default radio), and channels carry `radio`, `radio_name` and `radio_removed`. `PATCH /identities/{id}` takes `"multi_radio": {"default_radio", "dm": "auto"|"default"|"<radio>", "fallback"}` (slot radios are kept; `"channels": {"2": "mf"}` replaces them) or `null`. `GET /identities/{id}/route?to=!node` or `?channel=N` → `{"radios", "radio_names", "reason", "enabled"}`. `GET /nodes/{id}/sightings` → what each radio knows about a node.
 - `GET /api/v1/status` carries `restart_reasons`: saved changes waiting for a restart.
 
 `GET /api/v1/identities` → `[Identity]`

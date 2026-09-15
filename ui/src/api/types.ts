@@ -103,11 +103,11 @@ export interface Channel {
   uplink: boolean
   downlink: boolean
   locked: boolean
-  /** Identity on several radios (experimental): radios this slot listens on and the radio it sends on ("all" = every radio). */
-  listen?: string[]
-  send?: string
-  /** An unnamed channel's name on each radio (each radio's preset). */
-  display_names?: Record<string, string>
+  /** With identities on several radios (experimental): the one radio this slot is on. */
+  radio?: string
+  radio_name?: string
+  /** Set when the slot's chosen radio left the site; it runs on the default radio meanwhile. */
+  radio_removed?: string
 }
 
 export interface Identity {
@@ -340,11 +340,13 @@ export interface Link {
   map_report?: boolean
 }
 
-/** Experimental: an identity's routing across radios. Keys of listen/send are channel indexes. */
+/** Experimental: an identity's routing across radios. */
 export interface MultiRadio {
-  radios: string[]
-  listen?: Record<string, string[]>
-  send?: Record<string, string>
+  /** Where slot 0 lives, new channels start and DMs fall back ("" = home). */
+  default_radio?: string
+  /** Slot index → the one radio that slot is on. */
+  channels?: Record<string, string>
+  /** "auto" (best heard), "default", or a radio id. */
   dm?: string
   fallback?: boolean
 }

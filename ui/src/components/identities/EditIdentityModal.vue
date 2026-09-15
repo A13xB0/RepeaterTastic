@@ -17,7 +17,6 @@ const emit = defineEmits<{ close: [] }>()
 const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, share_limit_pct: 25, hop_limit: 0,
   own_position: false, latitude: 0, longitude: 0, altitude: 0, position_secs: 0, radio_id: 'main', api_bind: '' })
 const multi = ref<MultiRadio | null>(null)
-const experimental = ref(false)
 const saving = ref(false)
 const error = ref('')
 const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR', 'ROUTER', 'ROUTER_LATE']
@@ -28,8 +27,6 @@ watch(
     if (!i) return
     refreshAllIdentities()
     multi.value = i.multi_radio ? structuredClone(i.multi_radio) : null
-    experimental.value = false
-    if (live.radios.length > 1) api.get<{ multi_radio_identities: boolean }>('/experimental').then((x) => (experimental.value = x.multi_radio_identities), () => {})
     error.value = ''
     form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
       own_position: !!i.position, latitude: i.position?.latitude ?? 0, longitude: i.position?.longitude ?? 0, altitude: i.position?.altitude ?? 0,
@@ -58,7 +55,9 @@ async function save() {
   if (f.position_secs !== (i.position_secs ?? 0)) patch.position_secs = f.position_secs
   const pos = f.own_position ? { latitude: f.latitude, longitude: f.longitude, altitude: f.altitude } : null
   if (JSON.stringify(pos) !== JSON.stringify(i.position ?? null)) patch.position = pos
-  if (JSON.stringify(multi.value ?? null) !== JSON.stringify(i.multi_radio ?? null)) patch.multi_radio = multi.value
+  // only the default radio and DM routing are edited here; slot radios live on the Channels page
+  const pick = (m?: MultiRadio | null) => ({ default_radio: m?.default_radio || '', dm: m?.dm || 'auto', fallback: !!m?.fallback })
+  if (JSON.stringify(pick(multi.value)) !== JSON.stringify(pick(i.multi_radio))) patch.multi_radio = pick(multi.value)
   const moving = !i.is_relay && live.radios.length > 1 && f.radio_id !== (i.radio_id ?? 'main')
   if (!Object.keys(patch).length && !moving) return emit('close')
   if (moving) {
@@ -144,7 +143,7 @@ async function save() {
           </select>
         </div>
       </div>
-      <MultiRadioSection v-if="experimental && live.radios.length > 1 && !identity.is_relay" v-model="multi" :identity="identity" class="sm:col-span-2" />
+      <MultiRadioSection v-if="live.multiRadioIdentities && live.radios.length > 1 && !identity.is_relay" v-model="multi" :identity="identity" class="sm:col-span-2" />
       <div class="sm:col-span-2">
         <label class="label" for="e-hops">Hop limit cap</label>
         <select id="e-hops" v-model.number="form.hop_limit" class="input">

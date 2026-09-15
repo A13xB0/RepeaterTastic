@@ -57,20 +57,20 @@ The top-level radio stays the **main** radio and existing configs keep working u
 
 ### Experimental: identities on several radios
 
-Off by default (Configuration → Experimental, or `experimental.multi_radio_identities`). When on,
-an identity's editor can attach it to extra radios:
+Off by default (Configuration → Experimental, or `experimental.multi_radio_identities`). When on:
 
-- **Receive:** each channel listens on the radios you tick (by default the primary channel on every
-  attached radio, other channels on the home radio). A packet heard on two radios is delivered once,
-  into the home radio's chats.
-- **Send:** each channel sends on one radio or all of them; DMs go on the radio where the
-  destination was last heard best in the last day (or always home, or a fixed radio); ACKs and
-  replies leave on the radio the request arrived on. An optional fallback retries a failed DM once on
-  another radio that heard the destination.
-- **App:** one app port, the home radio's LoRa settings and every attached radio's nodes. Routing is
-  only set in the web GUI.
-- **Safety:** relays never rebroadcast the site's own identities, MQTT publishes a packet heard on two
-  radios once, and turning the switch off detaches every identity at once.
+- **One radio per channel slot.** In the Channels page's slot dialog, each slot gets one radio.
+  Scotland on LongFast and Scotland on MediumFast are two slots, two channels, two chats (the
+  Meshtastic app shows both as "Scotland", in slot order).
+- **Default radio per identity** (identity editor, home unless changed): slot 0 is its primary
+  channel, new channels and channels changed from the app start on it, and DMs fall back to it.
+- **DMs:** the radio where the destination was last heard best in the last day, always the default
+  radio, or a fixed radio, with an optional one-time retry on another radio.
+- An identity is on its home radio, its default radio and each radio one of its slots uses. Other
+  radios treat it as a guest: they hear and send its slots there and deliver into its home chats.
+- **Safety:** a packet heard on two radios is delivered once, relays never rebroadcast the site's own
+  identities, MQTT publishes a packet once, and turning the switch off puts everything back on the
+  home radio at once (the choices are kept).
 
 ## Position and hardware
 
