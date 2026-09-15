@@ -13,6 +13,10 @@ You need:
 
 ## 1. Flash the modem
 
+Prebuilt images and Pi binaries are attached to the `v0.1.0-bench` GitHub release
+(`gh release download v0.1.0-bench -R A13xB0/RepeaterTastic`); `firmware-boards.md` there says
+which file to flash for each board. Or build them yourself:
+
 ```bash
 ./firmware/build.sh Heltec_v3_kiss_modem          # or use a prebuilt image from firmware/out/
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 firmware/out/Heltec_v3_kiss_modem/*factory.bin
