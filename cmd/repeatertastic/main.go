@@ -262,12 +262,16 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 	case "spi":
 		// Experimental: an SX126x on the Pi's SPI bus, described by a meshtasticd board file.
 		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "spi") }
+		var logged string // the board file last described, so retries don't repeat it
 		r = lazy.New(func(ctx context.Context, device string) (radio.Radio, error) {
 			b, err := sx126x.LoadBoard(device)
 			if err != nil {
 				return nil, err
 			}
-			logf("opening %s", b.Summary())
+			if logged != device {
+				logf("board %s", b.Summary())
+				logged = device
+			}
 			return sx126x.Open(ctx, b, logf)
 		},
 			radio.Info{Driver: "spi", Device: rc.Radio.Device}, 5*time.Second, logf)
