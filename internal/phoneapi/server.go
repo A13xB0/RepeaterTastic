@@ -109,7 +109,9 @@ func (s *Server) route(ctx context.Context, c net.Conn) {
 		return
 	}
 	pc := &peekConn{Conn: c, r: br}
-	if first[0] == start1 {
+	// HTTP requests start with an upper-case method name. Anything else is the stream protocol,
+	// including the 0xC3 wake-up bytes some clients send before the first frame.
+	if first[0] < 'A' || first[0] > 'Z' {
 		s.serveStream(ctx, pc)
 		return
 	}
