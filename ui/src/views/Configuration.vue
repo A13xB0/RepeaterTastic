@@ -17,12 +17,12 @@ import { relTime } from '@/lib/format'
 
 type Tab = 'radios' | 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
-  { id: 'radio', label: 'Radio' },
+  { id: 'radio', label: 'LoRa & modem' },
   { id: 'relay', label: 'Relay' },
   { id: 'airtime', label: 'Airtime & duty' },
   { id: 'position', label: 'Position & hardware' },
   { id: 'mqtt', label: 'MQTT' },
-  { id: 'radios', label: 'Radios' },
+  { id: 'radios', label: 'Site radios' },
   { id: 'web', label: 'Web & API tokens' },
   { id: 'backup', label: 'Backup & restore' },
 ]
