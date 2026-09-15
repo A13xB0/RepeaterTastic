@@ -1,0 +1,69 @@
+# Release: on a v* tag (or by hand), build the web GUI and the static daemon + kisstool binaries
+# for Raspberry Pi (arm64/armv7/armv6) and amd64, and publish them with SHA256SUMS.
+#
+# The CARTO_API_KEY secret is baked into the binaries as the default map tile key (-X
+# main.mapAPIKey). It is not a real secret once shipped: anyone can pull it out of the binary,
+# and browsers see it in tile requests. Restrict it on the CARTO side. Operators can replace it
+# with REPEATERTASTIC_MAP_API_KEY.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (must exist)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Web GUI
+        run: make ui
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build binaries
+        env:
+          MAP_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          if [ -z "$MAP_API_KEY" ]; then echo "::warning::CARTO_API_KEY secret is not set; binaries ship without a map key"; fi
+          make dist VERSION="$TAG" MAP_API_KEY="$MAP_API_KEY"
+          ls -l dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+          fi

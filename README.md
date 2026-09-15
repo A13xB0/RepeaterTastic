@@ -29,6 +29,14 @@ sudo ./deploy/install.sh dist/repeatertastic-linux-arm64 dist/kisstool-linux-arm
 
 The configuration reference is [`deploy/repeatertastic.example.yaml`](deploy/repeatertastic.example.yaml).
 
+## Map tiles
+
+The Nodes & map page uses CARTO basemaps (OpenStreetMap data). Release builds carry a default
+CARTO API key baked in at build time from the `CARTO_API_KEY` repository secret. To use your own,
+set `REPEATERTASTIC_MAP_API_KEY` in the service's environment. A different tile server can be set
+with `web.map_tile_url`, where `{api_key}` is replaced by the key. The key is visible to browsers
+in tile requests, so restrict it on the provider's side.
+
 ## Several radios on one host
 
 Add radios under `radios:` in the config: each gets its own modem, preset, relay persona,

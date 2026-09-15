@@ -37,6 +37,8 @@ type Options struct {
 	Site    *site.Site // nil with a single radio and no site budget
 	Version string
 	Log     *slog.Logger
+	// MapAPIKey fills {api_key} in the map tile URL (empty drops the api_key parameter).
+	MapAPIKey string
 }
 
 // Radio is an additional radio served by the same web GUI.

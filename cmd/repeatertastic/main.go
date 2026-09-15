@@ -30,6 +30,21 @@ import (
 
 var version = "dev"
 
+// mapAPIKey is the map tile provider's API key baked in at build time
+// (-ldflags "-X main.mapAPIKey=..."). REPEATERTASTIC_MAP_API_KEY overrides it.
+var mapAPIKey = ""
+
+// resolveMapAPIKey picks the tile key and says where it came from (never the key itself).
+func resolveMapAPIKey() (key, source string) {
+	if k := strings.TrimSpace(os.Getenv("REPEATERTASTIC_MAP_API_KEY")); k != "" {
+		return k, "environment"
+	}
+	if mapAPIKey != "" {
+		return mapAPIKey, "built in"
+	}
+	return "", "none"
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Println("repeatertastic", version)
@@ -111,8 +126,11 @@ func run(cfgPath string) error {
 		for _, rt := range radios[1:] {
 			extra = append(extra, web.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Config: rt.rc.Config, Host: rt.host, API: rt.api, UDP: rt.udp, MQTT: rt.mqtt})
 		}
+		key, source := resolveMapAPIKey()
+		log.Info("map tiles", "api_key", source)
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
-			Radios: extra, Site: st, Version: version, Log: log})
+			MapAPIKey: key,
+			Radios:    extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
 		}

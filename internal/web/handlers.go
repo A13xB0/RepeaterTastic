@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -141,7 +143,7 @@ func (s *Server) statusJSON(r *http.Request) map[string]any {
 			"tx": st.TxPackets, "errors": st.Errors, "noise_floor_dbm": st.NoiseFloorDBm, "queue": h.QueueLen()},
 		"phy":   phyJSON(rp, primary),
 		"relay": relay,
-		"map":   map[string]any{"tile_url": mapTileURL(s.cfg.Web.MapTileURL)},
+		"map":   map[string]any{"tile_url": withMapKey(mapTileURL(s.cfg.Web.MapTileURL), s.opt.MapAPIKey)},
 		"airtime": map[string]any{"window_s": 3600, "tx_ms": txMs, "rx_ms": rxMs, "duty_limit_pct": duty,
 			"tx_pct": h.Air.TxPercent(now), "channel_util_pct": h.Air.ChannelUtilPercent(now)},
 		"counters": map[string]uint64{"rx": c.Rx.Load(), "rx_dupe": c.RxDupe.Load(), "rx_undecryptable": c.RxUndecryptable.Load(),
@@ -1254,7 +1256,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // mapTileURL falls back to the public OSM tiles for configs written before
 // web.map_tile_url existed.
 func mapTileURL(u string) string {
-	if u == "" || u == config.LegacyMapTileURL {
+	if u == "" || slices.Contains(config.LegacyMapTileURLs, u) {
 		return config.DefaultMapTileURL
 	}
 	return u
@@ -1265,4 +1267,21 @@ func identityPositionJSON(id *mesh.Identity) any {
 		return p
 	}
 	return nil
+}
+
+// withMapKey fills {api_key} in a tile URL. Without a key the api_key query parameter is dropped,
+// so a keyless provider URL still works.
+func withMapKey(u, key string) string {
+	if !strings.Contains(u, "{api_key}") {
+		return u
+	}
+	if key != "" {
+		return strings.ReplaceAll(u, "{api_key}", url.QueryEscape(key))
+	}
+	for _, p := range []string{"?api_key={api_key}&", "&api_key={api_key}", "?api_key={api_key}"} {
+		if strings.Contains(u, p) {
+			return strings.Replace(u, p, map[bool]string{true: "?", false: ""}[strings.HasSuffix(p, "&")], 1)
+		}
+	}
+	return strings.ReplaceAll(u, "{api_key}", "")
 }

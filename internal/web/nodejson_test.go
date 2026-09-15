@@ -29,3 +29,22 @@ func TestNodeJSONSignalOnlyForDirectNodes(t *testing.T) {
 		t.Errorf("direct node signal = %v/%v, want -7.5/-118", direct["snr"], direct["rssi"])
 	}
 }
+
+func TestWithMapKey(t *testing.T) {
+	base := "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+	if got := withMapKey(base+"?api_key={api_key}", "k 1"); got != base+"?api_key=k+1" {
+		t.Errorf("with key = %s", got)
+	}
+	if got := withMapKey(base+"?api_key={api_key}", ""); got != base {
+		t.Errorf("without key = %s", got)
+	}
+	if got := withMapKey(base+"?api_key={api_key}&lang=en", ""); got != base+"?lang=en" {
+		t.Errorf("without key, more params = %s", got)
+	}
+	if got := withMapKey(base+"?lang=en&api_key={api_key}", ""); got != base+"?lang=en" {
+		t.Errorf("without key, trailing = %s", got)
+	}
+	if got := withMapKey("https://tiles.example/{z}/{x}/{y}.png", "k"); got != "https://tiles.example/{z}/{x}/{y}.png" {
+		t.Errorf("url without placeholder changed: %s", got)
+	}
+}

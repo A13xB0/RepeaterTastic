@@ -71,7 +71,8 @@ web:
   port: 8080
   # Tiles for the Nodes & map page ({s} {z} {x} {y} {r}). Default: CARTO Positron (OpenStreetMap data).
   # tile.openstreetmap.org refuses browsers on a LAN address, so don't use it here.
-  map_tile_url: https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png
+  # {api_key} is filled from REPEATERTASTIC_MAP_API_KEY, else the key built into release binaries.
+  map_tile_url: https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?api_key={api_key}
 
 # More radios on the same mast, each on its own preset and modem. The sections above are the
 # "main" radio. Extra radios keep their identities in state_dir/radios/<id>, default to a mute
