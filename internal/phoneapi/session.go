@@ -129,10 +129,14 @@ func (s *Session) startConfig(nonce uint32) {
 	s.configDone = false
 	s.mu.Unlock()
 
-	own := s.ownNodeInfo()
-	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_MyInfo{MyInfo: s.myInfo()}})
-	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_DeviceuiConfig{DeviceuiConfig: &pb.DeviceUIConfig{}}})
-	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: own}})
+	// A nodes-only request (the Android app's Stage 2) goes straight to the other nodes, as the
+	// firmware does: the app treats any my_info as the start of a new handshake, so re-sending
+	// it here made the app ignore this stage's config_complete and give up after 12 s.
+	if nonce != nonceOnlyNodes {
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_MyInfo{MyInfo: s.myInfo()}})
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_DeviceuiConfig{DeviceuiConfig: &pb.DeviceUIConfig{}}})
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: s.ownNodeInfo()}})
+	}
 	if nonce != nonceOnlyNodes {
 		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Metadata{Metadata: s.metadata()}})
 		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_RegionPresets{RegionPresets: regionPresetMap()}})
