@@ -18,8 +18,11 @@ import (
 
 // record is what state.json keeps for one plugin. It holds settings secrets: the file is 0600.
 type record struct {
-	Enabled     bool           `json:"enabled"`
-	Granted     []string       `json:"granted,omitempty"`
+	Enabled bool     `json:"enabled"`
+	Granted []string `json:"granted,omitempty"`
+	// Reviewed are the permissions the plugin asked for when the operator last enabled it; an
+	// upgrade that asks for more waits for review.
+	Reviewed    []string       `json:"reviewed,omitempty"`
 	Settings    map[string]any `json:"settings,omitempty"`
 	InstalledAt time.Time      `json:"installed_at"`
 	Source      string         `json:"source,omitempty"` // upload, url, inbox, folder, cli, attach

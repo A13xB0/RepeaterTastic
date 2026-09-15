@@ -22,6 +22,7 @@ import (
 	"github.com/A13xB0/RepeaterTastic/internal/logbuf"
 	"github.com/A13xB0/RepeaterTastic/internal/mesh"
 	"github.com/A13xB0/RepeaterTastic/internal/phoneapi"
+	"github.com/A13xB0/RepeaterTastic/internal/plugins"
 	"github.com/A13xB0/RepeaterTastic/internal/radio"
 	"github.com/A13xB0/RepeaterTastic/internal/site"
 	"github.com/A13xB0/RepeaterTastic/internal/wire"
@@ -48,6 +49,8 @@ type Options struct {
 	Federation *mesh.Federation
 	// Restart shuts the daemon down cleanly for its supervisor to start again (nil = exit 75 at once).
 	Restart func()
+	// Plugins is the plugin manager (nil when plugins are turned off).
+	Plugins *plugins.Manager
 }
 
 // Radio is an additional radio served by the same web GUI.
@@ -96,6 +99,7 @@ type Server struct {
 	booted *config.Config
 	// restorePending is set once a backup has been staged for the next start.
 	restorePending atomic.Bool
+	pluginKeys     assetKeys
 }
 
 func (rc *radioCtx) stats(ctx context.Context) radio.Stats {
@@ -291,6 +295,7 @@ func (s *Server) routes() {
 	priv("POST /api/v1/identities/{id}/conversations/{key}/read", s.markRead)
 	priv("GET /api/v1/stats/rf", s.statsRF)
 	priv("GET /api/v1/stats/identities", s.statsIdentities)
+	s.pluginRoutes(priv)
 
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such endpoint")

@@ -1530,6 +1530,16 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				payload = nodeJSON(en, s.localIDs(s.hostFor(r)))
+			case "plugin":
+				id, _ := e.Data.(string)
+				if s.opt.Plugins == nil {
+					continue
+				}
+				if in, err := s.opt.Plugins.Get(id); err == nil {
+					payload = s.pluginJSON(in)
+				} else {
+					payload = map[string]any{"id": id, "deleted": true}
+				}
 			}
 			if !send(e.Type, payload) {
 				return

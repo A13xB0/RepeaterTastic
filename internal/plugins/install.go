@@ -97,11 +97,13 @@ func unpack(r io.ReaderAt, size int64, parent string) (string, *Manifest, error)
 
 // bundlePrefix is "folder/" when every entry sits in one top-level folder holding plugin.yaml.
 func bundlePrefix(files []*zip.File) (string, error) {
-	top := ""
 	for _, f := range files {
 		if f.Name == ManifestFile {
 			return "", nil
 		}
+	}
+	top := ""
+	for _, f := range files {
 		first, _, _ := strings.Cut(f.Name, "/")
 		if top == "" {
 			top = first

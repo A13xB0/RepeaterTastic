@@ -104,6 +104,9 @@ func (m *Manager) inboxDir() string     { return filepath.Join(m.opt.Dir, "inbox
 func (m *Manager) statePath() string    { return filepath.Join(m.opt.Dir, "state.json") }
 func (m *Manager) socketPath() string   { return filepath.Join(m.opt.Dir, "host.sock") }
 
+// InboxDir is the folder bundles can be dropped into.
+func (m *Manager) InboxDir() string { return m.inboxDir() }
+
 // SocketPath is the Unix socket managed plugins connect to.
 func (m *Manager) SocketPath() string { return m.socketPath() }
 
@@ -236,7 +239,7 @@ func (p *plugin) blocker() (state, detail string) {
 	}
 	var missing []string
 	for _, perm := range p.manifest.Permissions {
-		if !slices.Contains(granted, perm) {
+		if p.pinned == nil && !slices.Contains(p.rec.Reviewed, perm) && !slices.Contains(granted, perm) {
 			missing = append(missing, perm)
 		}
 	}
@@ -481,6 +484,9 @@ func (m *Manager) Enable(id string, granted []string) error {
 		}
 	}
 	p.rec.Enabled, p.rec.Granted = true, slices.Compact(slices.Sorted(slices.Values(granted)))
+	if p.manifest != nil {
+		p.rec.Reviewed = slices.Clone(p.manifest.Permissions)
+	}
 	if p.state == "crashed" {
 		p.state = "stopped"
 	}
