@@ -102,3 +102,43 @@ func TestTwoRadiosRouteByRadioAndIdentity(t *testing.T) {
 		t.Fatalf("mf identity conversations = %v", list)
 	}
 }
+
+func TestConfigPositionHardwareMQTTPerRadio(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+
+	code, cfg, _ := call(t, srv, "GET", "/api/v1/config?radio=mf", tok, nil)
+	if code != 200 || cfg["radio_id"] != "mf" || cfg["main"] != false || cfg["hardware"].(map[string]any)["hw_model"] != "AUTO" {
+		t.Fatalf("mf config %d %v", code, cfg)
+	}
+	code, res, _ := call(t, srv, "PUT", "/api/v1/config?radio=mf", tok, map[string]any{
+		"position": map[string]any{"latitude": 56.2, "longitude": -3.16, "altitude": 90, "precision_bits": 16, "interval": "6h", "identities": "all"},
+		"hardware": map[string]any{"hw_model": "HELTEC_V3"},
+		"mqtt": map[string]any{"enabled": true, "address": "mqtt.example:1883", "username": "u", "password": "secret", "root": "msh/EU_868/Scotland",
+			"ok_to_mqtt": true, "downlink_per_minute": 10, "map_report": map[string]any{"enabled": true, "interval": "1h", "position_precision": 14}},
+	})
+	if code != 200 || res["restart_required"] != true {
+		t.Fatalf("put mf config %d %v", code, res)
+	}
+	out := res["config"].(map[string]any)
+	if out["hardware"].(map[string]any)["effective"] != "HELTEC_V3" || out["position"].(map[string]any)["precision_bits"] != float64(16) {
+		t.Fatalf("mf config after put = %v", out)
+	}
+	m := out["mqtt"].(map[string]any)
+	if m["password"] != "" || m["password_set"] != true || m["root"] != "msh/EU_868/Scotland" {
+		t.Fatalf("mqtt dto leaked or lost the password: %v", m)
+	}
+	// the main radio is untouched
+	if _, main, _ := call(t, srv, "GET", "/api/v1/config", tok, nil); main["mqtt"].(map[string]any)["enabled"] != false ||
+		main["position"].(map[string]any)["latitude"] != float64(0) {
+		t.Fatalf("main radio changed: %v", main)
+	}
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/config?radio=mf", tok, map[string]any{"web": map[string]any{"port": 9}}); code != 400 {
+		t.Fatalf("web settings on an extra radio accepted: %d", code)
+	}
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/config", tok, map[string]any{"hardware": map[string]any{"hw_model": "NOT_A_BOARD"}}); code != 400 {
+		t.Fatalf("unknown hardware model accepted: %d", code)
+	}
+}

@@ -221,6 +221,7 @@ func (s *Server) routes() {
 
 	priv("GET /api/v1/status", s.getStatus)
 	priv("GET /api/v1/radios", s.listRadios)
+	priv("POST /api/v1/restart", s.restartDaemon)
 	priv("PUT /api/v1/relay", s.putRelay)
 
 	priv("GET /api/v1/identities", s.listIdentities)

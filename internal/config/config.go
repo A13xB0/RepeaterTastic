@@ -269,8 +269,12 @@ type Web struct {
 	MapTileURL string `yaml:"map_tile_url" json:"map_tile_url"`
 }
 
-// DefaultMapTileURL is the public OpenStreetMap tile server.
-const DefaultMapTileURL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+// DefaultMapTileURL is CARTO's Positron basemap (OpenStreetMap data). The OpenStreetMap tile
+// servers refuse browsers on a LAN address: no Referer gets 403 and a private-IP Referer 400.
+const DefaultMapTileURL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+
+// LegacyMapTileURL was the default before; configs saved with it get the new default.
+const LegacyMapTileURL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 // Identity seeds a virtual node on first start; afterwards identities live in the state dir.
 type Identity struct {

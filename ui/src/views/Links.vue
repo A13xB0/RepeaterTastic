@@ -74,7 +74,7 @@ onBeforeUnmount(() => clearInterval(timer))
             <div class="text-xs text-ink-3">{{ meta[l.type]?.label ?? l.type }}</div>
           </div>
           <Toggle v-if="l.type !== 'mqtt'" :model-value="l.enabled" :label="`Enable ${l.name}`" @update:model-value="setEnabled(l, $event)" />
-          <span v-else class="text-2xs text-ink-3" title="Broker, credentials and map reporting live under links.mqtt in the config file">config file</span>
+          <RouterLink v-else class="btn btn-sm" :to="{ name: 'config', params: { tab: 'mqtt' } }">Settings</RouterLink>
         </div>
         <p v-if="l.detail" class="mono mt-3 truncate rounded-lg bg-raised px-2.5 py-1.5 text-xs text-ink-2" :title="l.detail">{{ l.detail }}</p>
         <p class="mt-3 flex-1 text-xs leading-relaxed text-ink-3">{{ meta[l.type]?.about }}</p>

@@ -693,6 +693,9 @@ func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
 	h.cfgMu.Lock()
 	old := h.rp
 	cfg.StateDir = h.stateDir // fixed at start
+	if cfg.RadioID == "" {
+		cfg.RadioID = h.cfg.RadioID
+	}
 	h.cfg = cfg
 	h.rp = rp
 	h.cfgMu.Unlock()

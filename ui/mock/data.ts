@@ -543,7 +543,7 @@ function packetLog(p: Packet, emit?: Emit) {
     ['info', 'RepeaterTastic 0.1.0 starting'],
     ['info', 'config: loaded /etc/repeatertastic/config.yaml'],
     ['info', 'radio: opening kiss modem on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0'],
-    ['info', 'radio: Heltec V3, firmware MeshCore KISS v2 (sync word 0x2B, preamble 16)'],
+    ['info', 'radio: Heltec V3, firmware Mesh KISS v2 (sync word 0x2B, preamble 16)'],
     ['info', 'phy: EU_868 LongFast 869.525 MHz bw 250 kHz sf 11 cr 4/5, slot 1/1, 27 dBm'],
     ['info', 'identity: RepeaterTastic Relay !3f0a91c2 (relay persona, role client)'],
     ['info', 'identity: Base Camp !a1c40e07 api 0.0.0.0:4403'],
@@ -569,7 +569,7 @@ export function status(): Status {
   const phy = resolvePhy(state.config.radio.region, state.config.radio.preset, state.config.radio.primary_channel, state.config.radio.tx_power_dbm)
   return {
     version: '0.1.0', uptime_s: Math.floor((now() - state.startedAt) / 1000),
-    radio: { driver: 'kiss', device: '/dev/ttyUSB0', firmware: 'MeshCore KISS v2', name: 'Heltec V3', connected: true, reconnects: 0,
+    radio: { driver: 'kiss', device: '/dev/ttyUSB0', firmware: 'Mesh KISS v2', name: 'Heltec V3', connected: true, reconnects: 0,
       rx: state.counters.rx, tx: state.counters.tx, errors: 2, noise_floor_dbm: state.noise },
     phy,
     relay: { node_id: relay.node_id, node_num: relay.node_num, long_name: relay.long_name, short_name: relay.short_name, role: state.relayRole },

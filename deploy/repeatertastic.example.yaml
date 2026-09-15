@@ -69,8 +69,9 @@ web:
   enabled: true
   bind: 0.0.0.0
   port: 8080
-  # Tiles for the Nodes & map page. The public OSM servers discourage heavy use; point this at your own tile server for a busy site.
-  map_tile_url: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+  # Tiles for the Nodes & map page ({s} {z} {x} {y} {r}). Default: CARTO Positron (OpenStreetMap data).
+  # tile.openstreetmap.org refuses browsers on a LAN address, so don't use it here.
+  map_tile_url: https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png
 
 # More radios on the same mast, each on its own preset and modem. The sections above are the
 # "main" radio. Extra radios keep their identities in state_dir/radios/<id>, default to a mute

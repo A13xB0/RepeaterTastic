@@ -297,7 +297,7 @@ func TestFraming(t *testing.T) {
 func TestOpenConfigure(t *testing.T) {
 	f := newFake()
 	m := openFake(t, f)
-	if in := m.Info(); in.Driver != "kiss" || in.Name != "Heltec V3" || in.Firmware != "MeshCore KISS v2" || m.Version() != 2 {
+	if in := m.Info(); in.Driver != "kiss" || in.Name != "Heltec V3" || in.Firmware != "Mesh KISS v2" || m.Version() != 2 {
 		t.Fatalf("info %+v", in)
 	}
 	if err := m.Configure(ctx, longFast); err != nil {

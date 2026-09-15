@@ -44,16 +44,16 @@ type Identity struct {
 	// client asks for (0 = the radio's hop_limit). Keeps a chatty client, such as rnsd's
 	// RNS tunnel, from flooding the whole mesh.
 	HopLimit uint32
-	MACAddr       []byte
+	MACAddr  []byte
 
-	sinks           map[ClientSink]struct{}
-	backlog         []*pb.FromRadio
-	lastNodeInfoTx  time.Time
-	nextNodeInfo    time.Time
+	sinks             map[ClientSink]struct{}
+	backlog           []*pb.FromRadio
+	lastNodeInfoTx    time.Time
+	nextNodeInfo      time.Time
 	nextPosition      time.Time
 	lastPositionReply time.Time
-	nodeInfoReplied map[uint32]time.Time
-	lastTraceroute  time.Time
+	nodeInfoReplied   map[uint32]time.Time
+	lastTraceroute    time.Time
 }
 
 // NewIdentity creates an identity from a private key (nil generates one).

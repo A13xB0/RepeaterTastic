@@ -330,6 +330,23 @@ export interface Config {
     cw_max: number
   }
   web: { bind: string; port: number; session_ttl: string }
+  position: { latitude: number; longitude: number; altitude: number; precision_bits: number; interval: string; identities: 'relay' | 'all' }
+  hardware: { hw_model: string; effective: string; modem: string }
+  mqtt: {
+    enabled: boolean
+    address: string
+    username: string
+    password: string
+    password_set: boolean
+    tls: boolean
+    root: string
+    ok_to_mqtt: boolean
+    relay_mqtt: boolean
+    downlink_per_minute: number
+    map_report: { enabled: boolean; interval: string; position_precision: number; latitude: number; longitude: number }
+  }
+  radio_id: string
+  main: boolean
 }
 
 export interface ConfigPutResult {

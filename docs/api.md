@@ -20,14 +20,14 @@ are under `/api/v1`. Times are Unix **milliseconds** unless noted. Node ids are 
 ```json
 {
   "version": "0.1.0", "uptime_s": 5234,
-  "radio": {"driver": "kiss", "device": "/dev/ttyUSB0", "firmware": "MeshCore KISS v2", "name": "Heltec V3",
+  "radio": {"driver": "kiss", "device": "/dev/ttyUSB0", "firmware": "Mesh KISS v2", "name": "Heltec V3",
             "connected": true, "reconnects": 0, "rx": 1203, "tx": 311, "errors": 2, "noise_floor_dbm": -118},
   "phy": {"region": "EU_868", "preset": "LONG_FAST", "preset_name": "LongFast", "frequency_mhz": 869.525,
           "bw_khz": 250, "sf": 11, "cr": 5, "slot": 0, "num_slots": 1, "sync_word": 43, "preamble": 16,
           "tx_power_dbm": 27, "primary_channel": "LongFast"},
   "relay": {"node_id": "!3f0a91c2", "node_num": 1057657282, "long_name": "RepeaterTastic Relay", "short_name": "RPTR",
             "role": "client"},
-  "map": {"tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png"},
+  "map": {"tile_url": "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"},
   "airtime": {"window_s": 3600, "tx_ms": 147700, "rx_ms": 402000, "duty_limit_pct": 10, "tx_pct": 4.1,
               "channel_util_pct": 11.2},
   "counters": {"rx": 1203, "rx_dupe": 402, "rx_undecryptable": 77, "tx": 311, "relayed": 120,
@@ -48,7 +48,7 @@ A host can run several radios (see `radios:` in the example config). Every endpo
 
 ```json
 {"radios": [{"id": "main", "name": "Main", "main": true, "device": "/dev/ttyUSB0", "driver": "kiss",
-             "firmware": "MeshCore KISS v2", "connected": true, "configured": true, "noise_floor_dbm": -111,
+             "firmware": "Mesh KISS v2", "connected": true, "configured": true, "noise_floor_dbm": -111,
              "phy": {"…": "as status.phy"}, "relay": {"role": "mute", "node_id": "!be77562b", "long_name": "Relay"},
              "identities": 3, "tx_pct": 0.1, "channel_util_pct": 6.2, "overlaps": ["mf"]}],
  "site": {"radios": 2, "duty_limit_pct": 0, "tx_pct": 0.3}}
@@ -173,7 +173,7 @@ A node heard without a NodeInfo gets the firmware's placeholders (`"long_name": 
 
 - While `GET /setup` reports `needed: true`, these work **without a token** so the wizard can run:
   `GET /serial-ports`, `GET /regions`, `POST /phy/preview`, `POST /setup/probe`.
-- `POST /api/v1/setup/probe` `{"device": "/dev/ttyUSB0"}` → `{"ok": true, "driver": "kiss", "firmware": "MeshCore KISS v2", "name": "Heltec V3", "sync_word_ok": true, "error": ""}` — ping the modem, read its version and check it accepts sync word 0x2B. Always 200; `ok: false` + `error` when nothing answers.
+- `POST /api/v1/setup/probe` `{"device": "/dev/ttyUSB0"}` → `{"ok": true, "driver": "kiss", "firmware": "Mesh KISS v2", "name": "Heltec V3", "sync_word_ok": true, "error": ""}` — ping the modem, read its version and check it accepts sync word 0x2B. Always 200; `ok: false` + `error` when nothing answers.
 - `POST /phy/preview` also accepts `"tx_power_dbm"` (clamped to the region limit in the reply).
 - `PUT /api/v1/auth/password` `{"current": "...", "new": "..."}` → 204 (400 with an error when `current` is wrong or `new` < 8 chars).
 

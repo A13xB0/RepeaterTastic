@@ -1,8 +1,12 @@
 package web
 
 import (
+	"errors"
 	"net/http"
+	"os"
 	"time"
+
+	"github.com/A13xB0/RepeaterTastic/internal/config"
 )
 
 // radioByID returns the radio with that ID, or nil.
@@ -85,4 +89,59 @@ func (s *Server) putExtraRelay(w http.ResponseWriter, r *http.Request, rc *radio
 		s.log.Warn("relay role changed but the config file could not be saved", "radio", rc.id, "err", err)
 	}
 	writeJSON(w, http.StatusOK, s.statusJSON(r)["relay"])
+}
+
+// applyRadioConfig validates and applies an extra radio's edited view, writing it back into
+// that radio's radios: entry in the config file.
+func (s *Server) applyRadioConfig(r *http.Request, rc *radioCtx, next *config.Config) error {
+	s.cfgMu.Lock()
+	whole := *s.cfg
+	radios := append([]config.RadioInstance(nil), whole.Radios...)
+	found := false
+	for i := range radios {
+		if radios[i].ID == rc.id {
+			radios[i].Radio, radios[i].Mesh, radios[i].Relay = next.Radio, next.Mesh, next.Relay
+			radios[i].Airtime, radios[i].Links, radios[i].Position = next.Airtime, next.Links, next.Position
+			found = true
+		}
+	}
+	whole.Radios = radios
+	s.cfgMu.Unlock()
+	if !found {
+		return errors.New("no radio " + rc.id + " in the configuration")
+	}
+	if err := whole.Validate(); err != nil {
+		return err
+	}
+	var view config.RadioConfig
+	for _, v := range whole.RadioConfigs() {
+		if v.ID == rc.id {
+			view = v
+		}
+	}
+	if err := rc.host.UpdateConfig(r.Context(), view.MeshConfig()); err != nil {
+		return err
+	}
+	s.cfgMu.Lock()
+	s.cfg.Radios = radios
+	*rc.cfg = *view.Config
+	s.cfgMu.Unlock()
+	if s.cfg.Path() != "" {
+		if err := s.saveConfigFile(); err != nil {
+			s.log.Warn("radio config applied but not saved", "radio", rc.id, "err", err)
+		}
+	}
+	return nil
+}
+
+// restartDaemon is POST /api/v1/restart: exit so systemd starts the daemon again with the
+// saved config (the unit restarts on failure). Changes such as the MQTT connection are only
+// read at start.
+func (s *Server) restartDaemon(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusAccepted, map[string]any{"restarting": true})
+	s.log.Warn("restart requested from the web GUI")
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(75) // EX_TEMPFAIL: systemd's Restart=on-failure brings the daemon back
+	}()
 }

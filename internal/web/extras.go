@@ -47,6 +47,40 @@ type configDTO struct {
 		Port       int    `json:"port"`
 		SessionTTL string `json:"session_ttl"`
 	} `json:"web"`
+	Position struct {
+		Latitude      float64 `json:"latitude"`
+		Longitude     float64 `json:"longitude"`
+		Altitude      int     `json:"altitude"`
+		PrecisionBits int     `json:"precision_bits"`
+		Interval      string  `json:"interval"`
+		Identities    string  `json:"identities"`
+	} `json:"position"`
+	Hardware struct {
+		HwModel   string `json:"hw_model"`  // "auto" or a Meshtastic HardwareModel name
+		Effective string `json:"effective"` // what identities advertise right now (read-only)
+		Modem     string `json:"modem"`     // the board name the modem reports (read-only)
+	} `json:"hardware"`
+	MQTT struct {
+		Enabled           bool   `json:"enabled"`
+		Address           string `json:"address"`
+		Username          string `json:"username"`
+		Password          string `json:"password"`     // write-only: empty keeps the saved one
+		PasswordSet       bool   `json:"password_set"` // read-only
+		TLS               bool   `json:"tls"`
+		Root              string `json:"root"`
+		OKToMQTT          bool   `json:"ok_to_mqtt"`
+		RelayMQTT         bool   `json:"relay_mqtt"`
+		DownlinkPerMinute int    `json:"downlink_per_minute"`
+		MapReport         struct {
+			Enabled           bool    `json:"enabled"`
+			Interval          string  `json:"interval"`
+			PositionPrecision int     `json:"position_precision"`
+			Latitude          float64 `json:"latitude"`
+			Longitude         float64 `json:"longitude"`
+		} `json:"map_report"`
+	} `json:"mqtt"`
+	RadioID string `json:"radio_id"` // read-only: which radio this is
+	Main    bool   `json:"main"`     // read-only: web settings only exist on the main radio
 }
 
 func toDTO(c *config.Config, h *mesh.Host) configDTO {
@@ -71,6 +105,41 @@ func toDTO(c *config.Config, h *mesh.Host) configDTO {
 	d.Airtime.NodeInfoInterval = shortDuration(c.Airtime.NodeInfoInterval)
 	d.Airtime.Position, d.Airtime.Telemetry, d.Airtime.CWMin, d.Airtime.CWMax = "off", "off", 3, 8
 	d.Web.Bind, d.Web.Port, d.Web.SessionTTL = c.Web.Bind, c.Web.Port, shortDuration(c.Web.SessionTTL)
+	p := c.Position
+	d.Position.Latitude, d.Position.Longitude, d.Position.Altitude = p.Latitude, p.Longitude, p.Altitude
+	d.Position.PrecisionBits, d.Position.Identities = p.PrecisionBits, p.Identities
+	if d.Position.PrecisionBits == 0 {
+		d.Position.PrecisionBits = 32
+	}
+	if d.Position.Identities == "" {
+		d.Position.Identities = "relay"
+	}
+	d.Position.Interval = "3h"
+	if p.Interval > 0 {
+		d.Position.Interval = shortDuration(p.Interval)
+	}
+	d.Hardware.HwModel = strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel))
+	if d.Hardware.HwModel == "" {
+		d.Hardware.HwModel = "AUTO"
+	}
+	d.Hardware.Effective, d.Hardware.Modem = h.Hardware().String(), h.Radio().Info().Name
+	m := c.Links.MQTT
+	d.MQTT.Enabled, d.MQTT.Address, d.MQTT.Username, d.MQTT.PasswordSet = m.Enabled, m.Address, m.Username, m.Password != ""
+	d.MQTT.TLS, d.MQTT.Root, d.MQTT.OKToMQTT, d.MQTT.RelayMQTT = m.TLS, m.Root, m.OKToMQTT, m.RelayMQTT
+	d.MQTT.DownlinkPerMinute = m.DownlinkPerMinute
+	if d.MQTT.DownlinkPerMinute == 0 {
+		d.MQTT.DownlinkPerMinute = 30
+	}
+	mr := m.MapReport
+	d.MQTT.MapReport.Enabled, d.MQTT.MapReport.PositionPrecision = mr.Enabled, mr.PositionPrecision
+	d.MQTT.MapReport.Latitude, d.MQTT.MapReport.Longitude = mr.Latitude, mr.Longitude
+	if d.MQTT.MapReport.PositionPrecision == 0 {
+		d.MQTT.MapReport.PositionPrecision = 14
+	}
+	d.MQTT.MapReport.Interval = "1h"
+	if mr.Interval > 0 {
+		d.MQTT.MapReport.Interval = shortDuration(mr.Interval)
+	}
 	return d
 }
 
@@ -85,9 +154,11 @@ func shortDuration(d time.Duration) string {
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
+	rc := s.radioFor(r)
 	s.cfgMu.Lock()
-	d := toDTO(s.cfg, s.host)
+	d := toDTO(s.radioConfig(rc), rc.host)
 	s.cfgMu.Unlock()
+	d.RadioID, d.Main = rc.id, rc == s.radios[0]
 	writeJSON(w, http.StatusOK, d)
 }
 
@@ -96,10 +167,13 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &raw) {
 		return
 	}
+	rc := s.radioFor(r)
+	main := rc == s.radios[0]
 	s.cfgMu.Lock()
-	cur := toDTO(s.cfg, s.host)
-	next := *s.cfg
-	old := *s.cfg
+	base := s.radioConfig(rc)
+	cur := toDTO(base, rc.host)
+	next := *base
+	old := *base
 	s.cfgMu.Unlock()
 
 	d := cur
@@ -113,7 +187,17 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		case "airtime":
 			target = &d.Airtime
 		case "web":
+			if !main {
+				writeError(w, http.StatusBadRequest, "web settings belong to the main radio")
+				return
+			}
 			target = &d.Web
+		case "position":
+			target = &d.Position
+		case "hardware":
+			target = &d.Hardware
+		case "mqtt":
+			target = &d.MQTT
 		default:
 			writeError(w, http.StatusBadRequest, "unknown config section "+section)
 			return
@@ -128,7 +212,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	next.Mesh.TxPowerDBm, next.Mesh.FreqOffsetMHz = d.Radio.TxPowerDBm, d.Radio.FrequencyOffsetMHz
 	next.Relay.Role, next.Relay.LongName, next.Relay.ShortName = d.Relay.Role, d.Relay.LongName, d.Relay.ShortName
 	next.Links.LocalDMOverRF = d.Relay.LocalDM == "also_rf"
-	if d.Airtime.DutyCyclePercent != s.hostFor(r).RadioParams().Region.DutyCyclePct {
+	if d.Airtime.DutyCyclePercent != rc.host.RadioParams().Region.DutyCyclePct {
 		next.Airtime.DutyCyclePct = d.Airtime.DutyCyclePercent
 	}
 	next.Airtime.IdentitySharePct = d.Airtime.IdentitySharePercent
@@ -142,18 +226,57 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	if ttl, err := time.ParseDuration(d.Web.SessionTTL); err == nil && ttl >= time.Minute {
 		next.Web.SessionTTL = ttl
 	}
-	if err := s.applyConfig(r, &next); err != nil {
+
+	next.Position = config.Position{Latitude: d.Position.Latitude, Longitude: d.Position.Longitude, Altitude: d.Position.Altitude,
+		PrecisionBits: d.Position.PrecisionBits, Identities: strings.ToLower(d.Position.Identities)}
+	if iv, err := time.ParseDuration(d.Position.Interval); err == nil && iv >= 30*time.Minute {
+		next.Position.Interval = iv
+	} else {
+		writeError(w, http.StatusBadRequest, "position.interval must be a duration of at least 30m, e.g. 3h")
+		return
+	}
+	next.Mesh.HwModel = strings.ToUpper(strings.TrimSpace(d.Hardware.HwModel))
+	if next.Mesh.HwModel == "AUTO" {
+		next.Mesh.HwModel = "auto"
+	}
+
+	mq := next.Links.MQTT
+	mq.Enabled, mq.Address, mq.Username, mq.TLS = d.MQTT.Enabled, strings.TrimSpace(d.MQTT.Address), d.MQTT.Username, d.MQTT.TLS
+	if d.MQTT.Password != "" {
+		mq.Password = d.MQTT.Password
+	}
+	mq.Root, mq.OKToMQTT, mq.RelayMQTT = strings.Trim(strings.TrimSpace(d.MQTT.Root), "/"), d.MQTT.OKToMQTT, d.MQTT.RelayMQTT
+	mq.DownlinkPerMinute = d.MQTT.DownlinkPerMinute
+	mq.MapReport.Enabled, mq.MapReport.PositionPrecision = d.MQTT.MapReport.Enabled, d.MQTT.MapReport.PositionPrecision
+	mq.MapReport.Latitude, mq.MapReport.Longitude = d.MQTT.MapReport.Latitude, d.MQTT.MapReport.Longitude
+	if iv, err := time.ParseDuration(d.MQTT.MapReport.Interval); err == nil && iv >= 15*time.Minute {
+		mq.MapReport.Interval = iv
+	} else {
+		writeError(w, http.StatusBadRequest, "mqtt.map_report.interval must be a duration of at least 15m, e.g. 1h")
+		return
+	}
+	next.Links.MQTT = mq
+
+	var err error
+	if main {
+		err = s.applyConfig(r, &next)
+	} else {
+		err = s.applyRadioConfig(r, rc, &next)
+	}
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if rel := s.hostFor(r).Relay(); rel != nil && (next.Relay.LongName != old.Relay.LongName || next.Relay.ShortName != old.Relay.ShortName) {
+	if rel := rc.host.Relay(); rel != nil && (next.Relay.LongName != old.Relay.LongName || next.Relay.ShortName != old.Relay.ShortName) {
 		rel.SetOwner(next.Relay.LongName, next.Relay.ShortName)
 		s.saveIdentities()
 	}
-	restart := old.Radio != next.Radio || old.Web.Bind != next.Web.Bind || old.Web.Port != next.Web.Port
+	restart := old.Radio != next.Radio || old.Web.Bind != next.Web.Bind || old.Web.Port != next.Web.Port ||
+		old.Links.MQTT != next.Links.MQTT
 	s.cfgMu.Lock()
-	out := toDTO(s.cfg, s.host)
+	out := toDTO(s.radioConfig(rc), rc.host)
 	s.cfgMu.Unlock()
+	out.RadioID, out.Main = rc.id, main
 	writeJSON(w, http.StatusOK, map[string]any{"config": out, "restart_required": restart})
 }
 

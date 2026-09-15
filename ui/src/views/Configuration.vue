@@ -13,17 +13,21 @@ import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { relTime } from '@/lib/format'
 
-type Tab = 'radio' | 'relay' | 'airtime' | 'web' | 'backup'
-const tabs: { id: Tab; label: string }[] = [
+type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'backup'
+const allTabs: { id: Tab; label: string }[] = [
   { id: 'radio', label: 'Radio' },
   { id: 'relay', label: 'Relay' },
   { id: 'airtime', label: 'Airtime & duty' },
+  { id: 'position', label: 'Position & hardware' },
+  { id: 'mqtt', label: 'MQTT' },
   { id: 'web', label: 'Web & API tokens' },
   { id: 'backup', label: 'Backup & restore' },
 ]
+// Web settings, tokens and backups belong to the host, so they only show on the main radio.
+const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || (t.id !== 'web' && t.id !== 'backup')))
 const route = useRoute()
 const router = useRouter()
-const tab = computed<Tab>(() => (tabs.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio'))
+const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio'))
 const setTab = (t: Tab) => router.replace({ name: 'config', params: { tab: t } })
 
 const saved = ref<Config | null>(null)
@@ -37,21 +41,25 @@ async function load() {
   form.value = structuredClone(c)
 }
 
-const section = computed(() => (tab.value === 'web' ? 'web' : tab.value === 'backup' ? null : tab.value))
+const section = computed(() => (tab.value === 'backup' ? null : tab.value === 'position' ? 'position' : tab.value))
+// The Position tab edits two config sections.
+const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
 const dirty = computed(() => {
-  const s = section.value
-  if (!s || !form.value || !saved.value) return false
-  return JSON.stringify(form.value[s]) !== JSON.stringify(saved.value[s])
+  if (!form.value || !saved.value) return false
+  return sections.value.some((s) => JSON.stringify(form.value![s]) !== JSON.stringify(saved.value![s]))
 })
 
 async function save() {
-  const s = section.value
-  if (!s || !form.value) return
+  if (!sections.value.length || !form.value) return
   saving.value = true
   try {
-    const r = await api.put<ConfigPutResult>('/config', { [s]: form.value[s] })
+    const body: Record<string, unknown> = {}
+    for (const s of sections.value) body[s] = form.value[s]
+    const r = await api.put<ConfigPutResult>('/config', body)
     saved.value = r.config
-    form.value = { ...form.value, [s]: structuredClone(r.config[s]) }
+    const next = { ...form.value }
+    for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(r.config[s])
+    form.value = next
     restartRequired.value ||= r.restart_required
     toast(r.restart_required ? 'Saved. Restart the daemon to apply.' : 'Saved and applied')
     refreshStatus().catch(() => {})
@@ -62,10 +70,28 @@ async function save() {
   }
 }
 function revert() {
-  const s = section.value
-  if (!s || !form.value || !saved.value) return
-  form.value = { ...form.value, [s]: structuredClone(saved.value[s]) }
+  if (!form.value || !saved.value) return
+  const next = { ...form.value }
+  for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(saved.value[s])
+  form.value = next
 }
+
+const restarting = ref(false)
+async function restartNow() {
+  if (!(await confirmDialog({ title: 'Restart RepeaterTastic?', body: 'Every identity drops off air and its app connections close for about 15 seconds while the daemon restarts with the saved settings.', confirm: 'Restart' }))) return
+  restarting.value = true
+  try {
+    await api.post('/restart')
+    toast('Restarting… the page reconnects by itself')
+    restartRequired.value = false
+  } catch (e) {
+    toastError(e)
+  } finally {
+    setTimeout(() => (restarting.value = false), 15000)
+  }
+}
+
+const hwModels = ['AUTO', 'HELTEC_V3', 'HELTEC_V4', 'HELTEC_WIRELESS_TRACKER', 'RAK4631', 'SEEED_XIAO_S3', 'XIAO_NRF52_KIT', 'TBEAM', 'T_ECHO', 'PORTDUINO']
 
 // ---- radio
 const ports = ref<SerialPort[]>([])
@@ -200,7 +226,8 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
 
     <div v-if="restartRequired" class="mb-4 flex items-center gap-2.5 rounded-xl border border-warn/30 bg-warn/10 px-4 py-2.5 text-[13px]">
       <TriangleAlert class="size-4 shrink-0 text-warn" />
-      <span>Some saved changes need a restart: <span class="mono">sudo systemctl restart repeatertastic</span></span>
+      <span class="flex-1">Some saved changes need a restart to take effect.</span>
+      <button class="btn btn-sm" :disabled="restarting" @click="restartNow"><RotateCcw class="size-3.5" />Restart now</button>
     </div>
 
     <section class="card overflow-hidden">
@@ -341,6 +368,113 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             </div>
             <p class="hint">Firmware defaults are 3 and 8. Wider windows mean fewer collisions and higher latency.</p>
           </div>
+        </div>
+
+        <!-- POSITION & HARDWARE -->
+        <div v-else-if="tab === 'position'" class="grid max-w-3xl gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <h4 class="eyebrow mb-1">Site position</h4>
+            <p class="hint !mt-0">A fixed location broadcast like a fixed node and answered on request. Both zero means no position.</p>
+          </div>
+          <div>
+            <label class="label" for="p-lat">Latitude</label>
+            <input id="p-lat" v-model.number="form.position.latitude" type="number" step="0.000001" min="-90" max="90" class="input tabular-nums" />
+          </div>
+          <div>
+            <label class="label" for="p-lon">Longitude</label>
+            <input id="p-lon" v-model.number="form.position.longitude" type="number" step="0.000001" min="-180" max="180" class="input tabular-nums" />
+          </div>
+          <div>
+            <label class="label" for="p-alt">Altitude (m above sea level)</label>
+            <input id="p-alt" v-model.number="form.position.altitude" type="number" class="input tabular-nums" />
+          </div>
+          <div>
+            <label class="label" for="p-bits">Precision · {{ form.position.precision_bits === 32 ? 'exact' : `${form.position.precision_bits} bits` }}</label>
+            <input id="p-bits" v-model.number="form.position.precision_bits" type="range" min="10" max="32" step="1" class="w-full accent-[var(--brand)]" />
+            <p class="hint">32 is exact; 16 ≈ 360 m, 13 ≈ 3 km.</p>
+          </div>
+          <div>
+            <label class="label" for="p-int">Broadcast interval</label>
+            <select id="p-int" v-model="form.position.interval" class="input">
+              <option v-for="v in ['30m', '1h', '3h', '6h', '12h', '24h']" :key="v" :value="v">every {{ v }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="p-who">Broadcast from</label>
+            <select id="p-who" v-model="form.position.identities" class="input">
+              <option value="relay">The relay persona only</option>
+              <option value="all">Every identity</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2">
+            <h4 class="eyebrow mb-1 mt-2">Hardware</h4>
+          </div>
+          <div>
+            <label class="label" for="p-hw">Advertised hardware model</label>
+            <select id="p-hw" v-model="form.hardware.hw_model" class="input">
+              <option v-for="m in hwModels" :key="m" :value="m">{{ m === 'AUTO' ? `Auto (the modem's board)` : m }}</option>
+            </select>
+            <p class="hint">
+              Now advertising <span class="mono">{{ saved?.hardware.effective }}</span><template v-if="saved?.hardware.modem"> · modem reports “{{ saved.hardware.modem }}”</template>.
+            </p>
+          </div>
+        </div>
+
+        <!-- MQTT -->
+        <div v-else-if="tab === 'mqtt'" class="grid max-w-3xl gap-4 sm:grid-cols-2">
+          <div class="flex items-center justify-between gap-3 rounded-xl border border-line-soft bg-raised px-3.5 py-3 sm:col-span-2">
+            <div>
+              <div class="text-[13px] font-medium">MQTT gateway</div>
+              <div class="text-xs text-ink-3">The relay persona is the gateway. Which channels go up or down is set per identity channel.</div>
+            </div>
+            <input id="m-en" v-model="form.mqtt.enabled" type="checkbox" class="size-4 accent-[var(--brand)]" aria-label="Enable the MQTT gateway" />
+          </div>
+          <div>
+            <label class="label" for="m-addr">Broker (host:port)</label>
+            <input id="m-addr" v-model="form.mqtt.address" class="input mono" placeholder="mqtt.meshtastic.org:1883" />
+          </div>
+          <div>
+            <label class="label" for="m-root">Root topic</label>
+            <input id="m-root" v-model="form.mqtt.root" class="input mono" placeholder="msh/EU_868/Scotland" />
+            <p class="hint">Empty uses <span class="mono">msh/&lt;region&gt;</span>.</p>
+          </div>
+          <div>
+            <label class="label" for="m-user">Username</label>
+            <input id="m-user" v-model="form.mqtt.username" class="input" autocomplete="off" />
+          </div>
+          <div>
+            <label class="label" for="m-pass">Password</label>
+            <input id="m-pass" v-model="form.mqtt.password" type="password" class="input" autocomplete="new-password" :placeholder="form.mqtt.password_set ? 'saved · leave empty to keep' : ''" />
+          </div>
+          <label class="flex items-center gap-2 text-[13px]"><input v-model="form.mqtt.tls" type="checkbox" class="size-4 accent-[var(--brand)]" /> TLS</label>
+          <div>
+            <label class="label" for="m-rate">Downlink limit · {{ form.mqtt.downlink_per_minute }}/min</label>
+            <input id="m-rate" v-model.number="form.mqtt.downlink_per_minute" type="range" min="1" max="120" step="1" class="w-full accent-[var(--brand)]" />
+          </div>
+          <label class="flex items-start gap-2 text-[13px] sm:col-span-2">
+            <input v-model="form.mqtt.ok_to_mqtt" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" />
+            <span>OK to MQTT<span class="block text-xs text-ink-3">Other gateways may uplink the packets our identities send.</span></span>
+          </label>
+          <label class="flex items-start gap-2 text-[13px] sm:col-span-2">
+            <input v-model="form.mqtt.relay_mqtt" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" />
+            <span :class="form.mqtt.relay_mqtt ? 'text-warn' : ''">Relay MQTT traffic on air<span class="block text-xs text-ink-3">Off keeps broker traffic off the radio entirely (the firmware's “Ignore MQTT”). Leave off on a busy site.</span></span>
+          </label>
+          <div class="sm:col-span-2">
+            <h4 class="eyebrow mb-1 mt-2">Map report</h4>
+          </div>
+          <label class="flex items-center gap-2 text-[13px]"><input v-model="form.mqtt.map_report.enabled" type="checkbox" class="size-4 accent-[var(--brand)]" /> Publish to the map topic</label>
+          <div>
+            <label class="label" for="m-mint">Interval</label>
+            <select id="m-mint" v-model="form.mqtt.map_report.interval" class="input">
+              <option v-for="v in ['15m', '30m', '1h', '3h', '6h']" :key="v" :value="v">every {{ v }}</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="label" for="m-mbits">Map precision · {{ form.mqtt.map_report.position_precision === 32 ? 'exact' : `${form.mqtt.map_report.position_precision} bits` }}</label>
+            <input id="m-mbits" v-model.number="form.mqtt.map_report.position_precision" type="range" min="10" max="32" step="1" class="w-full accent-[var(--brand)]" />
+            <p class="hint">Uses the site position from Position &amp; hardware. Public brokers coarsen positions whatever you send.</p>
+          </div>
+          <p class="hint sm:col-span-2">Broker and map report changes take effect after a restart.</p>
         </div>
 
         <!-- WEB -->

@@ -947,7 +947,7 @@ func (s *Server) applyConfig(r *http.Request, next *config.Config) error {
 	if err := next.Validate(); err != nil {
 		return err
 	}
-	if err := s.hostFor(r).UpdateConfig(r.Context(), next.MeshConfig()); err != nil {
+	if err := s.radios[0].host.UpdateConfig(r.Context(), next.MeshConfig()); err != nil {
 		return err
 	}
 	s.cfgMu.Lock()
@@ -1229,7 +1229,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // mapTileURL falls back to the public OSM tiles for configs written before
 // web.map_tile_url existed.
 func mapTileURL(u string) string {
-	if u == "" {
+	if u == "" || u == config.LegacyMapTileURL {
 		return config.DefaultMapTileURL
 	}
 	return u
