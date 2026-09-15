@@ -77,9 +77,12 @@ Within about a minute each identity broadcasts its NodeInfo. The stock node's ap
 
 - **Python CLI:** `meshtastic --host <host>:4403 --info`, then `--nodes`, then
   `--dest '!<stock node id>' --sendtext hi --ack`.
-- **Android/iOS app:** add a network/TCP device at `<host>` port `4403`.
-  - If the app won't accept a port, note it. That's the open question from the plan, and the
-    fallback is to give each identity its own IP address.
+- **Android app:** each identity should appear under network devices by itself (mDNS
+  `_meshtastic._tcp`, listed by host:port and named from the TXT `shortname`/`id`). If it
+  doesn't, use "add network device" with the host and the identity's port. The current app source
+  has a port field and keeps host:port entries separate, so several identities on one IP work.
+- **iOS app:** not checked in source. If it can't take a port, give each identity its own IP
+  address (`api_bind` per identity).
 - **Official web client:** `http://<host>:4403` serves `/api/v1/toradio` and `/api/v1/fromradio`.
 
 ## 7. The things worth checking
