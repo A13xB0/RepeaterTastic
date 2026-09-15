@@ -427,10 +427,12 @@ type Web struct {
 
 // DefaultMapTileURL is CARTO's Positron basemap (OpenStreetMap data). The OpenStreetMap tile
 // servers refuse browsers on a LAN address: no Referer gets 403 and a private-IP Referer 400.
-const DefaultMapTileURL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?api_key={api_key}"
+// CARTO takes its basemap key as ?key= (without one, tiles carry an "API key required" watermark).
+const DefaultMapTileURL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key={api_key}"
 
 // LegacyMapTileURLs were defaults before; configs saved with them get the current default.
-var LegacyMapTileURLs = []string{"https://tile.openstreetmap.org/{z}/{x}/{y}.png", "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"}
+var LegacyMapTileURLs = []string{"https://tile.openstreetmap.org/{z}/{x}/{y}.png", "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+	"https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?api_key={api_key}"}
 
 // Identity seeds a virtual node on first start; afterwards identities live in the state dir.
 type Identity struct {

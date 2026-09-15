@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -1269,8 +1270,8 @@ func identityPositionJSON(id *mesh.Identity) any {
 	return nil
 }
 
-// withMapKey fills {api_key} in a tile URL. Without a key the api_key query parameter is dropped,
-// so a keyless provider URL still works.
+// withMapKey fills {api_key} in a tile URL. Without a key the query parameter holding it
+// (?key={api_key}, &api_key={api_key}, ...) is dropped, so a keyless provider URL still works.
 func withMapKey(u, key string) string {
 	if !strings.Contains(u, "{api_key}") {
 		return u
@@ -1278,10 +1279,13 @@ func withMapKey(u, key string) string {
 	if key != "" {
 		return strings.ReplaceAll(u, "{api_key}", url.QueryEscape(key))
 	}
-	for _, p := range []string{"?api_key={api_key}&", "&api_key={api_key}", "?api_key={api_key}"} {
-		if strings.Contains(u, p) {
-			return strings.Replace(u, p, map[bool]string{true: "?", false: ""}[strings.HasSuffix(p, "&")], 1)
+	u = mapKeyParam.ReplaceAllStringFunc(u, func(m string) string {
+		if m[0] == '?' && strings.HasSuffix(m, "&") {
+			return "?"
 		}
-	}
+		return ""
+	})
 	return strings.ReplaceAll(u, "{api_key}", "")
 }
+
+var mapKeyParam = regexp.MustCompile(`\?[A-Za-z0-9_]+=\{api_key\}&|[?&][A-Za-z0-9_]+=\{api_key\}`)

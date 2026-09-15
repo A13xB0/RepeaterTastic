@@ -32,10 +32,10 @@ func TestNodeJSONSignalOnlyForDirectNodes(t *testing.T) {
 
 func TestWithMapKey(t *testing.T) {
 	base := "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-	if got := withMapKey(base+"?api_key={api_key}", "k 1"); got != base+"?api_key=k+1" {
+	if got := withMapKey(base+"?key={api_key}", "k 1"); got != base+"?key=k+1" {
 		t.Errorf("with key = %s", got)
 	}
-	if got := withMapKey(base+"?api_key={api_key}", ""); got != base {
+	if got := withMapKey(base+"?key={api_key}", ""); got != base {
 		t.Errorf("without key = %s", got)
 	}
 	if got := withMapKey(base+"?api_key={api_key}&lang=en", ""); got != base+"?lang=en" {
