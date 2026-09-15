@@ -6,6 +6,7 @@ import type { Link } from '@/api/types'
 import Toggle from '@/components/ui/Toggle.vue'
 import { toast, toastError } from '@/composables/toast'
 import { compact } from '@/lib/format'
+import { refreshStatus } from '@/store/live'
 
 const links = ref<Link[]>([])
 const modeLabels: Record<string, string> = { gateway: 'gateway', uplink_only: 'uplink only', map_only: 'map only', monitor: 'monitor', bridge: 'bridge' }
@@ -28,10 +29,24 @@ async function load() {
   }
 }
 
+const groupDraft = ref<Record<string, string>>({})
+async function saveGroup(l: Link) {
+  try {
+    const updated = await api.patch<Link & { restart_required?: boolean }>(`/links/${enc(l.name)}`, { group: groupDraft.value[l.name] ?? '' })
+    Object.assign(l, updated)
+    delete groupDraft.value[l.name]
+    refreshStatus().catch(() => {})
+    toast('Group saved')
+  } catch (e) {
+    toastError(e)
+  }
+}
+
 async function setEnabled(l: Link, enabled: boolean) {
   try {
     const updated = await api.patch<Link>(`/links/${enc(l.name)}`, { enabled })
     Object.assign(l, updated)
+    refreshStatus().catch(() => {})
     toast(`${l.name} ${enabled ? 'enabled' : 'disabled'}`)
   } catch (e) {
     toastError(e)
@@ -79,6 +94,13 @@ onBeforeUnmount(() => clearInterval(timer))
         </div>
         <p v-if="l.detail" class="mono mt-3 truncate rounded-lg bg-raised px-2.5 py-1.5 text-xs text-ink-2" :title="l.detail">{{ l.detail }}</p>
         <p class="mt-3 flex-1 text-xs leading-relaxed text-ink-3">{{ meta[l.type]?.about }}</p>
+        <form v-if="l.type === 'udp_multicast'" class="mt-3 flex items-end gap-2" @submit.prevent="saveGroup(l)">
+          <div class="min-w-0 flex-1">
+            <label class="label" :for="`grp-${l.name}`">Multicast group</label>
+            <input :id="`grp-${l.name}`" class="input mono !h-8" placeholder="239.0.0.69:4403" :value="groupDraft[l.name] ?? l.group ?? ''" @input="groupDraft[l.name] = ($event.target as HTMLInputElement).value" />
+          </div>
+          <button class="btn btn-sm" :disabled="groupDraft[l.name] === undefined || groupDraft[l.name] === (l.group ?? '')">Save</button>
+        </form>
         <dl v-if="l.type === 'mqtt' && l.enabled" class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
           <dt class="text-ink-3">Topic root</dt><dd class="mono truncate">{{ l.root || '—' }}{{ l.tls ? ' · TLS' : '' }}</dd>
           <dt class="text-ink-3">Gateway</dt><dd class="mono truncate">{{ l.gateway_id ?? l.gateway }}</dd>

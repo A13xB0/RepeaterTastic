@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Download, KeyRound, Plus, RotateCcw, TriangleAlert, Trash, Upload } from '@lucide/vue'
+import { Download, KeyRound, Plus, RotateCcw, Trash, Upload } from '@lucide/vue'
 import { api, API_BASE, enc, setToken as setAuthToken, token as authToken } from '@/api/client'
 import type { ApiToken, Config, ConfigPutResult, Phy, Region, SerialPort } from '@/api/types'
 import { live, refreshStatus } from '@/store/live'
@@ -10,12 +10,13 @@ import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import MqttConnections from '@/components/config/MqttConnections.vue'
 import RadiosPanel from '@/components/config/RadiosPanel.vue'
+import ExperimentalPanel from '@/components/config/ExperimentalPanel.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { relTime } from '@/lib/format'
 
-type Tab = 'radios' | 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'backup'
+type Tab = 'radios' | 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
   { id: 'radio', label: 'LoRa & modem' },
   { id: 'relay', label: 'Relay' },
@@ -24,10 +25,11 @@ const allTabs: { id: Tab; label: string }[] = [
   { id: 'mqtt', label: 'MQTT' },
   { id: 'radios', label: 'Site radios' },
   { id: 'web', label: 'Web & API tokens' },
+  { id: 'experimental', label: 'Experimental' },
   { id: 'backup', label: 'Backup & restore' },
 ]
 // The radio list, web settings, tokens and backups belong to the host, so they only show on the main radio.
-const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || (t.id !== 'web' && t.id !== 'backup' && t.id !== 'radios')))
+const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'radios', 'experimental'].includes(t.id)))
 const route = useRoute()
 const router = useRouter()
 const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio'))
@@ -36,7 +38,6 @@ const setTab = (t: Tab) => router.replace({ name: 'config', params: { tab: t } }
 const saved = ref<Config | null>(null)
 const form = ref<Config | null>(null)
 const saving = ref(false)
-const restartRequired = ref(false)
 
 async function load() {
   const c = await api.get<Config>('/config')
@@ -44,7 +45,7 @@ async function load() {
   form.value = structuredClone(c)
 }
 
-const section = computed(() => (tab.value === 'backup' || tab.value === 'radios' ? null : tab.value === 'position' ? 'position' : tab.value))
+const section = computed(() => (['backup', 'radios', 'experimental'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
 // The Position tab edits two config sections.
 const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
 const dirty = computed(() => {
@@ -63,7 +64,7 @@ async function save() {
     const next = { ...form.value }
     for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(r.config[s])
     form.value = next
-    restartRequired.value ||= r.restart_required
+    refreshStatus().catch(() => {})
     toast(r.restart_required ? 'Saved. Restart the daemon to apply.' : 'Saved and applied')
     refreshStatus().catch(() => {})
   } catch (e) {
@@ -79,19 +80,15 @@ function revert() {
   form.value = next
 }
 
-const restarting = ref(false)
-async function restartNow() {
-  if (!(await confirmDialog({ title: 'Restart RepeaterTastic?', body: 'Every identity drops off air and its app connections close for about 15 seconds while the daemon restarts with the saved settings.', confirm: 'Restart' }))) return
-  restarting.value = true
-  try {
-    await api.post('/restart')
-    toast('Restarting… the page reconnects by itself')
-    restartRequired.value = false
-  } catch (e) {
-    toastError(e)
-  } finally {
-    setTimeout(() => (restarting.value = false), 15000)
-  }
+async function confirmDutyOverride() {
+  if (!form.value?.airtime.override_duty_cycle) return
+  const ok = await confirmDialog({
+    title: 'Ignore the duty-cycle limit?',
+    body: `This radio will transmit without the hourly airtime budget. ${form.value.radio.region} sets a legal duty-cycle limit, and a busy relay can exceed it. Only turn this on if you know your site and licence allow it.`,
+    confirm: 'Ignore the limit',
+    danger: true,
+  })
+  if (!ok && form.value) form.value.airtime.override_duty_cycle = false
 }
 
 const hwModels = ['AUTO', 'HELTEC_V3', 'HELTEC_V4', 'HELTEC_WIRELESS_TRACKER', 'RAK4631', 'SEEED_XIAO_S3', 'XIAO_NRF52_KIT', 'TBEAM', 'T_ECHO', 'PORTDUINO']
@@ -193,8 +190,7 @@ async function restore() {
   restoring.value = true
   try {
     const r = await api.post<{ restart_required: boolean }>('/restore', body)
-    restartRequired.value ||= r.restart_required
-    toast('Backup restored')
+    toast(r.restart_required ? 'Backup restored. Restart the daemon to load its identities.' : 'Backup restored')
     load()
   } catch (e) {
     toastError(e)
@@ -216,6 +212,22 @@ onMounted(async () => {
 })
 
 const presetLabel = (p: string) => p.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join('')
+// Loads one tile around the site from the saved (key-filled) URL.
+const tileTest = ref('')
+const tileError = ref(false)
+function testTile() {
+  const url = live.status?.map?.tile_url
+  if (!url) return
+  const lat = form.value?.position.latitude || 55.95
+  const lon = form.value?.position.longitude || -3.19
+  const z = 10
+  const x = Math.floor(((lon + 180) / 360) * 2 ** z)
+  const r = (lat * Math.PI) / 180
+  const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z)
+  tileError.value = false
+  tileTest.value = url.replace('{s}', 'a').replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)).replace('{r}', '')
+}
+
 const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${location.origin}${API_BASE}/status`)
 </script>
 
@@ -228,11 +240,6 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
       </div>
     </div>
 
-    <div v-if="restartRequired" class="mb-4 flex items-center gap-2.5 rounded-xl border border-warn/30 bg-warn/10 px-4 py-2.5 text-[13px]">
-      <TriangleAlert class="size-4 shrink-0 text-warn" />
-      <span class="flex-1">Some saved changes need a restart to take effect.</span>
-      <button class="btn btn-sm" :disabled="restarting" @click="restartNow"><RotateCcw class="size-3.5" />Restart now</button>
-    </div>
 
     <section class="card overflow-hidden">
       <div class="tabs px-3 sm:px-4" role="tablist">
@@ -271,6 +278,35 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
               <label class="label" for="c-offset">Frequency offset (MHz)</label>
               <input id="c-offset" v-model.number="form.radio.frequency_offset_mhz" type="number" step="0.001" class="input tabular-nums" />
             </div>
+            <details class="sm:col-span-2 rounded-xl border border-line-soft px-3.5 py-2.5">
+              <summary class="cursor-pointer text-[13px] font-medium">Advanced</summary>
+              <div class="mt-3 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label class="label" for="c-hops">Default hop limit</label>
+                  <select id="c-hops" v-model.number="form.radio.hop_limit" class="input">
+                    <option v-for="n in 7" :key="n" :value="n">{{ n }} hop{{ n === 1 ? '' : 's' }}{{ n === 3 ? ' (Meshtastic default)' : '' }}</option>
+                  </select>
+                  <p class="hint">What identities send with unless their app asks for less. Identities can be capped lower in their editor.</p>
+                </div>
+                <div>
+                  <label class="label" for="c-baud">Modem baud rate</label>
+                  <select id="c-baud" v-model.number="form.radio.baud" class="input">
+                    <option v-for="b in [115200, 230400, 460800, 921600]" :key="b" :value="b">{{ b }}</option>
+                  </select>
+                  <p class="hint">Must match the Mesh KISS firmware. Needs a restart.</p>
+                </div>
+                <div>
+                  <label class="label" for="c-chnum">Channel number</label>
+                  <input id="c-chnum" v-model.number="form.radio.channel_num" type="number" min="0" class="input tabular-nums" />
+                  <p class="hint">0 = picked from the primary channel name, as the apps do.</p>
+                </div>
+                <div>
+                  <label class="label" for="c-ovf">Frequency override (MHz)</label>
+                  <input id="c-ovf" v-model.number="form.radio.override_frequency_mhz" type="number" step="0.001" min="0" class="input tabular-nums" />
+                  <p class="hint" :class="form.radio.override_frequency_mhz ? '!text-warn' : ''">0 = region and preset decide. An override takes the radio off the normal mesh; stay inside {{ form.radio.region }}'s band.</p>
+                </div>
+              </div>
+            </details>
             <div class="sm:col-span-2">
               <label class="label" for="c-power">TX power · {{ form.radio.tx_power_dbm }} dBm <span class="font-normal text-ink-3">(region max {{ region?.power_limit_dbm ?? '…' }} dBm)</span></label>
               <input id="c-power" v-model.number="form.radio.tx_power_dbm" type="range" min="1" :max="region?.power_limit_dbm ?? 30" class="w-full accent-[var(--brand)]" />
@@ -342,36 +378,21 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             </select>
             <p class="hint">Staggered across identities so they don't all transmit at once.</p>
           </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="label" for="c-pos">Position</label>
-              <select id="c-pos" v-model="form.airtime.position" class="input">
-                <option value="off">Off</option>
-                <option value="fixed">Fixed</option>
-              </select>
-            </div>
-            <div>
-              <label class="label" for="c-tel">Telemetry</label>
-              <select id="c-tel" v-model="form.airtime.telemetry" class="input">
-                <option value="off">Off</option>
-                <option value="device">Device</option>
-              </select>
-            </div>
+          <div>
+            <label class="label" for="c-tel">Relay device telemetry</label>
+            <select id="c-tel" v-model="form.airtime.telemetry_interval" class="input">
+              <option value="off">Off</option>
+              <option v-for="v in ['30m', '1h', '3h', '6h', '12h']" :key="v" :value="v">every {{ v }}</option>
+            </select>
+            <p class="hint">The relay persona reports uptime, channel use and TX airtime like a mains-powered node. Skipped when the channel is busy.</p>
           </div>
-          <div class="sm:col-span-2">
-            <h4 class="eyebrow mb-2 mt-2">Contention window</h4>
-            <div class="grid grid-cols-2 gap-3 sm:max-w-sm">
-              <div>
-                <label class="label" for="c-cwmin">CW min</label>
-                <input id="c-cwmin" v-model.number="form.airtime.cw_min" type="number" min="1" max="15" class="input tabular-nums" />
-              </div>
-              <div>
-                <label class="label" for="c-cwmax">CW max</label>
-                <input id="c-cwmax" v-model.number="form.airtime.cw_max" type="number" min="1" max="15" class="input tabular-nums" />
-              </div>
-            </div>
-            <p class="hint">Firmware defaults are 3 and 8. Wider windows mean fewer collisions and higher latency.</p>
+          <div class="sm:col-span-2 rounded-xl border border-line-soft px-3.5 py-3">
+            <label class="flex items-start gap-2 text-[13px]">
+              <input v-model="form.airtime.override_duty_cycle" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" @change="confirmDutyOverride" />
+              <span :class="form.airtime.override_duty_cycle ? 'text-bad' : ''">Ignore the duty-cycle limit<span class="block text-xs text-ink-3">Transmits without an hourly budget. {{ form.radio.region }} limits transmit time by law ({{ region?.duty_cycle_pct ?? '…' }}%); you're responsible for staying legal.</span></span>
+            </label>
           </div>
+          <p class="hint sm:col-span-2">Contention window: CW {{ form.airtime.cw_min }}–{{ form.airtime.cw_max }}, fixed to match the firmware so this site waits its turn like every other node. Position broadcasts are set on Position &amp; hardware.</p>
         </div>
 
         <!-- POSITION & HARDWARE -->
@@ -425,10 +446,13 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
         </div>
 
         <!-- RADIOS -->
-        <RadiosPanel v-else-if="tab === 'radios'" :ports="ports" :regions="regions" @restart="restartRequired = true" />
+        <RadiosPanel v-else-if="tab === 'radios'" :ports="ports" :regions="regions" @restart="refreshStatus()" />
 
         <!-- MQTT -->
         <MqttConnections v-else-if="tab === 'mqtt'" v-model="form.mqtt" />
+
+        <!-- EXPERIMENTAL -->
+        <ExperimentalPanel v-else-if="tab === 'experimental'" />
 
         <!-- WEB -->
         <div v-else-if="tab === 'web'" class="grid gap-8 xl:grid-cols-2">
@@ -447,6 +471,30 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
                 <select id="c-ttl" v-model="form.web.session_ttl" class="input">
                   <option v-for="v in ['1h', '12h', '24h', '168h', '720h']" :key="v" :value="v">{{ v }}</option>
                 </select>
+              </div>
+              <div>
+                <label class="label" for="c-log">Log level</label>
+                <select id="c-log" v-model="form.web.log_level" class="input">
+                  <option v-for="v in ['debug', 'info', 'warn', 'error']" :key="v" :value="v">{{ v }}</option>
+                </select>
+              </div>
+              <label class="flex items-start gap-2 text-[13px] sm:col-span-2">
+                <input v-model="form.web.mdns" type="checkbox" class="mt-0.5 size-4 accent-[var(--brand)]" />
+                <span>Advertise identities on the LAN (mDNS)<span class="block text-xs text-ink-3">Lets the Meshtastic apps discover each identity's port. Needs a restart.</span></span>
+              </label>
+            </div>
+            <div class="rounded-xl border border-line-soft p-4">
+              <h4 class="card-title mb-3">Map tiles</h4>
+              <label class="label" for="c-tiles">Tile URL</label>
+              <input id="c-tiles" v-model.trim="form.web.map_tile_url" class="input mono" placeholder="default: CARTO Positron" />
+              <p class="hint">
+                Leaflet template with <span class="mono">{z}</span>, <span class="mono">{x}</span>, <span class="mono">{y}</span>; <span class="mono">{s}</span> and <span class="mono">{r}</span> are optional and
+                <span class="mono">{api_key}</span> is filled from the {{ form.web.map_key_source === 'none' ? 'environment (none set)' : `${form.web.map_key_source} key` }}. Empty uses the default.
+              </p>
+              <div class="mt-3 flex flex-wrap items-center gap-3">
+                <button type="button" class="btn btn-sm" @click="testTile">Test saved tiles</button>
+                <img v-if="tileTest" :src="tileTest" alt="Test map tile near the site" width="96" height="96" class="rounded-lg border border-line-soft" @error="tileError = true" @load="tileError = false" />
+                <span v-if="tileTest && tileError" class="text-xs text-bad">That tile didn't load. Check the URL and key.</span>
               </div>
             </div>
             <form class="rounded-xl border border-line-soft p-4" @submit.prevent="changePassword">

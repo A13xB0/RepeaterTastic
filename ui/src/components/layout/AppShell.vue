@@ -4,6 +4,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Sidebar from './Sidebar.vue'
 import TopBar from './TopBar.vue'
+import RestartBanner from './RestartBanner.vue'
 import { startLive, stopLive } from '@/store/live'
 import { token } from '@/api/client'
 
@@ -21,6 +22,7 @@ onBeforeUnmount(() => stopLive())
     <Sidebar :open="drawer" @close="drawer = false" />
     <main class="min-w-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-6 pt-3 sm:px-4 lg:py-[14px] lg:pl-0 lg:pr-[14px]">
       <TopBar @menu="drawer = true" />
+      <RestartBanner />
       <RouterView v-slot="{ Component }">
         <component :is="Component" />
       </RouterView>

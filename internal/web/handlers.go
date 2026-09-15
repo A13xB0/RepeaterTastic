@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -592,7 +593,11 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		id.APIPort = *req.APIPort
 	}
 	if req.APIBind != nil {
-		id.APIBind = *req.APIBind
+		if b := strings.TrimSpace(*req.APIBind); b != "" && net.ParseIP(b) == nil {
+			writeError(w, http.StatusBadRequest, "api_bind must be an IP address such as 127.0.0.1, or empty for every interface")
+			return
+		}
+		id.APIBind = strings.TrimSpace(*req.APIBind)
 	}
 	s.hostFor(r).DB.Update(id.NodeNum, func(e *mesh.NodeEntry) { e.User = id.UserCopy() })
 	s.hostFor(r).ChannelsChanged()

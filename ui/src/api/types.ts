@@ -55,6 +55,8 @@ export interface Status {
   radio_id?: string
   radio_name?: string
   map?: { tile_url: string }
+  /** Saved changes the running daemon hasn't picked up yet. */
+  restart_reasons?: string[] | null
   uptime_s: number
   radio: {
     driver: string
@@ -128,6 +130,7 @@ export interface Identity {
   unread?: number
   created_at: number
   channels: Channel[]
+  api_bind?: string
   /** The radio this identity is on. */
   radio_id?: string
   radio_name?: string
@@ -321,6 +324,8 @@ export interface Link {
   cross_link?: boolean
   ok_to_mqtt?: boolean
   relay_mqtt?: boolean
+  // UDP only
+  group?: string
   map_report?: boolean
 }
 
@@ -368,18 +373,24 @@ export interface Config {
     primary_channel: string
     tx_power_dbm: number
     frequency_offset_mhz: number
+    baud: number
+    hop_limit: number
+    channel_num: number
+    override_frequency_mhz: number
   }
   relay: { role: RelayRole; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
   airtime: {
     duty_cycle_percent: number
     identity_share_percent: number
     nodeinfo_interval: string
-    position: 'off' | 'fixed'
-    telemetry: 'off' | 'device'
+    /** "off" or a duration such as "3h". */
+    telemetry_interval: string
+    override_duty_cycle: boolean
+    /** Read-only: the firmware's contention window. */
     cw_min: number
     cw_max: number
   }
-  web: { bind: string; port: number; session_ttl: string }
+  web: { bind: string; port: number; session_ttl: string; map_tile_url: string; map_key_source: string; mdns: boolean; log_level: string }
   position: { latitude: number; longitude: number; altitude: number; precision_bits: number; interval: string; identities: 'relay' | 'all' }
   hardware: { hw_model: string; effective: string; modem: string }
   mqtt: MqttConnection[]
