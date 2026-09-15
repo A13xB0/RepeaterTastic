@@ -135,8 +135,8 @@ async function remove(i: Identity) {
               <th>Node</th>
               <th>API</th>
               <th class="num">Apps</th>
-              <th class="num max-sm:hidden">Outbox</th>
-              <th class="max-md:hidden">Airtime 1 h</th>
+              <th class="num max-2xl:hidden">Outbox</th>
+              <th class="max-xl:hidden">Airtime 1 h</th>
               <th>Status</th>
               <th class="max-lg:hidden">Channels</th>
               <th class="w-0"><span class="sr-only">Actions</span></th>
@@ -172,11 +172,11 @@ async function remove(i: Identity) {
                 <span v-if="i.api" :class="i.api.clients ? 'font-medium' : 'text-ink-3'">{{ i.api.clients }}</span>
                 <span v-else class="text-ink-3">—</span>
               </td>
-              <td class="num max-sm:hidden">
+              <td class="num max-2xl:hidden">
                 <span v-if="!i.is_relay" :class="i.outbox > 0 ? 'font-medium text-warn' : 'text-ink-3'">{{ i.outbox }}</span>
                 <span v-else class="text-ink-3">—</span>
               </td>
-              <td class="min-w-40 max-md:hidden">
+              <td class="min-w-40 max-xl:hidden">
                 <div class="flex items-baseline justify-between gap-2 text-xs">
                   <span class="font-medium tabular-nums">{{ seconds(i.airtime_ms_1h) }}</span>
                   <span class="tabular-nums text-ink-3">{{ budgetBar(i).pct.toFixed(1) }}% of budget</span>
