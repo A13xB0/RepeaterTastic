@@ -152,14 +152,14 @@ func (h *Host) transmit(from *Identity, p *pb.MeshPacket, reliable bool) error {
 		}
 		frameLen := wire.HeaderLen + len(enc)
 		h.pmu.Lock()
-		h.pending[k] = &pendingTx{pkt: clonePacket(onAir), origin: from, remaining: attempts - 1, broadcast: broadcast,
+		h.pending[k] = &pendingTx{pkt: clonePacket(onAir), origin: from, remaining: attempts - 1, broadcast: broadcast, plain: d,
 			text: p.GetDecoded().GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP,
 			next: now.Add(time.Duration(phy.RetransmissionMs(frameLen, rp, h.Air.ChannelUtilPercent(now))) * time.Millisecond)}
 		h.pmu.Unlock()
 	}
 	delay := phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())
 	if !h.txq.Enqueue(&txItem{key: k, pkt: onAir, due: now.Add(time.Duration(delay) * time.Millisecond), prio: onAir.Priority,
-		origin: from.NodeNum}) {
+		origin: from.NodeNum, plain: d}) {
 		h.stopPending(k)
 		return h.failSend(from, p, pb.Routing_TIMEOUT)
 	}
@@ -293,7 +293,7 @@ func (h *Host) doRetransmissions(now time.Time) {
 		h.hist.MarkTx(k, pkt.HopLimit, uint8(pkt.NextHop), now)
 		delay := phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())
 		h.txq.Enqueue(&txItem{key: k, pkt: pkt, due: now.Add(time.Duration(delay) * time.Millisecond), prio: pkt.Priority,
-			origin: pd.origin.NodeNum})
+			origin: pd.origin.NodeNum, plain: pd.plain})
 		h.pmu.Lock()
 		if cur, ok := h.pending[k]; ok && cur == pd {
 			pd.remaining--

@@ -17,6 +17,7 @@ type txItem struct {
 	origin   uint32 // identity that originated it (0 for relays)
 	attempts int    // channel-busy deferrals
 	seq      uint64
+	plain    *pb.Data // our own packets' payload, so the packet log can show what was sent
 }
 
 // TxQueue holds packets waiting for their contention delay. Relays can be cancelled when a

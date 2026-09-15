@@ -108,6 +108,7 @@ type pendingTx struct {
 	next      time.Time
 	broadcast bool
 	text      bool
+	plain     *pb.Data // payload, for the packet log on retransmits
 }
 
 type chanMember struct {
@@ -614,6 +615,12 @@ func (h *Host) txLoop(ctx context.Context) {
 		}
 		rec := h.baseRecord(it.pkt, frame, "tx", kind)
 		rec.AirtimeMs = ms
+		if it.plain != nil {
+			rec.Port, rec.PKI = it.plain.Portnum.String(), it.pkt.PkiEncrypted
+			rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
+		} else if dec := h.decode(it.pkt); dec.ok {
+			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold
+		}
 		if o := h.Identity(it.origin); o != nil {
 			rec.DecodedBy = o.NodeID()
 			if m, ok := h.Messages.SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {

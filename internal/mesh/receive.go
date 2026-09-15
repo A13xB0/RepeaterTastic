@@ -48,6 +48,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 		h.hist.Observe(k, p.HopLimit, uint8(p.RelayNode), uint8(p.NextHop), relayByte, now)
 		h.implicitAck(origin, p)
 		rec.Kind = "echo"
+		h.describe(&rec, p)
 		h.publishPacket(rec)
 		return
 	}
@@ -76,6 +77,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 				h.Counters.RelayCancelled.Add(1)
 			}
 		}
+		h.describe(&rec, p)
 		h.publishPacket(rec)
 		return
 	}
@@ -438,4 +440,17 @@ func keepOffline(p *pb.MeshPacket) bool {
 		return true
 	}
 	return false
+}
+
+// describe fills the port and summary of a packet we only log (echoes, duplicates) when one of
+// our channels or keys can read it, so the packet log shows what was said, not just "Encrypted".
+func (h *Host) describe(rec *PacketRecord, p *pb.MeshPacket) {
+	if rec.Summary != "" {
+		return
+	}
+	if dec := h.decode(p); dec.ok {
+		kind := rec.Kind
+		h.fillRecordFromDecoded(rec, p, dec)
+		rec.Kind = kind
+	}
 }
