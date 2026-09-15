@@ -1,7 +1,10 @@
 ![ScotMesh Meshtastic](https://raw.githubusercontent.com/ScotMesh/branding/main/networks/meshtastic/readme-header.png)
 
 <p align="center">
-  <img src="docs/images/repeatertastic-logo.svg" width="112" height="112" alt="RepeaterTastic logo">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/repeatertastic-lockup-dark.png">
+    <img src="docs/images/repeatertastic-lockup-light.png" width="430" alt="RepeaterTastic: virtual Meshtastic nodes">
+  </picture>
 </p>
 
 # RepeaterTastic
