@@ -522,3 +522,28 @@ export interface PluginLogLine {
   source: 'plugin' | 'stdout' | 'stderr' | 'host'
   message: string
 }
+
+/** A meshtasticd the daemon runs (GET /hosted). */
+export interface HostedInstance {
+  radio: string
+  role: 'persona' | 'identity'
+  name: string
+  launcher: string
+  port: number
+  running: boolean
+  connected: boolean
+  restarts: number
+  last_error?: string
+  firmware?: string
+  node_id?: string
+}
+
+export interface HostedSettings {
+  persona: boolean
+  meshtasticd: string
+  docker_image: string
+  port_base: number
+  min_version: string
+  instances: HostedInstance[]
+  restart_required: boolean
+}

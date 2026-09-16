@@ -16,7 +16,7 @@ const telemetryMinInterval = 30 * time.Minute
 func (h *Host) periodicTelemetry(now time.Time) {
 	iv := h.Config().TelemetryInterval
 	relay := h.Relay()
-	if iv <= 0 || relay == nil {
+	if iv <= 0 || relay == nil || relay.Remote() != nil {
 		h.nextTelemetry = time.Time{}
 		return
 	}

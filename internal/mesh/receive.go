@@ -29,10 +29,11 @@ type decodeResult struct {
 // HandleReceived runs the receive pipeline for an encrypted packet from the radio or a link.
 // raw is the full LoRa frame when it came off the air (for the packet log), else nil.
 func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
-	relay := h.Relay()
-	if relay.Remote() != nil {
+	if h.remoteOnly() {
 		return // a real node does its own receiving; links can't feed it frames
 	}
+	relay := h.Relay()
+	remoteRelay := relay.Remote() != nil
 	now := time.Now()
 	h.Counters.Rx.Add(1)
 	k := pktKey{p.From, p.Id}
@@ -87,6 +88,9 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 
 	dec := h.decode(p)
 	h.DB.UpdateFromPacket(p, now)
+	if dec.target != nil && dec.target.Remote() != nil {
+		dec.target = nil // a hosted node answers for itself
+	}
 
 	if !dec.ok {
 		h.Counters.RxUndecryptable.Add(1)
@@ -135,10 +139,15 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	}
 
 	h.sniffContent(decoded, dec, now)
-	h.askUnknownNode(decoded, dec)
+	if !remoteRelay {
+		h.askUnknownNode(decoded, dec) // a hosted relay asks for itself
+	}
 	h.sniffRouting(decoded, dec)
 
 	for _, d := range dec.deliveries {
+		if d.id.Remote() != nil {
+			continue // a hosted node gets the frame over the air bridge
+		}
 		if !h.firstDelivery(d.id, p) {
 			continue // already delivered from another of its radios
 		}
@@ -353,6 +362,9 @@ func (h *Host) responseHopLimit(p *pb.MeshPacket) uint32 {
 
 // perhapsRelay is the relay persona's rebroadcast decision (NextHopRouter::perhapsRebroadcast).
 func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
+	if h.remoteRelay() {
+		return false // the hosted relay persona decides for itself
+	}
 	cfg := h.Config()
 	if (cfg.RelayRole != RoleClient && cfg.RelayRole != RoleRouter) || p.To == wire.BroadcastNoLoRa || p.HopLimit == 0 || p.Id == 0 {
 		return false

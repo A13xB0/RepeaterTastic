@@ -39,6 +39,8 @@ type Config struct {
 	Experimental Experimental `yaml:"experimental,omitempty" json:"experimental,omitempty"`
 	// Plugins are separate programs that extend RepeaterTastic (docs/plugins.md).
 	Plugins Plugins `yaml:"plugins" json:"plugins"`
+	// Hosted runs nodes as meshtasticd instances RepeaterTastic starts (docs/meshtasticd-nodes.md).
+	Hosted Hosted `yaml:"hosted,omitempty" json:"hosted"`
 
 	path string
 }
@@ -107,6 +109,29 @@ type Experimental struct {
 	// MultiRadioIdentities lets one identity send and receive on several radios, routed by
 	// channel and destination. Set in the web GUI only.
 	MultiRadioIdentities bool `yaml:"multi_radio_identities,omitempty" json:"multi_radio_identities"`
+}
+
+// Hosted configures meshtasticd instances RepeaterTastic runs as real nodes (experimental).
+type Hosted struct {
+	// Persona runs each modem or HAT radio's relay persona as a hosted meshtasticd, sharing the radio
+	// through the air bridge. Board radios keep the board as their persona.
+	Persona bool `yaml:"persona,omitempty" json:"persona"`
+	// Meshtasticd is the binary to run ("" = meshtasticd on PATH). It needs version 2.8 or newer.
+	Meshtasticd string `yaml:"meshtasticd,omitempty" json:"meshtasticd"`
+	// DockerImage runs the instances in Docker from this image instead (API published on
+	// 127.0.0.1 only), e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian.
+	DockerImage string `yaml:"docker_image,omitempty" json:"docker_image"`
+	// PortBase is the first client API port for hosted nodes (default 4500); radio n (0 = main)
+	// uses PortBase + 20·n onwards. meshtasticd listens on every interface when run directly.
+	PortBase int `yaml:"port_base,omitempty" json:"port_base"`
+}
+
+// HostedPortBase is Hosted.PortBase with its default.
+func (h Hosted) HostedPortBase() int {
+	if h.PortBase == 0 {
+		return 4500
+	}
+	return h.PortBase
 }
 
 // Site holds settings shared by every radio on the mast.
@@ -610,6 +635,15 @@ func (c *Config) validateOne() error {
 	}
 	if !mesh.ValidRelayRole(c.Relay.Role) {
 		return fmt.Errorf("relay.role must be client, router, mute, monitor or off, not %q", c.Relay.Role)
+	}
+	if pb := c.Hosted.PortBase; pb != 0 && (pb < 1024 || pb > 64000) {
+		return errors.New("hosted.port_base must be between 1024 and 64000")
+	}
+	if b := c.Hosted.Meshtasticd; b != "" && filepath.Base(b) != "meshtasticd" {
+		return errors.New("hosted.meshtasticd must be a meshtasticd program (a path ending in /meshtasticd)")
+	}
+	if strings.ContainsAny(c.Hosted.DockerImage, " \t\n") || strings.HasPrefix(c.Hosted.DockerImage, "-") {
+		return errors.New("hosted.docker_image must be an image name such as meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian")
 	}
 	switch c.Radio.Driver {
 	case "kiss", "sim", "none":

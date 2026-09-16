@@ -4,6 +4,7 @@ import { onMounted, ref } from 'vue'
 import { FlaskConical } from '@lucide/vue'
 import { api } from '@/api/client'
 import Toggle from '@/components/ui/Toggle.vue'
+import HostedNodesCard from '@/components/config/HostedNodesCard.vue'
 import { live, refreshAllIdentities, refreshIdentities } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
@@ -74,5 +75,6 @@ async function setMultiRadio(on: boolean) {
       </div>
       <Toggle :model-value="state.multi_radio_identities" :disabled="busy" label="Identities on several radios" @update:model-value="setMultiRadio" />
     </div>
+    <HostedNodesCard />
   </div>
 </template>

@@ -362,6 +362,10 @@ func (s *Server) putExtraRelay(w http.ResponseWriter, r *http.Request, rc *radio
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := rc.host.PushConfig(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, "relay role changed here, but "+err.Error())
+		return
+	}
 	s.cfgMu.Lock()
 	for i := range s.cfg.Radios {
 		if s.cfg.Radios[i].ID == rc.id {

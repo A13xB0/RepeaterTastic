@@ -6,6 +6,7 @@ import { computed, ref, watch } from 'vue'
 import { api, enc } from '@/api/client'
 import type { Config, ConfigPutResult, Phy, Region, SerialPort } from '@/api/types'
 import ModemDeviceField from '@/components/config/ModemDeviceField.vue'
+import RadioNodesPanel from '@/components/config/RadioNodesPanel.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { live, refreshRadios, refreshStatus } from '@/store/live'
@@ -172,6 +173,7 @@ async function save() {
         <div v-else class="mt-2 h-24 animate-pulse rounded-lg bg-sunken" />
       </aside>
     </div>
+    <RadioNodesPanel v-if="radioId && form" :radio-id="radioId" />
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
       <button class="btn" @click="emit('close')">Cancel</button>

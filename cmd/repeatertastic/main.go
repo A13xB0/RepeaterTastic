@@ -22,6 +22,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/logbuf"
 	"github.com/ScotMesh/RepeaterTastic/internal/mdns"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phoneapi"
 	"github.com/ScotMesh/RepeaterTastic/internal/plugins"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
@@ -115,7 +116,7 @@ func run(cfgPath string) error {
 		if len(rcs) > 1 {
 			rlog = log.With("radio", rc.ID)
 		}
-		rt, err := startRadio(ctx, rc, rlog, uplinked)
+		rt, err := startRadio(ctx, rc, len(radios), rlog, uplinked)
 		if err != nil {
 			return fmt.Errorf("radio %s: %w", rc.ID, err)
 		}
@@ -197,7 +198,16 @@ func run(cfgPath string) error {
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
 			MapAPIKey: key, MapKeySource: source, LogLevel: level, Federation: fed, Plugins: pm,
 			Restart: func() { restartRequested.Store(true); stop() },
-			Radios:  extra, Site: st, Version: version, Log: log})
+			Hosted: func() []web.HostedInstance {
+				var out []web.HostedInstance
+				for _, rt := range radios {
+					for _, hn := range rt.hosted {
+						out = append(out, web.HostedInstance{Radio: rt.rc.ID, Role: "persona", HostedStatus: hn.Status()})
+					}
+				}
+				return out
+			},
+			Radios: extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
 		}
@@ -236,21 +246,23 @@ func run(cfgPath string) error {
 
 // radioRuntime is one radio's running stack.
 type radioRuntime struct {
-	rc    config.RadioConfig
-	radio radio.Radio
-	host  *mesh.Host
-	api   *phoneapi.Manager
-	udp   *udp.Link
-	mqtt  []*mqtt.Link
+	rc     config.RadioConfig
+	radio  radio.Radio
+	host   *mesh.Host
+	api    *phoneapi.Manager
+	udp    *udp.Link
+	mqtt   []*mqtt.Link
+	hosted []*nodes.Hosted // meshtasticd instances standing in for this radio's nodes
 }
 
 // startRadio opens a radio's modem, builds its host and identities and starts its client
 // API and UDP link. The host itself is run by the caller.
-func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, uplinked *mqtt.Uplinked) (*radioRuntime, error) {
+func startRadio(ctx context.Context, rc config.RadioConfig, index int, log *slog.Logger, uplinked *mqtt.Uplinked) (*radioRuntime, error) {
 	if err := os.MkdirAll(rc.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("state dir: %w", err)
 	}
 	var r radio.Radio
+	var hosted []*nodes.Hosted
 	switch rc.Radio.Driver {
 	case "kiss", "spi":
 		// One lazy radio for both drivers, so first-time setup can switch driver as well as device
@@ -285,6 +297,7 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 		r.Close()
 		return nil, err
 	}
+	hosted = startHostedNodes(ctx, rc, index, host, log)
 	if err := loadIdentities(rc.Config, host, log); err != nil {
 		r.Close()
 		return nil, err
@@ -292,7 +305,7 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 	api := phoneapi.NewManager(host, log)
 	go api.Run(ctx)
 
-	rt := &radioRuntime{rc: rc, radio: r, host: host, api: api}
+	rt := &radioRuntime{rc: rc, radio: r, host: host, api: api, hosted: hosted}
 	if rc.Links.UDPMulticast.Enabled {
 		var groups []string
 		if g := rc.Links.UDPMulticast.Group; g != "" && !strings.Contains(g, ":") {
@@ -336,8 +349,13 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 // identities listed in the config on first start.
 func loadIdentities(cfg *config.Config, host *mesh.Host, log *slog.Logger) error {
 	recs, err := mesh.LoadIdentityRecords(cfg.StateDir)
+	hostedRelay := host.Relay() != nil // a hosted persona already stands in
 	if err == nil && len(recs) > 0 {
 		for _, rec := range recs {
+			if rec.IsRelay && hostedRelay {
+				host.KeepRecord(rec) // back when the persona runs here again
+				continue
+			}
 			id, err := mesh.IdentityFromRecord(rec)
 			if err != nil {
 				return err
@@ -476,4 +494,51 @@ func pluginCommand(cfgPath string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// startHostedNodes puts a modem or HAT radio's nodes on meshtasticd when the config asks for it:
+// the radio gets a LoRa air, and the relay persona joins it unless the air brings its own relay.
+// It returns nil, leaving the persona in RepeaterTastic, when meshtasticd can't run.
+func startHostedNodes(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, log *slog.Logger) []*nodes.Hosted {
+	hc := rc.Hosted
+	if !hc.Persona || (rc.Radio.Driver != "kiss" && rc.Radio.Driver != "spi") {
+		return nil
+	}
+	l := nodes.LauncherFor(hc.Meshtasticd, hc.DockerImage)
+	vctx, cancel := context.WithTimeout(ctx, 90*time.Second) // docker may pull the image first
+	v, err := nodes.CheckLauncher(vctx, l)
+	cancel()
+	if err != nil {
+		log.Error("hosted nodes: keeping the persona in RepeaterTastic", "err", err)
+		return nil
+	}
+	logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...)) }
+	air := nodes.NewLoRaAir(host, logf)
+	if air.Relay() != nil {
+		return nil // the air repeats for itself
+	}
+	in := nodes.Instance{Name: "persona-" + rc.ID, Dir: filepath.Join(rc.StateDir, "hosted", "persona"),
+		Port: hc.HostedPortBase() + 20*index, HWID: nodes.HWIDFor(rc.ID + "/persona")}
+	persona, err := nodes.StartHosted(ctx, l, in, logf)
+	if err != nil {
+		log.Error("hosted nodes: persona not started, keeping it in RepeaterTastic", "err", err)
+		return nil
+	}
+	persona.SetOwner(rc.Relay.LongName, rc.Relay.ShortName)
+	id, err := persona.Identity(ctx, 30*time.Second)
+	if err == nil {
+		id.IsRelay = true
+		err = host.AddIdentity(id)
+	}
+	if err != nil {
+		log.Error("hosted nodes: persona has no identity, keeping it in RepeaterTastic", "err", err)
+		persona.Close()
+		return nil
+	}
+	host.AddConfigApplier(persona)
+	persona.Bind(host, id)
+	go persona.Run(ctx)
+	air.Join(ctx, persona.Node)
+	log.Info("relay persona runs on meshtasticd", "node", id.NodeID(), "version", v, "launcher", l.Describe(), "port", in.Port)
+	return []*nodes.Hosted{persona}
 }

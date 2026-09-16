@@ -21,6 +21,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/links/udp"
 	"github.com/ScotMesh/RepeaterTastic/internal/logbuf"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phoneapi"
 	"github.com/ScotMesh/RepeaterTastic/internal/plugins"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
@@ -51,6 +52,15 @@ type Options struct {
 	Restart func()
 	// Plugins is the plugin manager (nil when plugins are turned off).
 	Plugins *plugins.Manager
+	// Hosted reports the meshtasticd instances the daemon runs (nil = none).
+	Hosted func() []HostedInstance
+}
+
+// HostedInstance is a meshtasticd the daemon runs, for Configuration → Experimental.
+type HostedInstance struct {
+	Radio string `json:"radio"`
+	Role  string `json:"role"` // persona or identity
+	nodes.HostedStatus
 }
 
 // Radio is an additional radio served by the same web GUI.
@@ -240,6 +250,7 @@ func (s *Server) routes() {
 	setup("GET /api/v1/regions", s.regions)
 	setup("POST /api/v1/phy/preview", s.phyPreview)
 	setup("POST /api/v1/setup/probe", s.probe)
+	setup("POST /api/v1/setup/meshtasticd", s.checkMeshtasticd)
 	priv("PUT /api/v1/auth/password", s.changePassword)
 	priv("POST /api/v1/auth/logout-all", s.logoutAll)
 
@@ -250,6 +261,8 @@ func (s *Server) routes() {
 	priv("PUT /api/v1/radios/{id}", s.putRadio)
 	priv("DELETE /api/v1/radios/{id}", s.deleteRadio)
 	priv("GET /api/v1/experimental", s.getExperimental)
+	priv("GET /api/v1/hosted", s.getHosted)
+	priv("PUT /api/v1/hosted", s.putHosted)
 	priv("PUT /api/v1/experimental", s.putExperimental)
 	priv("GET /api/v1/site", s.getSite)
 	priv("PUT /api/v1/site", s.putSite)

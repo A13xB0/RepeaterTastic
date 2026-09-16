@@ -58,7 +58,7 @@ func (h *Host) Send(from *Identity, p *pb.MeshPacket) error {
 		// The node routes it; identities that share its air hear it from there.
 		return h.sendRemote(from, r, p)
 	}
-	if target := h.Identity(p.To); target != nil && target != from {
+	if target := h.Identity(p.To); target != nil && target != from && target.Remote() == nil {
 		h.deliverLocal(from, target, p)
 		if !h.Config().LocalDMOverRF {
 			return nil
@@ -383,8 +383,8 @@ func (h *Host) deliverLocal(from, target *Identity, p *pb.MeshPacket) {
 func (h *Host) deliverLocalBroadcast(from *Identity, p *pb.MeshPacket) {
 	now := time.Now()
 	for _, other := range h.Identities() {
-		if other == from || !other.Enabled {
-			continue
+		if other == from || !other.Enabled || other.Remote() != nil {
+			continue // a hosted node hears it over the air bridge
 		}
 		index, ok := h.matchingChannel(from, other, int(p.Channel))
 		if !ok {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
@@ -48,6 +49,8 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		RelayRole string `json:"relay_role"`
 		// PrimaryChannel names the primary channel ("" = the preset's name), which picks the slot.
 		PrimaryChannel *string `json:"primary_channel"`
+		// Hosted runs the relay persona on meshtasticd (experimental); nil keeps the config's.
+		Hosted *config.Hosted `json:"hosted"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -70,6 +73,16 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PrimaryChannel != nil {
 		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
+	}
+	if req.Hosted != nil {
+		h := *req.Hosted
+		h.Meshtasticd, h.DockerImage = strings.TrimSpace(h.Meshtasticd), strings.TrimSpace(h.DockerImage)
+		if h.DockerImage != "" && !nodes.OfficialImage(h.DockerImage) {
+			s.cfgMu.Unlock()
+			writeError(w, http.StatusBadRequest, "setup only takes meshtastic/meshtasticd images; choose another under Configuration once signed in")
+			return
+		}
+		next.Hosted = h
 	}
 	req.Device = strings.TrimSpace(req.Device)
 	switch req.Driver {

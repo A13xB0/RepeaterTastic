@@ -50,7 +50,7 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
 | Method and path | Auth | Body → response |
 | --- | --- | --- |
 | `GET /setup` | none | → `{"needed": true}` while no admin password exists |
-| `POST /setup` | none | `{"password", "region", "preset", "primary_channel", "driver", "device", "relay_role"}` → `{"token", "expires", "restart_required"}` |
+| `POST /setup` | none | `{"password", "region", "preset", "primary_channel", "driver", "device", "relay_role", "hosted"}` → `{"token", "expires", "restart_required"}` |
 | `POST /auth/login` | none | `{"password"}` → `{"token", "expires"}` |
 | `PUT /auth/password` | token | `{"current", "new"}` → `{"token", "expires"}` |
 | `POST /auth/logout-all` | token | → 204 |
@@ -59,6 +59,7 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
 | `GET /regions` | setup | → `[{"name", "presets": ["LONG_FAST", …], "duty_cycle_pct", "power_limit_dbm", "start_mhz", "end_mhz"}]` |
 | `POST /phy/preview` | setup | `{"region", "preset", "primary_channel", "tx_power_dbm"}` → a [`phy`](#status-and-relay) object |
 | `POST /setup/probe` | setup | `{"device", "driver"}` → `{"ok", "driver", "firmware", "name", "sync_word_ok", "error", "details"}` |
+| `POST /setup/meshtasticd` | setup | `{"meshtasticd", "docker_image"}` → `{"ok", "version", "min_version", "launcher", "error"}` |
 
 "Setup" means no token is needed while `GET /setup` reports `needed: true`; after that a token is.
 
@@ -528,6 +529,27 @@ connections are edited through `PUT /config`.
 - **Restore** takes the file as downloaded (up to 32 MB). Nothing changes under the running daemon:
   the files are staged and replace the configuration and identities when the daemon next starts.
   400 when it isn't a backup, or its configuration or identities don't validate.
+
+## Experimental: hosted nodes
+
+The relay persona of each modem or HAT radio can run on meshtasticd
+([Real Meshtastic nodes](meshtasticd-nodes.md)).
+
+| Method and path | Body → response |
+| --- | --- |
+| `GET /hosted` | → `{"persona", "meshtasticd", "docker_image", "port_base", "min_version", "instances", "restart_required"}` |
+| `PUT /hosted` | `{"persona", "meshtasticd", "docker_image", "port_base"}` → the same as `GET` (applies at restart) |
+
+- `instances` are the meshtasticd processes running now: `{"radio", "role", "name", "launcher",
+  "port", "running", "connected", "restarts", "last_error", "firmware", "node_id", "log"}`, with
+  `log` the last lines meshtasticd printed.
+- `PUT /hosted` with `persona: true` checks meshtasticd first and answers 400 when it can't run or
+  is older than `min_version`. `meshtasticd` must name a meshtasticd program (`""` = the one on
+  `PATH`); `docker_image`, when set, runs it in Docker instead.
+- `POST /setup` takes the same object as `hosted`; before a password exists only
+  `meshtastic/meshtasticd` images are accepted. `POST /setup/meshtasticd` checks a program or image
+  the same way and always answers 200 with `ok` and `error`, except for a program that isn't
+  meshtasticd (400) or, before a password exists, an image that isn't `meshtastic/meshtasticd` (400).
 
 ## Experimental: identities on several radios
 

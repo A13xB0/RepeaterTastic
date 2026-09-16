@@ -67,3 +67,20 @@ func TestRadioValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestHostedConfig(t *testing.T) {
+	c, err := load(t, "hosted: {persona: true, meshtasticd: /usr/local/bin/meshtasticd}\n")
+	if err != nil || !c.Hosted.Persona || c.Hosted.HostedPortBase() != 4500 {
+		t.Fatalf("hosted %+v %v", c.Hosted, err)
+	}
+	for yml, want := range map[string]string{
+		"hosted: {meshtasticd: /bin/sh}\n":         "meshtasticd program",
+		"hosted: {port_base: 80}\n":                "port_base",
+		"hosted: {docker_image: '--privileged'}\n": "docker_image",
+		"hosted: {docker_image: 'a b'}\n":          "docker_image",
+	} {
+		if _, err := load(t, yml); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", yml, err, want)
+		}
+	}
+}
