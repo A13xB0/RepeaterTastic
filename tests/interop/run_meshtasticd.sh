@@ -15,6 +15,8 @@
 #   NET_NAME           docker network for bridge mode (default repeatertastic-mesh)
 #   API_BASE_PORT      TCP API port of instance 1 (default 4410; instance I = base+I-1)
 #   STATE_DIR          per-instance config + VFS (default ./state)
+#   UDP                1 (default) joins the UDP multicast mesh; 0 leaves the sim radio as the only
+#                      path, for the client API live tests (internal/mtclient)
 #
 # Instance I: container repeatertastic-mtd-I, hwid 02:00:1E:E7:A0:II -> node !1ee7a0II on 2.7.x
 # (2.8+ renumbers to crc32(public_key) once its key pair exists),
@@ -26,6 +28,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE="${MESHTASTICD_IMAGE:-meshtastic/meshtasticd:2.7.26.54e0d8d-debian}"
 NET_MODE="${NET_MODE:-bridge}"
 NET_NAME="${NET_NAME:-repeatertastic-mesh}"
+UDP="${UDP:-1}"
 API_BASE_PORT="${API_BASE_PORT:-4410}"
 STATE_DIR="${STATE_DIR:-$HERE/state}"
 TOOLS_IMAGE="${TOOLS_IMAGE:-repeatertastic-interop-tools:1}"
@@ -66,8 +69,7 @@ Lora:
   Module: sim        # SimRadio. Do NOT use --sim: that flag also disables PKI in Router::perhapsEncode
 Logging:
   LogLevel: debug
-Config:
-  EnableUDP: true    # forces network.enabled_protocols = UDP_BROADCAST at boot
+$(if [[ "$UDP" == 1 ]]; then printf 'Config:\n  EnableUDP: true    # forces network.enabled_protocols = UDP_BROADCAST at boot\n'; fi)
 General:
   MaxNodes: 200
 EOF

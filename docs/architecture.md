@@ -46,6 +46,7 @@ internal/wire          16-byte header, AES-CTR channels, X25519 + AES-CCM DMs, A
 internal/phy           regions, presets, frequency slots, airtime, contention window
 internal/mesh          host: receive, relay, reliable delivery, identities, node DB, airtime
 internal/phoneapi      Meshtastic client API: TCP stream + HTTP, config handshake, local admin
+internal/mtclient      Meshtastic client API, client side: drives a board or meshtasticd (see meshtasticd-nodes.md)
 internal/radio         radio interface; kiss (serial), sim (tests), null
 internal/links/udp     meshtasticd UDP multicast link
 internal/links/mqtt    Meshtastic MQTT connections (gateway, monitor, bridge, map reports)
