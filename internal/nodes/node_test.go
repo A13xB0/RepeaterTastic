@@ -253,3 +253,45 @@ func TestFirstRegionMovesTheNodeNumber(t *testing.T) {
 		t.Fatalf("owner %v", fake.Owner())
 	}
 }
+
+func TestClientBaseRelayFavorites(t *testing.T) {
+	const friend, stranger, oldFav = 0x11112222, 0x33334444, 0x55556666
+	fake := mtclienttest.New(hostedNum)
+	fake.Update(func(s *mtclienttest.State) {
+		s.Others = []*pb.NodeInfo{{Num: friend}, {Num: stranger}, {Num: oldFav, IsFavorite: true}}
+	})
+	r := startNode(t, fake, t.TempDir(), 2*time.Second)
+	desk, _ := mesh.NewIdentity(nil, "Desk", "DESK")
+	if err := r.h.AddIdentity(desk); err != nil {
+		t.Fatal(err)
+	}
+	fake.Update(func(s *mtclienttest.State) { s.Others = append(s.Others, &pb.NodeInfo{Num: desk.NodeNum}) })
+	r.n.client.Reconnect()
+	eventually(t, "reconnected", func() bool { return len(r.n.client.Snapshot().Nodes) >= 4 })
+	cfg := r.h.Config()
+	cfg.RelayRole = mesh.RoleClientBase
+	const heardByHost = 0x77778888 // the relay never heard it; the host did
+	r.h.DB.SetUser(heardByHost, &pb.User{Id: "!77778888", LongName: "Far handheld", PublicKey: make([]byte, 32)})
+	cfg.Favorites = []uint32{friend, heardByHost}
+	if err := r.h.UpdateConfig(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	set, removed, added := map[uint32]bool{}, map[uint32]bool{}, map[uint32]bool{}
+	for _, m := range fake.Admins() {
+		if c := m.GetAddContact(); c != nil {
+			added[c.NodeNum] = true
+		}
+		if n := m.GetSetFavoriteNode(); n != 0 {
+			set[n] = true
+		}
+		if n := m.GetRemoveFavoriteNode(); n != 0 {
+			removed[n] = true
+		}
+	}
+	if !set[friend] || !set[desk.NodeNum] || set[stranger] || !removed[oldFav] || !added[heardByHost] || !set[heardByHost] {
+		t.Fatalf("favourites set %v, removed %v", set, removed)
+	}
+	if fake.Config().Device.Role != pb.Config_DeviceConfig_CLIENT_BASE {
+		t.Fatalf("role %v", fake.Config().Device.Role)
+	}
+}

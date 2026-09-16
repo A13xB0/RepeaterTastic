@@ -497,6 +497,9 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 	}
 
 	msgs = append(msgs, n.positionMsgs(s, h, id)...)
+	if relay && mesh.NormalizeRelayRole(cfg.RelayRole) == mesh.RoleClientBase && h != nil {
+		msgs = append(msgs, favoriteMsgs(s, h)...)
+	}
 
 	if tel := s.ModuleConfig.GetTelemetry(); tel != nil {
 		t := proto.Clone(tel).(*pb.ModuleConfig_TelemetryConfig)
@@ -707,4 +710,37 @@ func newNode(addr, stateDir string, c *mtclient.Client, logf func(string, ...any
 		logf = func(string, ...any) {}
 	}
 	return &Node{addr: addr, stateDir: stateDir, client: c, logf: logf, rebootWait: 8 * time.Second}
+}
+
+// favoriteMsgs makes a client_base relay's favourites match the host's: its identities and the
+// configured favourites. A favourite the relay hasn't heard of is added as a contact first, from
+// what the host knows of it (a node can't favourite a stranger).
+func favoriteMsgs(s mtclient.Snapshot, h *mesh.Host) []*pb.AdminMessage {
+	var msgs []*pb.AdminMessage
+	self := s.NodeNum()
+	for _, num := range h.Config().Favorites {
+		if _, known := s.Nodes[num]; known || num == self {
+			continue
+		}
+		e, ok := h.DB.Get(num)
+		if !ok || e.User == nil {
+			continue // unknown here too: set once either side has heard it
+		}
+		msgs = append(msgs,
+			&pb.AdminMessage{PayloadVariant: &pb.AdminMessage_AddContact{AddContact: &pb.SharedContact{NodeNum: num, User: proto.Clone(e.User).(*pb.User)}}},
+			&pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetFavoriteNode{SetFavoriteNode: num}})
+	}
+	for num, info := range s.Nodes {
+		if num == self || num == 0 {
+			continue
+		}
+		want := h.IsRelayFavorite(num)
+		switch {
+		case want && !info.GetIsFavorite():
+			msgs = append(msgs, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetFavoriteNode{SetFavoriteNode: num}})
+		case !want && info.GetIsFavorite():
+			msgs = append(msgs, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_RemoveFavoriteNode{RemoveFavoriteNode: num}})
+		}
+	}
+	return msgs
 }

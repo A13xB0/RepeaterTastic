@@ -169,11 +169,12 @@ type configDTO struct {
 		OverrideFreqMHz    float64 `json:"override_frequency_mhz"` // 0 = from the region and preset
 	} `json:"radio"`
 	Relay struct {
-		Role        string `json:"role"`
-		Rebroadcast string `json:"rebroadcast"`
-		LongName    string `json:"long_name"`
-		ShortName   string `json:"short_name"`
-		LocalDM     string `json:"local_dm"`
+		Role        string   `json:"role"`
+		Rebroadcast string   `json:"rebroadcast"`
+		Favorites   []string `json:"favorites"`
+		LongName    string   `json:"long_name"`
+		ShortName   string   `json:"short_name"`
+		LocalDM     string   `json:"local_dm"`
 	} `json:"relay"`
 	Airtime struct {
 		DutyCyclePercent     float64 `json:"duty_cycle_percent"`
@@ -221,6 +222,7 @@ func toDTO(c *config.Config, h *mesh.Host) configDTO {
 		d.Radio.HopLimit = 3
 	}
 	d.Relay.Rebroadcast = c.Relay.Rebroadcast
+	d.Relay.Favorites = append([]string{}, c.Relay.Favorites...)
 	if d.Relay.Rebroadcast == "" {
 		d.Relay.Rebroadcast = "all"
 	}
@@ -378,6 +380,14 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		next.Airtime.TelemetryInterval = iv
 	}
 	next.Relay.Rebroadcast = strings.ToLower(d.Relay.Rebroadcast)
+	next.Relay.Favorites = nil
+	for _, f := range d.Relay.Favorites {
+		if n, err := wire.ParseNodeID(f); err == nil {
+			next.Relay.Favorites = append(next.Relay.Favorites, wire.NodeID(n))
+		} else {
+			next.Relay.Favorites = append(next.Relay.Favorites, f) // Validate says what's wrong
+		}
+	}
 	if next.Relay.Rebroadcast == "all" {
 		next.Relay.Rebroadcast = "" // the default: keep it out of the file
 	}

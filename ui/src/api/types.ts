@@ -428,7 +428,7 @@ export interface Config {
     channel_num: number
     override_frequency_mhz: number
   }
-  relay: { role: RelayRole; rebroadcast: RebroadcastMode; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
+  relay: { role: RelayRole; rebroadcast: RebroadcastMode; favorites: string[]; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
   airtime: {
     duty_cycle_percent: number
     identity_share_percent: number

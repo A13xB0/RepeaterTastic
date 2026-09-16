@@ -16,6 +16,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
@@ -310,8 +311,11 @@ type Relay struct {
 	// Rebroadcast is Meshtastic's rebroadcast mode: all (default), all_skip_decoding, local_only,
 	// known_only, none or core_portnums_only. The built-in relay only honours none.
 	Rebroadcast string `yaml:"rebroadcast,omitempty" json:"rebroadcast"`
-	LongName    string `yaml:"long_name" json:"long_name"`
-	ShortName   string `yaml:"short_name" json:"short_name"`
+	// Favorites are node IDs (!xxxxxxxx) the relay treats as its own when its role is client_base:
+	// packets from or to them are relayed like router_late. This host's identities always count.
+	Favorites []string `yaml:"favorites,omitempty" json:"favorites"`
+	LongName  string   `yaml:"long_name" json:"long_name"`
+	ShortName string   `yaml:"short_name" json:"short_name"`
 }
 
 type Airtime struct {
@@ -670,6 +674,11 @@ func (c *Config) validateOne() error {
 	if _, ok := mesh.RebroadcastMode(c.Relay.Rebroadcast); !ok {
 		return fmt.Errorf("relay.rebroadcast must be all, all_skip_decoding, local_only, known_only, none or core_portnums_only, not %q", c.Relay.Rebroadcast)
 	}
+	for _, f := range c.Relay.Favorites {
+		if _, err := wire.ParseNodeID(f); err != nil {
+			return fmt.Errorf("relay.favorites: %q isn't a node ID such as !a1b2c3d4", f)
+		}
+	}
 	if pb := c.Hosted.PortBase; pb != 0 && (pb < 1024 || pb > 64000) {
 		return errors.New("hosted.port_base must be between 1024 and 64000")
 	}
@@ -744,7 +753,7 @@ func (c *Config) MeshConfig() mesh.Config {
 	return mesh.Config{
 		Region: strings.ToUpper(c.Mesh.Region), Preset: preset, PrimaryChannel: c.Mesh.PrimaryChannel,
 		ChannelNum: c.Mesh.ChannelNum, OverrideFreqMHz: c.Mesh.OverrideFreqMHz, FreqOffsetMHz: c.Mesh.FreqOffsetMHz,
-		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: mesh.NormalizeRelayRole(c.Relay.Role), Rebroadcast: strings.ToLower(c.Relay.Rebroadcast),
+		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: mesh.NormalizeRelayRole(c.Relay.Role), Rebroadcast: strings.ToLower(c.Relay.Rebroadcast), Favorites: favoriteNums(c.Relay.Favorites),
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
 		TelemetryInterval: c.Airtime.TelemetryInterval,
@@ -823,4 +832,15 @@ func (c *Config) ApplyEnv() {
 			c.Web.Port = p
 		}
 	}
+}
+
+// favoriteNums parses the relay's favourite node IDs, skipping any that don't parse.
+func favoriteNums(ids []string) []uint32 {
+	var out []uint32
+	for _, id := range ids {
+		if n, err := wire.ParseNodeID(id); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
