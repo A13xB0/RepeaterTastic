@@ -1,20 +1,19 @@
 <script setup lang="ts">
 // Structure after openHop's Sidebar (MIT, © Lloyd Newton), rewritten for Meshtastic identities.
 import { computed } from 'vue'
-import { useRouter } from 'vue-router'
 import {
-  Activity, Cable, ChartColumn, Layers, LayoutDashboard, LogOut, MapPinned, MessagesSquare, Puzzle, ScrollText, Settings2, UsersRound, X,
+  Activity, Cable, ChartColumn, Layers, LayoutDashboard, MapPinned, MessagesSquare, Puzzle, ScrollText, Settings2, UsersRound, X,
 } from '@lucide/vue'
 import Logo from '@/components/ui/Logo.vue'
 import Sparkline from '@/components/charts/Sparkline.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
+import AppFooter from '@/components/layout/AppFooter.vue'
 import { live } from '@/store/live'
-import { MAIN_RADIO, setToken } from '@/api/client'
+import { MAIN_RADIO } from '@/api/client'
 import { num, uptime } from '@/lib/format'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
-const router = useRouter()
 
 const unread = computed(() => live.identities.reduce((s, i) => s + (i.unread ?? 0), 0))
 const nodeCount = computed(() => Object.values(live.nodes).filter((n) => !n.local).length)
@@ -50,11 +49,6 @@ const groups = computed(() => [
 ])
 
 const noise = computed(() => [...(live.noiseSeed[MAIN_RADIO] ?? []), ...(live.history[MAIN_RADIO] ?? []).map((h) => h.noise)].slice(-60))
-
-function logout() {
-  setToken(null)
-  router.push('/login')
-}
 </script>
 
 <template>
@@ -164,12 +158,12 @@ function logout() {
         </div>
       </nav>
 
-      <div class="flex items-center gap-2 border-t border-line-soft px-4 py-3">
-        <div class="min-w-0 flex-1 text-2xs leading-snug text-ink-3">
+      <div class="border-t border-line-soft px-4 py-3">
+        <div class="text-2xs leading-snug text-ink-3">
           <div>RepeaterTastic <span class="tabular-nums">v{{ (live.status?.version ?? '…').replace(/^v/, '') }}</span></div>
           <div>UI layout after openHop (MIT)</div>
         </div>
-        <button type="button" class="btn btn-sm btn-ghost" title="Sign out" @click="logout"><LogOut class="size-4" />Sign out</button>
+        <AppFooter class="mt-2.5 border-t border-line-soft pt-2.5" />
       </div>
     </div>
   </aside>

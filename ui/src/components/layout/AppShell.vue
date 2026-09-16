@@ -5,7 +5,6 @@ import { useRoute } from 'vue-router'
 import Sidebar from './Sidebar.vue'
 import TopBar from './TopBar.vue'
 import RestartBanner from './RestartBanner.vue'
-import AppFooter from './AppFooter.vue'
 import { startLive, stopLive } from '@/store/live'
 import { token } from '@/api/client'
 
@@ -27,7 +26,6 @@ onBeforeUnmount(() => stopLive())
       <RouterView v-slot="{ Component }">
         <component :is="Component" />
       </RouterView>
-      <AppFooter />
     </main>
   </div>
 </template>
