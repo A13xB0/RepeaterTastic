@@ -8,6 +8,7 @@ services:
     # build: ..                     # or build from a checkout
     container_name: repeatertastic
     restart: unless-stopped
+    init: true                      # reaps processes plugins leave behind
     # Host networking lets the Meshtastic apps find identities over mDNS and joins the UDP
     # multicast LAN mesh. Without them, remove this line and uncomment `ports`.
     network_mode: host
