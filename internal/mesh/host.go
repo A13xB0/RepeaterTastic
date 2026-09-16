@@ -78,6 +78,32 @@ func DeviceRole(role string, keep pb.Config_DeviceConfig_Role) pb.Config_DeviceC
 // routerRole reports whether a relay role rebroadcasts with router priority and never cancels.
 func routerRole(role string) bool { return role == RoleRouter || role == RoleRouterLate }
 
+// relaysAsRouter reports whether the relay handles p with router priority: a router role, or
+// client_base for a packet from or to one of its favourites (this host's identities included).
+func (h *Host) relaysAsRouter(p *pb.MeshPacket) bool {
+	cfg := h.Config()
+	if routerRole(cfg.RelayRole) {
+		return true
+	}
+	if cfg.RelayRole != RoleClientBase {
+		return false
+	}
+	return h.IsRelayFavorite(p.From) || h.IsRelayFavorite(p.To)
+}
+
+// IsRelayFavorite reports whether a client_base relay counts num as one of its own.
+func (h *Host) IsRelayFavorite(num uint32) bool {
+	if num == wire.Broadcast || num == 0 {
+		return false
+	}
+	for _, f := range h.Config().Favorites {
+		if f == num {
+			return true
+		}
+	}
+	return h.Identity(num) != nil
+}
+
 // Rebroadcast modes (Meshtastic's DeviceConfig.RebroadcastMode), lower case.
 var rebroadcastModes = map[string]pb.Config_DeviceConfig_RebroadcastMode{
 	"all": pb.Config_DeviceConfig_ALL, "all_skip_decoding": pb.Config_DeviceConfig_ALL_SKIP_DECODING,
@@ -122,7 +148,10 @@ type Config struct {
 	RelayRole       string
 	// Rebroadcast is the relay's rebroadcast mode ("" = all). A hosted relay applies it as set;
 	// the built-in relay only honours none.
-	Rebroadcast       string
+	Rebroadcast string
+	// Favorites are nodes a client_base relay treats as its own (with the host's identities):
+	// packets from or to them are relayed like router_late.
+	Favorites         []uint32
 	DutyCyclePct      float64 // 0 = region default
 	OverrideDutyCycle bool
 	NodeInfoInterval  time.Duration

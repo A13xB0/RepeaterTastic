@@ -190,7 +190,10 @@ A Radio in the list:
 
 `PUT /relay[?radio=<id>]` `{"role": "client" | "client_base" | "client_mute" | "router" | "router_late" | "monitor" | "off"}` → `status.relay`
 
-The roles are Meshtastic's device roles plus two radio modes. `"mute"` is still accepted and read as
+The roles are Meshtastic's device roles plus two radio modes. `relay.favorites` in `PUT /config`
+(node IDs) are the favourites of a `client_base` relay; the host's identities always count, and a
+relay on meshtasticd or a board gets them as Meshtastic favourites (added as contacts first when
+it hasn't heard of them). `"mute"` is still accepted and read as
 `client_mute`. The rebroadcast mode is `relay.rebroadcast` in `PUT /config`
 ([Configuration](configuration.md#relay-the-relay-persona)); `GET /config` reports `"all"` when unset.
 

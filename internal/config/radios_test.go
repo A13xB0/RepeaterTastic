@@ -108,3 +108,16 @@ radios:
 		}
 	}
 }
+
+func TestRelayFavorites(t *testing.T) {
+	c, err := load(t, "relay: {role: client_base, favorites: ['!a1b2c3d4']}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := c.MeshConfig().Favorites; len(f) != 1 || f[0] != 0xa1b2c3d4 {
+		t.Fatalf("favorites %v", f)
+	}
+	if _, err := load(t, "relay: {favorites: [bob]}\n"); err == nil || !strings.Contains(err.Error(), "isn't a node ID") {
+		t.Fatalf("bad favourite: %v", err)
+	}
+}

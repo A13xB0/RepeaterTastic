@@ -11,6 +11,7 @@ import Spinner from '@/components/ui/Spinner.vue'
 import MqttConnections from '@/components/config/MqttConnections.vue'
 import RadiosPanel from '@/components/config/RadiosPanel.vue'
 import ExperimentalPanel from '@/components/config/ExperimentalPanel.vue'
+import RelayFavorites from '@/components/config/RelayFavorites.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
@@ -247,6 +248,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             </div>
             <p class="hint">Meshtastic device roles, the same switch as in the top bar, applied to the relay's meshtasticd. Router always repeats and router late does so last; client repeats after routers and client base also favours its favourites; client mute never repeats. Monitor only listens (nothing is transmitted); off ignores the radio.</p>
           </div>
+          <RelayFavorites v-if="form.relay.role === 'client_base'" v-model="form.relay.favorites" class="sm:col-span-2" />
           <div class="sm:col-span-2">
             <label class="label" for="c-rebroadcast">Rebroadcast mode</label>
             <select id="c-rebroadcast" v-model="form.relay.rebroadcast" class="input">

@@ -97,6 +97,7 @@ a Meshtastic device role, and meshtasticd applies it as-is when the relay runs t
 relay:
     role: client          # client · client_base · client_mute · router · router_late · monitor · off
     rebroadcast: all      # all · all_skip_decoding · local_only · known_only · none · core_portnums_only
+    favorites: ['!a1b2c3d4']  # client_base only: nodes whose packets it relays like router_late
     long_name: RepeaterTastic Relay
     short_name: RPTR
 ```
@@ -104,7 +105,7 @@ relay:
 | Role | The relay persona | Identities |
 | --- | --- | --- |
 | `client` | Repeats like a normal node: after routers, and cancels if another node relays first | Send and receive |
-| `client_base` | A client that repeats for its favourited nodes with router priority | Send and receive |
+| `client_base` | Repeats packets from or to its favourites like `router_late`, everything else like `client`. This host's identities are always favourites; add your own nodes in `favorites` (Configuration → Relay lists the nodes heard) | Send and receive |
 | `client_mute` | Never repeats. `mute`, the old name, still loads and is saved as `client_mute` | Send and receive |
 | `router` | Always repeats, with priority; for a well-placed site the mesh relies on | Send and receive |
 | `router_late` | Always repeats, but only after other nodes had their chance | Send and receive |

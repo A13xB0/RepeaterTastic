@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
@@ -236,5 +237,37 @@ func TestSwapRemote(t *testing.T) {
 	virtual, _ := NewIdentity(nil, "V", "")
 	if err := h.SwapRemote(virtual, next); err == nil {
 		t.Fatal("swapped a virtual identity")
+	}
+}
+
+func TestClientBaseFavorites(t *testing.T) {
+	h, err := NewHost(Config{Region: "EU_868", Preset: pb.Config_LoRaConfig_LONG_FAST, RelayRole: RoleClientBase, Favorites: []uint32{0x11112222}},
+		null.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := NewIdentity(nil, "Desk", "DESK")
+	if err := h.AddIdentity(id); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		from, to uint32
+		want     bool
+	}{
+		{0x11112222, wire.Broadcast, true},  // from a favourite
+		{0x33334444, id.NodeNum, true},      // to our own identity
+		{0x33334444, wire.Broadcast, false}, // a stranger's broadcast
+	} {
+		if got := h.relaysAsRouter(&pb.MeshPacket{From: c.from, To: c.to}); got != c.want {
+			t.Errorf("%08x -> %08x: router priority %v, want %v", c.from, c.to, got, c.want)
+		}
+	}
+	cfg := h.Config()
+	cfg.RelayRole = RoleClient
+	if err := h.UpdateConfig(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if h.relaysAsRouter(&pb.MeshPacket{From: 0x11112222, To: wire.Broadcast}) {
+		t.Error("favourites only matter to client_base")
 	}
 }

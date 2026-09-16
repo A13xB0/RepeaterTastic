@@ -77,7 +77,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 			if dec.ok && !h.perhapsRelay(p, dec) && dec.target != nil && p.WantAck {
 				h.sendAckNak(dec.target, pb.Routing_NONE, p.From, p.Id, h.ackChannel(dec), 0, false)
 			}
-		} else if !sr.WeWereNextHop && p.TransportMechanism == pb.MeshPacket_TRANSPORT_LORA && !routerRole(h.Config().RelayRole) {
+		} else if !sr.WeWereNextHop && p.TransportMechanism == pb.MeshPacket_TRANSPORT_LORA && !h.relaysAsRouter(p) {
 			if h.txq.Cancel(k, false) {
 				h.Counters.RelayCancelled.Add(1)
 			}
@@ -408,7 +408,7 @@ func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
 		}
 	}
 	rp := h.RadioParams()
-	delay := phy.FloodDelayMs(p.RxSnr, rp.SlotTimeMs(), routerRole(cfg.RelayRole))
+	delay := phy.FloodDelayMs(p.RxSnr, rp.SlotTimeMs(), h.relaysAsRouter(p))
 	k := pktKey{p.From, p.Id}
 	h.hist.MarkTx(k, out.HopLimit, uint8(out.NextHop), time.Now())
 	return h.txq.Enqueue(&txItem{key: k, pkt: out, due: time.Now().Add(time.Duration(delay) * time.Millisecond),
