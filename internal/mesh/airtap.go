@@ -18,6 +18,12 @@ type AirTap interface {
 	Transmitted(frame []byte, pkt *pb.MeshPacket, origin uint32)
 }
 
+// LinkTap is an AirTap that also wants packets that came in over a link (MQTT, UDP), so the hosted
+// nodes get them as a node on the host would.
+type LinkTap interface {
+	LinkHeard(p *pb.MeshPacket)
+}
+
 // AddAirTap attaches a tap. Frames reach taps in the radio's order, from the host's loops.
 func (h *Host) AddAirTap(t AirTap) {
 	h.tapMu.Lock()

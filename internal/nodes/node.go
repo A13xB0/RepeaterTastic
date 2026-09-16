@@ -461,6 +461,8 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 	if relay {
 		// A board carries the identities over MQTT: it must take what comes that way.
 		lora.IgnoreMqtt = cfg.IgnoreMQTT && extra == nil
+	} else {
+		lora.IgnoreMqtt = false // identities never repeat: they take everything addressed to them
 	}
 	if s.Config.GetLora().GetRegion() == pb.Config_LoRaConfig_UNSET && lora.Region != pb.Config_LoRaConfig_UNSET && !fresh {
 		// A board's first region makes its keys, and its node number moves with them at once:

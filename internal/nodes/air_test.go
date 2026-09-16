@@ -411,3 +411,41 @@ func TestAirIntroducesLocalIdentities(t *testing.T) {
 	})
 	eventually(t, "the persona knows the desk", func() bool { return contacts(r.node)[deskNum] })
 }
+
+func TestAirLinkPacketsReachHostedNodes(t *testing.T) {
+	r := newAirRig(t)
+	cfg := r.h.Config()
+	cfg.IgnoreMQTT = true // no relay_mqtt: broker traffic is delivered, never repeated
+	if err := r.h.UpdateConfig(r.ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	p := channelPacket(0x0dd0beef, 4001, 3, "from the broker")
+	p.ViaMqtt, p.TransportMechanism = true, pb.MeshPacket_TRANSPORT_MQTT
+	r.h.HandleReceived(p, nil)
+	eventually(t, "the persona got the broker packet at hop 0, unmarked", func() bool {
+		return len(r.injected(func(q *pb.MeshPacket, c *pb.Compressed) bool {
+			return q.Id == 4001 && q.HopLimit == 0 && q.HopStart == 3 && !q.ViaMqtt
+		})) == 1
+	})
+	select {
+	case f := <-r.far.Frames():
+		if q := wire.DecodeFrame(f.Data, 0, 0); q != nil && q.Id == 4001 {
+			t.Fatal("a broker packet went on air")
+		}
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// With relay_mqtt the relay may repeat it: hop limit and mark kept.
+	cfg.IgnoreMQTT = false
+	if err := r.h.UpdateConfig(r.ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	p = channelPacket(0x0dd0beef, 4002, 1, "repeatable")
+	p.ViaMqtt, p.TransportMechanism = true, pb.MeshPacket_TRANSPORT_MQTT
+	r.h.HandleReceived(p, nil)
+	eventually(t, "the persona got the broker packet with its hops", func() bool {
+		return len(r.injected(func(q *pb.MeshPacket, c *pb.Compressed) bool {
+			return q.Id == 4002 && q.HopLimit == 1 && q.ViaMqtt
+		})) == 1
+	})
+}

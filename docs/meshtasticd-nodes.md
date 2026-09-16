@@ -135,6 +135,11 @@ other at hop limit 0, so none of them repeats a frame that went out from the sam
 - **Keys between local nodes:** a node decrypts a DM only with the sender's key in its node DB.
   Nodes on one host may never have heard each other's NodeInfo, so on every connect the bridge adds
   every other identity as a verified contact (`add_contact`), and the node to the others.
+- **Link traffic** (MQTT downlinks, UDP multicast) reaches hosted nodes too: the bridge plays each
+  packet into them. Without `relay_mqtt` it arrives at hop limit 0 and without the via-MQTT mark
+  (else a relay that ignores MQTT drops it before its identity sees it); with `relay_mqtt` it keeps
+  its hop limit and mark, so the relay repeats it like any node. Hosted identities never ignore
+  MQTT: they don't repeat anyway.
 - **Same-mast packets** are played back with hop limit and hop start 0: zero hops (2.8 counts a
   modern packet with hop start 0 as zero hops), and nothing to repeat.
 - **A board radio** (`nodes.BoardRadio`, driver `meshtastic`) is a board on stock Meshtastic

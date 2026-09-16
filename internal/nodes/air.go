@@ -304,6 +304,27 @@ func (a *LoRaAir) Heard(f radio.Frame) {
 	}
 }
 
+// LinkHeard injects a packet that came over a link (MQTT, UDP) into every hosted node, at hop limit
+// 0: they get it, but whether it goes on air is the link's decision (relay_mqtt), not theirs.
+func (a *LoRaAir) LinkHeard(p *pb.MeshPacket) {
+	a.recent.put(p)
+	hop := uint32(0)
+	q := p
+	if a.h.Config().IgnoreMQTT {
+		// Broker traffic isn't repeated here: deliver it only, unmarked, or a node that ignores
+		// MQTT (as the relay then does) would drop it before its own identity saw it.
+		q = proto.Clone(p).(*pb.MeshPacket)
+		q.ViaMqtt = false
+	} else {
+		hop = p.HopLimit // the link allows repeats: the relay decides like any node
+	}
+	for _, n := range a.snapshot() {
+		if n.num != p.From {
+			a.inject(n, q, 0, 0, hop, p.HopStart)
+		}
+	}
+}
+
 // Transmitted injects what the host sent into the joined nodes that didn't send it, at hop limit
 // 0: they stand where the sender does, so they know the packet and don't repeat it.
 func (a *LoRaAir) Transmitted(frame []byte, pkt *pb.MeshPacket, origin uint32) {
