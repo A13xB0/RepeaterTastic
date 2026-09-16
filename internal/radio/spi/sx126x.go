@@ -83,28 +83,11 @@ func (s *sx126x) init() error {
 	if err := s.cmd(cmdSetPacketType, 0x01); err != nil {
 		return fmt.Errorf("LoRa packet type: %w", err)
 	}
-	// The LoRa sync word register reads 0x1424 after reset: proof that SPI, CS and BUSY work.
-	sw, err := s.readRegister(regSyncWord, 2)
-	if err != nil {
+	if err := s.checkSyncWord(); err != nil {
 		return err
 	}
-	if sw[0] != loraSyncWordReset1 || sw[1] != loraSyncWordReset2 {
-		return fmt.Errorf("the chip didn't answer as an SX126x (sync word register %02x%02x, want 1424): check spidev, CS and wiring", sw[0], sw[1])
-	}
-	if s.board.TCXOVolt > 0 {
-		// 5 ms start-up (160 × 31.25 µs), then recalibrate everything with the TCXO running.
-		if err := s.cmd(cmdSetDIO3AsTcxoCtrl, tcxoCode(s.board.TCXOVolt), 0x00, 0x00, 0xA0); err != nil {
-			return fmt.Errorf("TCXO: %w", err)
-		}
-		if err := s.cmd(cmdClearDeviceErrors, 0x00, 0x00); err != nil {
-			return err
-		}
-		if err := s.cmd(cmdCalibrate, 0x7F); err != nil {
-			return fmt.Errorf("calibrate: %w", err)
-		}
-		if err := s.waitBusy(time.Second); err != nil {
-			return fmt.Errorf("calibrate: %w", err)
-		}
+	if err := s.startTCXO(); err != nil {
+		return err
 	}
 	if err := s.cmd(cmdSetRegulatorMode, 0x01); err != nil { // DC-DC
 		return err
@@ -127,6 +110,40 @@ func (s *sx126x) init() error {
 	return nil
 }
 
+// checkSyncWord reads the LoRa sync word register, which reads 0x1424 after reset: proof that SPI,
+// CS and BUSY work.
+func (s *sx126x) checkSyncWord() error {
+	sw, err := s.readRegister(regSyncWord, 2)
+	if err != nil {
+		return err
+	}
+	if sw[0] != loraSyncWordReset1 || sw[1] != loraSyncWordReset2 {
+		return fmt.Errorf("the chip didn't answer as an SX126x (sync word register %02x%02x, want 1424): check spidev, CS and wiring", sw[0], sw[1])
+	}
+	return nil
+}
+
+// startTCXO powers the board's TCXO from DIO3, if it has one, and recalibrates with it running.
+func (s *sx126x) startTCXO() error {
+	if s.board.TCXOVolt <= 0 {
+		return nil
+	}
+	// 5 ms start-up (160 × 31.25 µs), then recalibrate everything with the TCXO running.
+	if err := s.cmd(cmdSetDIO3AsTcxoCtrl, tcxoCode(s.board.TCXOVolt), 0x00, 0x00, 0xA0); err != nil {
+		return fmt.Errorf("TCXO: %w", err)
+	}
+	if err := s.cmd(cmdClearDeviceErrors, 0x00, 0x00); err != nil {
+		return err
+	}
+	if err := s.cmd(cmdCalibrate, 0x7F); err != nil {
+		return fmt.Errorf("calibrate: %w", err)
+	}
+	if err := s.waitBusy(time.Second); err != nil {
+		return fmt.Errorf("calibrate: %w", err)
+	}
+	return nil
+}
+
 func (s *sx126x) powerRange(uint32) (int, int) { return -9, boardLimit(22, s.board.MaxPower) }
 
 func (s *sx126x) configure(c radio.Config, power int) error {
@@ -137,18 +154,8 @@ func (s *sx126x) configure(c radio.Config, power int) error {
 	if c.FrequencyHz < 150_000_000 || c.FrequencyHz > 960_000_000 {
 		return fmt.Errorf("%w: %d Hz is outside the SX126x's 150–960 MHz", radio.ErrUnsupported, c.FrequencyHz)
 	}
-	frf := uint32(uint64(c.FrequencyHz) * (1 << 25) / 32_000_000)
-	if err := s.cmd(cmdSetRfFrequency, byte(frf>>24), byte(frf>>16), byte(frf>>8), byte(frf)); err != nil {
+	if err := s.tune(c.FrequencyHz); err != nil {
 		return err
-	}
-	if band := imageBand(c.FrequencyHz); band != s.imageBand {
-		if err := s.cmd(cmdCalibrateImage, band[0], band[1]); err != nil {
-			return err
-		}
-		if err := s.waitBusy(time.Second); err != nil {
-			return fmt.Errorf("image calibration: %w", err)
-		}
-		s.imageBand = band
 	}
 	if err := s.cmd(cmdSetModulationParams, c.SF, bw, c.CR-4, ldro(c)); err != nil {
 		return err
@@ -157,6 +164,42 @@ func (s *sx126x) configure(c radio.Config, power int) error {
 	if err := s.packetParams(0xFF); err != nil {
 		return err
 	}
+	if err := s.setModulationRegisters(c); err != nil {
+		return err
+	}
+	if err := s.setPower(power); err != nil {
+		return err
+	}
+	if err := s.writeRegister(regRxGain, rxGainBoosted); err != nil {
+		return err
+	}
+	// Undocumented RX sensitivity patch meshtasticd applies (recommended by Heltec/Semtech): bit 0
+	// of register 0x08B5.
+	return s.updateRegister(0x08B5, func(v byte) byte { return v | 0x01 })
+}
+
+// tune sets the frequency, recalibrating image rejection when it's in a different band.
+func (s *sx126x) tune(freqHz uint32) error {
+	frf := uint32(uint64(freqHz) * (1 << 25) / 32_000_000)
+	if err := s.cmd(cmdSetRfFrequency, byte(frf>>24), byte(frf>>16), byte(frf>>8), byte(frf)); err != nil {
+		return err
+	}
+	band := imageBand(freqHz)
+	if band == s.imageBand {
+		return nil
+	}
+	if err := s.cmd(cmdCalibrateImage, band[0], band[1]); err != nil {
+		return err
+	}
+	if err := s.waitBusy(time.Second); err != nil {
+		return fmt.Errorf("image calibration: %w", err)
+	}
+	s.imageBand = band
+	return nil
+}
+
+// setModulationRegisters applies the modulation errata and writes the sync word.
+func (s *sx126x) setModulationRegisters(c radio.Config) error {
 	// Errata 15.1: modulation quality at 500 kHz.
 	if err := s.updateRegister(regTxModulation, func(v byte) byte {
 		if c.BandwidthHz == 500_000 {
@@ -171,9 +214,11 @@ func (s *sx126x) configure(c radio.Config, power int) error {
 		return err
 	}
 	// Sync word 0x2B becomes 0x24B4 (RadioLib setSyncWord with control bits 0x44).
-	if err := s.writeRegister(regSyncWord, syncWordPair(c.SyncWord)...); err != nil {
-		return err
-	}
+	return s.writeRegister(regSyncWord, syncWordPair(c.SyncWord)...)
+}
+
+// setPower configures the PA and TX power, with the antenna mismatch errata and current limit.
+func (s *sx126x) setPower(power int) error {
 	// High-power PA, optimal for +22 dBm (datasheet table 13-21); same for SX1268 and LLCC68.
 	if err := s.cmd(cmdSetPaConfig, 0x04, 0x07, 0x00, 0x01); err != nil {
 		return err
@@ -185,15 +230,7 @@ func (s *sx126x) configure(c radio.Config, power int) error {
 	if err := s.updateRegister(regTxClampConfig, func(v byte) byte { return v | 0x1E }); err != nil {
 		return err
 	}
-	if err := s.writeRegister(regOCPConfig, 0x38); err != nil { // 140 mA, as Meshtastic sets for SX126x
-		return err
-	}
-	if err := s.writeRegister(regRxGain, rxGainBoosted); err != nil {
-		return err
-	}
-	// Undocumented RX sensitivity patch meshtasticd applies (recommended by Heltec/Semtech): bit 0
-	// of register 0x08B5.
-	return s.updateRegister(0x08B5, func(v byte) byte { return v | 0x01 })
+	return s.writeRegister(regOCPConfig, 0x38) // 140 mA, as Meshtastic sets for SX126x
 }
 
 func (s *sx126x) standby() error { return s.cmd(cmdSetStandby, 0x00) }

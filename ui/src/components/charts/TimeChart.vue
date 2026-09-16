@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Hand-rolled SVG line/area chart over time with one y-axis, optional reference line and hover crosshair.
 import { computed, ref } from 'vue'
-import { niceMax, timeTick, useWidth } from './useWidth'
+import { niceMax, tickAnchor, timeTick, useWidth } from './useWidth'
 
 export interface TimeSeries {
   name: string
@@ -62,7 +62,7 @@ const xTicks = computed(() => {
   const span = props.times[n.value - 1]! - props.times[0]!
   return Array.from({ length: count }, (_, k) => {
     const i = Math.round((k / (count - 1)) * (n.value - 1))
-    return { x: x(i), label: timeTick(props.times[i]!, span), anchor: k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle' }
+    return { x: x(i), label: timeTick(props.times[i]!, span), anchor: tickAnchor(k, count) }
   })
 })
 

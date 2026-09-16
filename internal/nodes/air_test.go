@@ -345,18 +345,8 @@ func TestAirLocalDirectMessagesStayOffAir(t *testing.T) {
 		return simTX(&pb.MeshPacket{From: personaNum, To: deskNum, Id: id, HopLimit: 3, HopStart: 3, WantAck: true, PkiEncrypted: true},
 			pb.PortNum_UNKNOWN_APP, cipher)
 	}
-	gotDM := func(id uint32) bool {
-		for _, p := range desk.Packets() {
-			var c pb.Compressed
-			if p.Id == id && p.GetDecoded().GetPortnum() == pb.PortNum_SIMULATOR_APP && proto.Unmarshal(p.GetDecoded().GetPayload(), &c) == nil &&
-				bytes.Equal(c.Data, cipher) && p.HopLimit == 3 {
-				return true
-			}
-		}
-		return false
-	}
 	r.node.Push(dm(3001))
-	eventually(t, "the DM handed to the desk", func() bool { return gotDM(3001) })
+	eventually(t, "the DM handed to the desk", func() bool { return gotDM(desk, 3001, cipher) })
 	select {
 	case f := <-r.far.Frames():
 		if p := wire.DecodeFrame(f.Data, 0, 0); p != nil && p.Id == 3001 {
@@ -364,13 +354,7 @@ func TestAirLocalDirectMessagesStayOffAir(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 	}
-	logged := false
-	for _, rec := range r.h.Packets.List(100, 0, nil) {
-		if rec.ID == 3001 && rec.Kind == "local" && rec.Transport == "internal" {
-			logged = true
-		}
-	}
-	if !logged {
+	if !loggedInternal(r.h, 3001) {
 		t.Fatal("local DM not in the packet log")
 	}
 
@@ -384,6 +368,28 @@ func TestAirLocalDirectMessagesStayOffAir(t *testing.T) {
 	if p := r.farFrame(t, func(p *pb.MeshPacket) bool { return p.Id == 3002 }); !bytes.Equal(p.GetEncrypted(), cipher) {
 		t.Fatalf("on air %v", p)
 	}
+}
+
+// gotDM reports whether the fake node was handed the DM id with cipher, hops intact.
+func gotDM(node *mtclienttest.Node, id uint32, cipher []byte) bool {
+	for _, p := range node.Packets() {
+		var c pb.Compressed
+		if p.Id == id && p.GetDecoded().GetPortnum() == pb.PortNum_SIMULATOR_APP && proto.Unmarshal(p.GetDecoded().GetPayload(), &c) == nil &&
+			bytes.Equal(c.Data, cipher) && p.HopLimit == 3 {
+			return true
+		}
+	}
+	return false
+}
+
+// loggedInternal reports whether the host logged packet id as a local, internal delivery.
+func loggedInternal(h *mesh.Host, id uint32) bool {
+	for _, rec := range h.Packets.List(100, 0, nil) {
+		if rec.ID == id && rec.Kind == "local" && rec.Transport == "internal" {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAirIntroducesLocalIdentities(t *testing.T) {

@@ -59,9 +59,14 @@ const unit = computed(() => {
 // The duty-cycle budget line is one radio's: the one picked, or the main radio's while looking at the
 // whole site (there's no single "site budget" to draw when radios can each run their own limit).
 const budgetStatus = computed(() => (radioFilter.value !== 'all' ? live.statuses[radioFilter.value] : live.statuses[MAIN_RADIO]) ?? live.status)
+/** Which radio the duty-cycle budget line names, or '' when it's unambiguous (a single-radio site). */
+function budgetRadioName() {
+  if (radioFilter.value !== 'all') return radioName(radioFilter.value)
+  return severalRadios.value ? radioName(MAIN_RADIO) : ''
+}
 const budgetLabel = computed(() => {
   const limit = budgetStatus.value?.airtime.duty_limit_pct ?? 10
-  const name = radioFilter.value !== 'all' ? radioName(radioFilter.value) : severalRadios.value ? radioName(MAIN_RADIO) : ''
+  const name = budgetRadioName()
   return name ? `${limit}% budget · ${name}` : `${limit}% budget`
 })
 
@@ -128,9 +133,10 @@ const windows: { id: StatsWindow; label: string }[] = [
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <RadioFilter v-model="radioFilter" id="stats-radio-filter" />
-        <div class="seg" role="group" aria-label="Window">
+        <fieldset class="seg">
+          <legend class="sr-only">Window</legend>
           <button type="button" v-for="w in windows" :key="w.id" :aria-pressed="win === w.id" :disabled="loading" @click="win = w.id">{{ w.label }}</button>
-        </div>
+        </fieldset>
       </div>
     </div>
 

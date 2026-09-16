@@ -19,7 +19,10 @@ import { now } from '@/composables/now'
 const radioFilter = ref('all')
 const multi = computed(() => live.radios.length > 1)
 /** The one radio this view is about: an explicit pick, or the site's only radio. Null while 'all' spans several. */
-const scopeRadioId = computed<string | null>(() => (radioFilter.value !== 'all' ? radioFilter.value : multi.value ? null : MAIN_RADIO))
+const scopeRadioId = computed<string | null>(() => {
+  if (radioFilter.value !== 'all') return radioFilter.value
+  return multi.value ? null : MAIN_RADIO
+})
 /** That radio's Status, only when the view is about exactly one radio (airtime limits and noise floor are per radio). */
 const scopeStatus = computed<Status | null>(() => (scopeRadioId.value ? (live.statuses[scopeRadioId.value] ?? null) : null))
 /** The radios whose counters make up this view: every radio for 'all', just the picked one otherwise. */
@@ -99,7 +102,7 @@ const inScope = (radioIds?: string[] | string) => {
   if (radioFilter.value === 'all') return true
   return Array.isArray(radioIds) ? radioIds.length === 0 || radioIds.includes(radioFilter.value) : radioIds === undefined || radioIds === radioFilter.value
 }
-const nodesActive = computed(() => Object.values(live.nodes).filter((n) => !n.local && now.value - n.last_heard < 2 * 3600_000 && inScope(n.heard_by)).length)
+const nodesActive = computed(() => Object.values(live.nodes).filter((n) => !n.local && now.value - n.last_heard < 2 * 3_600_000 && inScope(n.heard_by)).length)
 const nodesTotal = computed(() => Object.values(live.nodes).filter((n) => !n.local && inScope(n.heard_by)).length)
 const identitiesInScope = computed(() => live.identities.filter((i) => inScope(i.radio_id)))
 

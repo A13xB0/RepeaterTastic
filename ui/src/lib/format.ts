@@ -92,7 +92,7 @@ export function hwLabel(hw: string): string {
     HELTEC_V3: 'Heltec V3', T_ECHO: 'T-Echo', RAK4631: 'RAK4631', TBEAM: 'T-Beam', STATION_G2: 'Station G2', T_DECK: 'T-Deck',
     HELTEC_WIRELESS_TRACKER: 'Heltec Tracker', TRACKER_T1000_E: 'T1000-E', SEEED_XIAO_S3: 'XIAO S3', PORTDUINO: 'Virtual',
   }
-  return map[hw] ?? hw.replace(/_/g, ' ')
+  return map[hw] ?? hw.replaceAll('_', ' ')
 }
 
 export function utf8Len(s: string): number {
@@ -102,7 +102,7 @@ export function utf8Len(s: string): number {
 /** Stable hue per node for avatar badges. */
 export function nodeHue(id: string): number {
   let h = 0
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + (id.codePointAt(i) ?? 0)) >>> 0
   return h % 360
 }
 
@@ -110,5 +110,9 @@ export function pct(v: number, d = 1): string {
   return `${v.toFixed(d)}%`
 }
 
-export const snrClass = (snr: number | null) =>
-  snr == null ? 'text-ink-3' : snr >= 5 ? 'text-ok' : snr >= -5 ? 'text-ink-2' : snr >= -12 ? 'text-warn' : 'text-bad'
+export function snrClass(snr: number | null): string {
+  if (snr == null) return 'text-ink-3'
+  if (snr >= 5) return 'text-ok'
+  if (snr >= -5) return 'text-ink-2'
+  return snr >= -12 ? 'text-warn' : 'text-bad'
+}

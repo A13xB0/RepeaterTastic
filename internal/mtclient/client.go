@@ -147,7 +147,9 @@ func New(o Options) *Client {
 		o.Baud = 115200
 	}
 	if o.Logf == nil {
-		o.Logf = func(string, ...any) {}
+		o.Logf = func(string, ...any) {
+			// No logger given: drop the messages.
+		}
 	}
 	return &Client{opts: o, readyCh: make(chan struct{}), subs: map[chan Event]struct{}{},
 		waiters: map[uint32]*waiter{}, done: make(chan struct{}), firstDone: make(chan struct{})}
@@ -473,14 +475,9 @@ func (c *Client) session(ctx context.Context) (configured bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		conn.Close()
-		return false, context.Canceled
+	if err := c.attach(conn); err != nil {
+		return false, err
 	}
-	c.conn = conn
-	c.mu.Unlock()
 
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -497,49 +494,91 @@ func (c *Client) session(ctx context.Context) (configured bool, err error) {
 	})
 	defer configTimer.Stop()
 
-	c.writeMu.Lock()
-	_, err = conn.Write(wakeup)
-	c.writeMu.Unlock()
-	if err == nil {
-		err = c.write(conn, &pb.ToRadio{PayloadVariant: &pb.ToRadio_WantConfigId{WantConfigId: nonce}})
-	}
-	if err != nil {
+	if err := c.requestConfig(conn, nonce); err != nil {
 		return false, err
 	}
 
 	heartbeat := time.NewTicker(c.opts.Heartbeat)
 	defer heartbeat.Stop()
-	go func() {
-		for {
-			select {
-			case <-sctx.Done():
-				return
-			case <-heartbeat.C:
-				_ = c.write(conn, &pb.ToRadio{PayloadVariant: &pb.ToRadio_Heartbeat{Heartbeat: &pb.Heartbeat{Nonce: NewPacketID()}}})
-			}
-		}
-	}()
+	go c.sendHeartbeats(sctx, conn, heartbeat.C)
 
 	rerr := ReadFrames(conn, func(b []byte) bool {
-		fr := &pb.FromRadio{}
-		if proto.Unmarshal(b, fr) != nil {
-			return true
-		}
-		if !hs.done {
-			if hs.take(fr) {
-				configTimer.Stop()
-				configured = true
-				c.becomeReady(hs)
-			}
-			return true
-		}
-		if _, ok := fr.PayloadVariant.(*pb.FromRadio_Rebooted); ok {
-			return false // the node restarts its API session; reconnect for a fresh handshake
-		}
-		c.received(fr)
-		return true
+		return c.handleFrame(b, hs, func() {
+			configTimer.Stop()
+			configured = true
+		})
 	})
+	c.detach(rerr)
+	if rerr == nil {
+		rerr = errors.New("node rebooted")
+	}
+	if !configured && sctx.Err() != nil && ctx.Err() == nil {
+		rerr = fmt.Errorf("no config within %v", c.opts.ConfigTimeout)
+	}
+	return configured, rerr
+}
+
+// attach makes conn the client's link, or closes it if the client has been closed meanwhile.
+func (c *Client) attach(conn io.ReadWriteCloser) error {
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		conn.Close()
+		return context.Canceled
+	}
+	c.conn = conn
+	c.mu.Unlock()
+	return nil
+}
+
+// requestConfig wakes the node and asks for its whole configuration, tagged with nonce.
+func (c *Client) requestConfig(conn io.Writer, nonce uint32) error {
+	c.writeMu.Lock()
+	_, err := conn.Write(wakeup)
+	c.writeMu.Unlock()
+	if err != nil {
+		return err
+	}
+	return c.write(conn, &pb.ToRadio{PayloadVariant: &pb.ToRadio_WantConfigId{WantConfigId: nonce}})
+}
+
+// sendHeartbeats sends a heartbeat on every tick until ctx ends.
+func (c *Client) sendHeartbeats(ctx context.Context, conn io.Writer, tick <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick:
+			_ = c.write(conn, &pb.ToRadio{PayloadVariant: &pb.ToRadio_Heartbeat{Heartbeat: &pb.Heartbeat{Nonce: NewPacketID()}}})
+		}
+	}
+}
+
+// handleFrame takes one FromRadio: into the handshake until it completes (calling configured,
+// then going ready), and into the mirror after. It returns false when the node has rebooted.
+func (c *Client) handleFrame(b []byte, hs *handshake, configured func()) bool {
+	fr := &pb.FromRadio{}
+	if proto.Unmarshal(b, fr) != nil {
+		return true
+	}
+	if !hs.done {
+		if hs.take(fr) {
+			configured()
+			c.becomeReady(hs)
+		}
+		return true
+	}
+	if _, ok := fr.PayloadVariant.(*pb.FromRadio_Rebooted); ok {
+		return false // the node restarts its API session; reconnect for a fresh handshake
+	}
+	c.received(fr)
+	return true
+}
+
+// detach clears the link after it ends, telling subscribers if it had been ready.
+func (c *Client) detach(rerr error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	wasReady := c.ready
 	c.ready = false
 	c.readyCh = make(chan struct{})
@@ -548,14 +587,6 @@ func (c *Client) session(ctx context.Context) (configured bool, err error) {
 	if wasReady {
 		c.publishLocked(Event{Kind: Disconnected, Err: rerr})
 	}
-	c.mu.Unlock()
-	if rerr == nil {
-		rerr = errors.New("node rebooted")
-	}
-	if !configured && sctx.Err() != nil && ctx.Err() == nil {
-		rerr = fmt.Errorf("no config within %v", c.opts.ConfigTimeout)
-	}
-	return configured, rerr
 }
 
 func (c *Client) becomeReady(hs *handshake) {
@@ -604,14 +635,7 @@ func (c *Client) received(fr *pb.FromRadio) {
 // notePacketLocked answers a pending Request and keeps the node DB's last-heard details current.
 func (c *Client) notePacketLocked(p *pb.MeshPacket) {
 	d := p.GetDecoded()
-	if id := d.GetRequestId(); id != 0 {
-		if w, ok := c.waiters[id]; ok && (d.GetPortnum() != pb.PortNum_ROUTING_APP || !w.wantResponse || routingError(d)) {
-			select {
-			case w.ch <- p:
-			default:
-			}
-		}
-	}
+	c.answerWaiterLocked(p, d)
 	if p.GetFrom() == 0 || d == nil {
 		return
 	}
@@ -630,6 +654,28 @@ func (c *Client) notePacketLocked(p *pb.MeshPacket) {
 		h := p.GetHopStart() - p.GetHopLimit()
 		n.HopsAway = &h
 	}
+	notePayload(n, d)
+}
+
+// answerWaiterLocked hands p to the Request waiting for it, if any. A routing ack doesn't answer a
+// request that wants a response; a routing error does.
+func (c *Client) answerWaiterLocked(p *pb.MeshPacket, d *pb.Data) {
+	id := d.GetRequestId()
+	if id == 0 {
+		return
+	}
+	w, ok := c.waiters[id]
+	if !ok || (d.GetPortnum() == pb.PortNum_ROUTING_APP && w.wantResponse && !routingError(d)) {
+		return
+	}
+	select {
+	case w.ch <- p:
+	default:
+	}
+}
+
+// notePayload copies a heard user, position or device metrics into the node's entry.
+func notePayload(n *pb.NodeInfo, d *pb.Data) {
 	switch d.GetPortnum() {
 	case pb.PortNum_NODEINFO_APP:
 		var u pb.User

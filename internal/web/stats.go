@@ -31,8 +31,11 @@ type rfHistory struct {
 
 const rfKeep = 7 * 24 * 60
 
-func (s *Server) sampleRF(ctx context.Context, rc *radioCtx) {
-	t := time.NewTicker(time.Minute)
+func (s *Server) sampleRF(ctx context.Context, rc *radioCtx) { s.sampleRFEvery(ctx, rc, time.Minute) }
+
+// sampleRFEvery is sampleRF with the sampling period as a parameter (tests sample faster).
+func (s *Server) sampleRFEvery(ctx context.Context, rc *radioCtx, every time.Duration) {
+	t := time.NewTicker(every)
 	defer t.Stop()
 	var lastRx, lastTx uint64
 	for {
@@ -140,14 +143,7 @@ func identityStats(rc *radioCtx, window time.Duration) []*identityStat {
 	h := rc.host
 	now := time.Now()
 	cut := now.Add(-window).UnixMilli()
-	airtime := map[string]float64{}
-	var relayMs float64
-	for _, b := range h.Air.Buckets(now, window) {
-		for k, v := range b.ByIdentity {
-			airtime[wire.NodeID(k)] += v
-		}
-		relayMs += b.RelayMs
-	}
+	airtime, relayMs := identityAirtime(h, now, window)
 	stats := map[string]*identityStat{}
 	var out []*identityStat
 	for _, id := range h.Identities() {
@@ -157,40 +153,72 @@ func identityStats(rc *radioCtx, window time.Duration) []*identityStat {
 		}
 		stats[id.NodeID()] = st
 		out = append(out, st)
-		for _, m := range h.Messages.Window(id.NodeNum, cut) {
-			switch m.Status {
-			case "acked":
-				st.AckOK++
-			case "failed":
-				st.AckFail++
-			}
-		}
+		countAcks(st, h.Messages.Window(id.NodeNum, cut))
 	}
 	relayID := ""
 	if rel := h.Relay(); rel != nil {
 		relayID = rel.NodeID()
 	}
 	for _, p := range h.Packets.List(5000, 0, func(p *mesh.PacketRecord) bool { return p.Time >= cut }) {
-		switch {
-		case p.Direction == "tx" && p.Kind == "ours":
-			if st := stats[p.From]; st != nil {
-				st.Tx++
-			}
-		case p.Direction == "tx" && p.Kind == "relayed":
-			if st := stats[relayID]; st != nil {
-				st.Tx++
-			}
-		case p.Direction == "rx" && p.Kind == "delivered":
-			if st := stats[p.To]; st != nil {
-				st.Rx++
-			} else if p.To == "!ffffffff" {
-				for _, st := range stats {
-					st.Rx++
-				}
-			}
-		}
+		countPacket(stats, relayID, p)
 	}
 	return out
+}
+
+// identityAirtime sums a window's airtime by identity, and the relaying airtime apart.
+func identityAirtime(h *mesh.Host, now time.Time, window time.Duration) (map[string]float64, float64) {
+	airtime := map[string]float64{}
+	var relayMs float64
+	for _, b := range h.Air.Buckets(now, window) {
+		for k, v := range b.ByIdentity {
+			airtime[wire.NodeID(k)] += v
+		}
+		relayMs += b.RelayMs
+	}
+	return airtime, relayMs
+}
+
+// countAcks counts an identity's acknowledged and failed messages.
+func countAcks(st *identityStat, msgs []mesh.Message) {
+	for _, m := range msgs {
+		switch m.Status {
+		case "acked":
+			st.AckOK++
+		case "failed":
+			st.AckFail++
+		}
+	}
+}
+
+// countPacket adds one packet to the identity that sent or received it: relayed packets count
+// for the relay persona, and delivered broadcasts for every identity.
+func countPacket(stats map[string]*identityStat, relayID string, p mesh.PacketRecord) {
+	switch {
+	case p.Direction == "tx" && p.Kind == "ours":
+		if st := stats[p.From]; st != nil {
+			st.Tx++
+		}
+	case p.Direction == "tx" && p.Kind == "relayed":
+		if st := stats[relayID]; st != nil {
+			st.Tx++
+		}
+	case p.Direction == "rx" && p.Kind == "delivered":
+		countDelivered(stats, p.To)
+	}
+}
+
+// countDelivered counts a delivered packet for its identity, or for all of them if it was a broadcast.
+func countDelivered(stats map[string]*identityStat, to string) {
+	if st := stats[to]; st != nil {
+		st.Rx++
+		return
+	}
+	if to != "!ffffffff" {
+		return
+	}
+	for _, st := range stats {
+		st.Rx++
+	}
 }
 
 func (s *Server) listPackets(w http.ResponseWriter, r *http.Request) {

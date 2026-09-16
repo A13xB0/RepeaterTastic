@@ -42,37 +42,54 @@ func AppendFrame(dst, payload []byte) ([]byte, error) {
 func ReadFrames(r io.Reader, fn func([]byte) bool) error {
 	br := bufio.NewReader(r)
 	for {
-		b, err := br.ReadByte()
+		payload, ok, err := nextFrame(br)
 		if err != nil {
 			return err
 		}
-		if b != start1 {
-			continue
-		}
-		b, err = br.ReadByte()
-		if err != nil {
-			return err
-		}
-		if b != start2 {
-			if b == start1 {
-				_ = br.UnreadByte()
-			}
-			continue
-		}
-		var lenBuf [2]byte
-		if _, err := io.ReadFull(br, lenBuf[:]); err != nil {
-			return err
-		}
-		n := int(binary.BigEndian.Uint16(lenBuf[:]))
-		if n > MaxFrame {
-			continue
-		}
-		payload := make([]byte, n)
-		if _, err := io.ReadFull(br, payload); err != nil {
-			return err
-		}
-		if !fn(payload) {
+		if ok && !fn(payload) {
 			return nil
 		}
 	}
+}
+
+// nextFrame reads the next frame's payload. ok is false when what it read wasn't a frame (a stray
+// byte) or was an oversize one, whose payload is left to be skipped as stray bytes.
+func nextFrame(br *bufio.Reader) (payload []byte, ok bool, err error) {
+	found, err := readStart(br)
+	if !found || err != nil {
+		return nil, false, err
+	}
+	var lenBuf [2]byte
+	if _, err := io.ReadFull(br, lenBuf[:]); err != nil {
+		return nil, false, err
+	}
+	n := int(binary.BigEndian.Uint16(lenBuf[:]))
+	if n > MaxFrame {
+		return nil, false, nil
+	}
+	payload = make([]byte, n)
+	if _, err := io.ReadFull(br, payload); err != nil {
+		return nil, false, err
+	}
+	return payload, true, nil
+}
+
+// readStart reads a byte, and the next if it's start1, reporting whether they were the start
+// marker. A start1 where start2 should be is put back: it may begin the real marker.
+func readStart(br *bufio.Reader) (bool, error) {
+	b, err := br.ReadByte()
+	if err != nil || b != start1 {
+		return false, err
+	}
+	b, err = br.ReadByte()
+	if err != nil {
+		return false, err
+	}
+	if b == start2 {
+		return true, nil
+	}
+	if b == start1 {
+		_ = br.UnreadByte()
+	}
+	return false, nil
 }

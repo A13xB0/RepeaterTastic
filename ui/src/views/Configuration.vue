@@ -100,9 +100,18 @@ watch(tab, (t) => {
   }
 })
 
-const section = computed(() => (['backup', 'meshtasticd', 'radio'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
+/** The config section a tab edits; null for tabs with no single section (Radios, meshtasticd, backup). */
+function sectionForTab(t: Tab) {
+  if (['backup', 'meshtasticd', 'radio'].includes(t)) return null
+  if (t === 'position') return 'position'
+  return t
+}
+const section = computed(() => sectionForTab(tab.value))
 // The Position tab edits two config sections.
-const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
+const sections = computed<(keyof Config)[]>(() => {
+  if (tab.value === 'position') return ['position', 'hardware']
+  return section.value ? [section.value as keyof Config] : []
+})
 const dirty = computed(() => {
   if (!form.value || !saved.value) return false
   return sections.value.some((s) => JSON.stringify(form.value![s]) !== JSON.stringify(saved.value![s]))

@@ -130,25 +130,30 @@ func (s *Server) radioStats(ctx context.Context) radio.Stats { return s.radios[0
 // path, else ?radio=<id>, else the main radio. Every endpoint therefore keeps working
 // unchanged on a single-radio host.
 func (s *Server) radioFor(r *http.Request) *radioCtx {
-	if r != nil {
-		if raw := r.PathValue("id"); raw != "" {
-			if num, err := wire.ParseNodeID(raw); err == nil {
-				for _, rc := range s.radios {
-					if rc.host.Identity(num) != nil {
-						return rc
-					}
-				}
-			}
-		}
-		if want := r.URL.Query().Get("radio"); want != "" {
-			for _, rc := range s.radios {
-				if rc.id == want {
-					return rc
-				}
-			}
+	if r == nil {
+		return s.radios[0]
+	}
+	if rc := s.radioWithIdentity(r.PathValue("id")); rc != nil {
+		return rc
+	}
+	if want := r.URL.Query().Get("radio"); want != "" {
+		if rc := s.radioByID(want); rc != nil {
+			return rc
 		}
 	}
 	return s.radios[0]
+}
+
+// radioWithIdentity is the radio holding the identity with that node id, or nil.
+func (s *Server) radioWithIdentity(raw string) *radioCtx {
+	if raw == "" {
+		return nil
+	}
+	num, err := wire.ParseNodeID(raw)
+	if err != nil {
+		return nil
+	}
+	return s.radioHolding(num)
 }
 
 func (s *Server) hostFor(r *http.Request) *mesh.Host { return s.radioFor(r).host }
@@ -353,7 +358,7 @@ func (s *Server) spa() http.Handler {
 			// A missing asset is a 404, not the app page: a tab still running an older build asks
 			// for chunks that no longer exist, and must see the failure so it can reload.
 			if strings.HasPrefix(p, "assets/") {
-				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set(cacheControl, "no-store")
 				http.NotFound(w, r)
 				return
 			}
@@ -362,9 +367,9 @@ func (s *Server) spa() http.Handler {
 			p = "index.html"
 		}
 		if strings.HasPrefix(p, "assets/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.Header().Set(cacheControl, "public, max-age=31536000, immutable")
 		} else {
-			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set(cacheControl, "no-cache")
 		}
 		files.ServeHTTP(w, r)
 	})
@@ -380,6 +385,30 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// cacheControl is the header that says how long a browser may keep a response.
+const cacheControl = "Cache-Control"
+
+// statusError is an error a handler's helper returns with the HTTP status it should get.
+type statusError struct {
+	code int
+	msg  string
+}
+
+func (e *statusError) Error() string { return e.msg }
+
+// errStatus makes a statusError.
+func errStatus(code int, msg string) error { return &statusError{code: code, msg: msg} }
+
+// writeStatusError writes err with its status, or with fallback if it doesn't carry one.
+func writeStatusError(w http.ResponseWriter, fallback int, err error) {
+	var se *statusError
+	if errors.As(err, &se) {
+		writeError(w, se.code, se.msg)
+		return
+	}
+	writeError(w, fallback, err.Error())
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {

@@ -61,7 +61,7 @@ var _ mesh.Hoster = (*Hosting)(nil)
 // NewHosting runs hosted nodes until ctx ends.
 func NewHosting(ctx context.Context, o HostingOptions) *Hosting {
 	if o.Logf == nil {
-		o.Logf = func(string, ...any) {}
+		o.Logf = discardLogf
 	}
 	return &Hosting{ctx: ctx, opts: o, nodes: map[*Node]*hostedEntry{}, starting: map[int]bool{}}
 }
@@ -228,6 +228,22 @@ type Health struct {
 	Launcher string   `json:"launcher"`
 }
 
+// settling reports whether a node that isn't up is still starting or rebooting, so not yet a problem.
+func (e *hostedEntry) settling(st HostedStatus, now time.Time) bool {
+	return now.Sub(e.started) < startGrace && st.Restarts == 0 || rebooting(st, now)
+}
+
+// downReason says why a node isn't up.
+func downReason(st HostedStatus) string {
+	switch {
+	case st.LastError != "":
+		return st.LastError
+	case !st.Running:
+		return "not running"
+	}
+	return "not connected"
+}
+
 // Health reports whether meshtasticd runs and every node is connected.
 func (x *Hosting) Health() Health {
 	now := time.Now()
@@ -255,20 +271,15 @@ func (x *Hosting) Health() Health {
 			}
 			continue
 		}
-		if now.Sub(r.e.started) < startGrace && r.st.Restarts == 0 || rebooting(r.st, now) {
+		if r.e.settling(r.st, now) {
 			starting = true
 			continue
 		}
 		who := r.e.who()
-		personaDown = personaDown || r.e.role == "persona"
-		why := "not connected"
-		switch {
-		case r.st.LastError != "":
-			why = r.st.LastError
-		case !r.st.Running:
-			why = "not running"
+		if r.e.role == "persona" {
+			personaDown = true
 		}
-		h.Problems = append(h.Problems, fmt.Sprintf("%s: %s", who, why))
+		h.Problems = append(h.Problems, fmt.Sprintf("%s: %s", who, downReason(r.st)))
 	}
 	switch {
 	case launchErr != "" && h.Up == 0:

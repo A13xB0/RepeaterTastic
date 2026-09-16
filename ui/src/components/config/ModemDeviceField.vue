@@ -58,7 +58,8 @@ function nodeAddress(): string {
   const h = host.value.trim()
   if (!h) return ''
   const bracketed = h.includes(':') ? `[${h}]` : h
-  return port.value === 4403 ? (h.includes(':') ? bracketed : h) : `${bracketed}:${port.value}`
+  if (port.value !== 4403) return `${bracketed}:${port.value}`
+  return h.includes(':') ? bracketed : h
 }
 
 function sync() {
@@ -94,11 +95,12 @@ onMounted(async () => {
   <div>
     <div class="flex flex-wrap items-center justify-between gap-2">
       <span class="label !mb-0">{{ label }}</span>
-      <div class="seg" role="group" :aria-label="`${label} connection`">
+      <fieldset class="seg">
+        <legend class="sr-only">{{ label }} connection</legend>
         <button type="button" :aria-pressed="kind === 'serial'" @click="kind = 'serial'">USB modem</button>
         <button type="button" :aria-pressed="kind === 'board'" @click="kind = 'board'">Board</button>
         <button type="button" :aria-pressed="kind === 'node'" @click="kind = 'node'">Meshtastic firmware</button>
-      </div>
+      </fieldset>
     </div>
 
     <template v-if="kind === 'serial'">
@@ -118,10 +120,11 @@ onMounted(async () => {
 
     <template v-else>
       <div class="mt-2 flex flex-wrap items-center gap-2">
-        <div class="seg" role="group" aria-label="How the board is connected">
+        <fieldset class="seg">
+          <legend class="sr-only">How the board is connected</legend>
           <button type="button" :aria-pressed="via === 'usb'" @click="via = 'usb'">USB</button>
           <button type="button" :aria-pressed="via === 'net'" @click="via = 'net'">Network</button>
-        </div>
+        </fieldset>
         <input v-if="via === 'usb'" :id="`${props.id}-node-serial`" v-model="nodePort" class="input mono min-w-0 flex-1" :list="`${props.id}-node-ports`" placeholder="/dev/ttyACM0" aria-label="Board serial port" spellcheck="false" />
         <template v-else>
           <input :id="`${props.id}-node-host`" v-model="host" class="input mono min-w-0 flex-1" placeholder="192.168.1.20 or meshtastic.local" aria-label="Board address" spellcheck="false" />

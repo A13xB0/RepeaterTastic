@@ -124,7 +124,10 @@ func ClampPrivateKey(priv []byte) []byte {
 
 // Clamped reports whether an X25519 private key is in clamped form.
 func Clamped(priv []byte) bool {
-	return len(priv) == 32 && priv[0]&7 == 0 && priv[31]&128 == 0 && priv[31]&64 != 0
+	if len(priv) != 32 {
+		return false
+	}
+	return priv[0]&7 == 0 && priv[31]&128 == 0 && priv[31]&64 != 0
 }
 
 // PublicKey derives the X25519 public key.

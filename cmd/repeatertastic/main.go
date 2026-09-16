@@ -82,6 +82,54 @@ func run(cfgPath string) error {
 	}
 	cfg.ApplyEnv()
 	logs := logbuf.New(2000)
+	level, log := newLogger(cfg, logs)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if restoredConfig {
+		log.Info("configuration restored from a backup")
+	}
+	applyStagedIdentities(cfg, log)
+
+	radios, err := startRadios(ctx, cfg.RadioConfigs(), log)
+	for _, rt := range radios {
+		defer rt.radio.Close()
+	}
+	if err != nil {
+		return err
+	}
+	logs.OnEntry(func(e logbuf.Entry) { publishAll(radios, mesh.Event{Type: "log", Data: e}) })
+
+	// The radios of the mast know each other's identities.
+	mesh.JoinSite(radioHosts(radios)...)
+	st := newSite(cfg, radios, log)
+
+	if cfg.MDNS.Enabled {
+		go runMDNS(ctx, radioHosts(radios), log)
+	}
+
+	var pm *plugins.Manager
+	if cfg.Plugins.Enabled {
+		if pm, err = startPlugins(ctx, cfg, radios, log); err != nil {
+			return err
+		}
+		defer func() { stop(); pm.Wait() }() // plugins stop before the radios close
+	}
+
+	if cfg.Web.Enabled {
+		opts := web.Options{Config: cfg, Logs: logs, LogLevel: level, Plugins: pm,
+			Restart: func() { restartRequested.Store(true); stop() },
+			Site:    st, Version: version, Log: log}
+		if err := startWeb(ctx, opts, radios, log); err != nil {
+			return err
+		}
+	}
+
+	return runRadios(ctx, stop, radios, log)
+}
+
+// newLogger builds the logger at the configured level, copying entries into logs for the GUI.
+func newLogger(cfg *config.Config, logs *logbuf.Buffer) (*slog.LevelVar, *slog.Logger) {
 	level := new(slog.LevelVar) // the web GUI changes it live
 	var l slog.Level
 	if l.UnmarshalText([]byte(strings.ToUpper(cfg.LogLevel))) == nil {
@@ -89,19 +137,21 @@ func run(cfgPath string) error {
 	}
 	log := slog.New(logbuf.NewHandler(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}), logs))
 	slog.SetDefault(log)
+	return level, log
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if restoredConfig {
-		log.Info("configuration restored from a backup")
-	}
-	for _, rc := range cfg.RadioConfigs() { // ...and its identities, before any radio loads them
+// applyStagedIdentities moves restored identity files into place before any radio loads them.
+func applyStagedIdentities(cfg *config.Config, log *slog.Logger) {
+	for _, rc := range cfg.RadioConfigs() {
 		if applyStaged(filepath.Join(rc.StateDir, "identities.json")) {
 			log.Info("identities restored from a backup", "radio", rc.ID)
 		}
 	}
+}
 
-	rcs := cfg.RadioConfigs()
+// startRadios starts every radio in order. On failure it still returns the radios that
+// started, so the caller can close them.
+func startRadios(ctx context.Context, rcs []config.RadioConfig, log *slog.Logger) ([]*radioRuntime, error) {
 	uplinked := mqtt.NewUplinked() // one per site: a packet heard on two radios is published once
 	var radios []*radioRuntime
 	for _, rc := range rcs {
@@ -111,101 +161,104 @@ func run(cfgPath string) error {
 		}
 		rt, err := startRadio(ctx, rc, len(radios), rlog, uplinked)
 		if err != nil {
-			return fmt.Errorf("radio %s: %w", rc.ID, err)
+			return radios, fmt.Errorf("radio %s: %w", rc.ID, err)
 		}
-		defer rt.radio.Close()
 		radios = append(radios, rt)
 	}
-	primary := radios[0]
-	logs.OnEntry(func(e logbuf.Entry) {
-		for _, rt := range radios {
-			rt.host.Bus.Publish(mesh.Event{Type: "log", Data: e})
-		}
-	})
+	return radios, nil
+}
 
-	// The radios of the mast know each other's identities.
+// publishAll puts e on every radio's event bus.
+func publishAll(radios []*radioRuntime, e mesh.Event) {
+	for _, rt := range radios {
+		rt.host.Bus.Publish(e)
+	}
+}
+
+// radioHosts lists the radios' mesh hosts.
+func radioHosts(radios []*radioRuntime) []*mesh.Host {
 	hosts := make([]*mesh.Host, 0, len(radios))
 	for _, rt := range radios {
 		hosts = append(hosts, rt.host)
 	}
-	mesh.JoinSite(hosts...)
+	return hosts
+}
 
-	// One site coordinator whenever several radios share a mast (co-channel transmit
-	// turns) or a site-wide airtime budget is set.
-	var st *site.Site
-	if len(radios) > 1 || cfg.Site.DutyCyclePct > 0 {
-		st = site.New(cfg.Site.DutyCyclePct)
-		for _, rt := range radios {
-			st.Add(rt.host)
-		}
-		for _, rt := range radios {
-			if o := st.Overlaps(rt.host); len(o) > 0 {
-				ids := make([]string, 0, len(o))
-				for _, h := range o {
-					ids = append(ids, h.RadioID())
-				}
-				log.Warn("radio shares its channel with other radios on this site; they will take turns to transmit",
-					"radio", rt.rc.ID, "overlaps", strings.Join(ids, ","))
-			}
-		}
+// newSite makes the site coordinator whenever several radios share a mast (co-channel transmit
+// turns) or a site-wide airtime budget is set, and nil otherwise.
+func newSite(cfg *config.Config, radios []*radioRuntime, log *slog.Logger) *site.Site {
+	if len(radios) <= 1 && cfg.Site.DutyCyclePct <= 0 {
+		return nil
 	}
-
-	if cfg.MDNS.Enabled {
-		hosts := make([]*mesh.Host, 0, len(radios))
-		for _, rt := range radios {
-			hosts = append(hosts, rt.host)
-		}
-		go runMDNS(ctx, hosts, log)
+	st := site.New(cfg.Site.DutyCyclePct)
+	for _, rt := range radios {
+		st.Add(rt.host)
 	}
-
-	var pm *plugins.Manager
-	if cfg.Plugins.Enabled {
-		prs := make([]plugins.Radio, 0, len(radios))
-		for _, rt := range radios {
-			prs = append(prs, plugins.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Host: rt.host})
+	for _, rt := range radios {
+		o := st.Overlaps(rt.host)
+		if len(o) == 0 {
+			continue
 		}
-		pm, err = plugins.New(plugins.Options{Config: cfg.Plugins, Dir: cfg.PluginDir(), Radios: prs, Version: version, Log: log,
-			Notify: func(id string) {
-				for _, rt := range radios {
-					rt.host.Bus.Publish(mesh.Event{Type: "plugin", Data: id})
-				}
-			}})
-		if err != nil {
-			return fmt.Errorf("plugins: %w", err)
+		ids := make([]string, 0, len(o))
+		for _, h := range o {
+			ids = append(ids, h.RadioID())
 		}
-		// A repeater keeps repeating even if plugins can't start: say why in the log and the GUI.
-		if err := pm.Start(ctx); err != nil {
-			log.Error("plugins couldn't start", "err", err)
-		}
-		defer func() { stop(); pm.Wait() }() // plugins stop before the radios close
+		log.Warn("radio shares its channel with other radios on this site; they will take turns to transmit",
+			"radio", rt.rc.ID, "overlaps", strings.Join(ids, ","))
 	}
+	return st
+}
 
-	if cfg.Web.Enabled {
-		extra := make([]web.Radio, 0, len(radios)-1)
-		for _, rt := range radios[1:] {
-			extra = append(extra, web.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Config: rt.rc.Config, Host: rt.host, API: rt.api, UDP: rt.udp, MQTT: rt.mqtt})
-		}
-		hostings := map[string]*nodes.Hosting{}
-		for _, rt := range radios {
-			hostings[rt.rc.ID] = rt.hosting
-		}
-		key, source := resolveMapAPIKey()
-		log.Info("map tiles", "api_key", source)
-		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
-			MapAPIKey: key, MapKeySource: source, LogLevel: level, Plugins: pm,
-			Restart: func() { restartRequested.Store(true); stop() },
-			Hosting: hostings,
-			Radios:  extra, Site: st, Version: version, Log: log})
-		if err != nil {
-			return err
-		}
-		go func() {
-			if err := srv.Run(ctx); err != nil {
-				log.Error("web server stopped", "err", err)
-			}
-		}()
+// startPlugins creates and starts the plugin manager. Only a manager that can't be created is
+// an error: a repeater keeps repeating even if plugins can't start.
+func startPlugins(ctx context.Context, cfg *config.Config, radios []*radioRuntime, log *slog.Logger) (*plugins.Manager, error) {
+	prs := make([]plugins.Radio, 0, len(radios))
+	for _, rt := range radios {
+		prs = append(prs, plugins.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Host: rt.host})
 	}
+	pm, err := plugins.New(plugins.Options{Config: cfg.Plugins, Dir: cfg.PluginDir(), Radios: prs, Version: version, Log: log,
+		Notify: func(id string) { publishAll(radios, mesh.Event{Type: "plugin", Data: id}) }})
+	if err != nil {
+		return nil, fmt.Errorf("plugins: %w", err)
+	}
+	// Say why in the log and the GUI.
+	if err := pm.Start(ctx); err != nil {
+		log.Error("plugins couldn't start", "err", err)
+	}
+	return pm, nil
+}
 
+// startWeb fills opts with the radios and map key, then runs the web server in the background.
+func startWeb(ctx context.Context, opts web.Options, radios []*radioRuntime, log *slog.Logger) error {
+	primary := radios[0]
+	extra := make([]web.Radio, 0, len(radios)-1)
+	for _, rt := range radios[1:] {
+		extra = append(extra, web.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Config: rt.rc.Config, Host: rt.host, API: rt.api, UDP: rt.udp, MQTT: rt.mqtt})
+	}
+	hostings := map[string]*nodes.Hosting{}
+	for _, rt := range radios {
+		hostings[rt.rc.ID] = rt.hosting
+	}
+	key, source := resolveMapAPIKey()
+	log.Info("map tiles", "api_key", source)
+	opts.Host, opts.API, opts.UDP, opts.MQTT = primary.host, primary.api, primary.udp, primary.mqtt
+	opts.MapAPIKey, opts.MapKeySource = key, source
+	opts.Hosting, opts.Radios = hostings, extra
+	srv, err := web.New(opts)
+	if err != nil {
+		return err
+	}
+	go func() {
+		if err := srv.Run(ctx); err != nil {
+			log.Error("web server stopped", "err", err)
+		}
+	}()
+	return nil
+}
+
+// runRadios runs every radio until one stops, stops the rest and saves identities.
+func runRadios(ctx context.Context, stop context.CancelFunc, radios []*radioRuntime, log *slog.Logger) error {
+	primary := radios[0]
 	for _, rt := range radios {
 		rp := rt.host.RadioParams()
 		log.Info("RepeaterTastic starting", "version", version, "radio", rt.rc.ID, "region", rp.Region.Name, "preset", rp.PresetName(),
@@ -215,54 +268,65 @@ func run(cfgPath string) error {
 	for _, rt := range radios[1:] {
 		go func() { errs <- rt.host.Run(ctx) }()
 	}
-	err = primary.host.Run(ctx)
+	err := primary.host.Run(ctx)
 	stop() // one radio stopping stops the others
 	for range radios[1:] {
-		if e := <-errs; err == nil || errors.Is(err, context.Canceled) {
+		if e := <-errs; isStopped(err) {
 			err = e
 		}
 	}
 	for _, rt := range radios {
 		_ = rt.host.SaveIdentities()
 	}
-	if err == nil || errors.Is(err, context.Canceled) {
+	if isStopped(err) {
 		log.Info("stopped")
 		return nil
 	}
 	return err
 }
 
+// isStopped reports whether err means a clean stop rather than a failure.
+func isStopped(err error) bool {
+	return err == nil || errors.Is(err, context.Canceled)
+}
+
 // runMDNS keeps the advertised _meshtastic._tcp services in step with every radio's identities.
 func runMDNS(ctx context.Context, hosts []*mesh.Host, log *slog.Logger) {
 	r := mdns.New(log)
-	update := func() {
-		var svcs []mdns.Service
-		for _, host := range hosts {
-			for _, id := range host.Identities() {
-				if id.IsRelay || !id.Enabled || id.APIPort <= 0 {
-					continue
-				}
-				u := id.UserCopy()
-				svcs = append(svcs, mdns.Service{Instance: fmt.Sprintf("%s (%s)", u.LongName, id.NodeID()), Port: id.APIPort,
-					TXT: map[string]string{"id": id.NodeID(), "shortname": u.ShortName, "pio_env": "repeatertastic"}})
-			}
-		}
-		r.SetServices(svcs)
-	}
+	update := func() { r.SetServices(mdnsServices(hosts)) }
 	update()
 	for _, host := range hosts {
 		events, unsub := host.Bus.Subscribe(16)
 		defer unsub()
-		go func() {
-			for e := range events {
-				if e.Type == "identity" {
-					update()
-				}
-			}
-		}()
+		go onIdentityEvent(events, update)
 	}
 	if err := r.Run(ctx); err != nil {
 		log.Warn("mDNS advertising disabled", "err", err)
+	}
+}
+
+// mdnsServices lists a service for every enabled identity with a client API port.
+func mdnsServices(hosts []*mesh.Host) []mdns.Service {
+	var svcs []mdns.Service
+	for _, host := range hosts {
+		for _, id := range host.Identities() {
+			if id.IsRelay || !id.Enabled || id.APIPort <= 0 {
+				continue
+			}
+			u := id.UserCopy()
+			svcs = append(svcs, mdns.Service{Instance: fmt.Sprintf("%s (%s)", u.LongName, id.NodeID()), Port: id.APIPort,
+				TXT: map[string]string{"id": id.NodeID(), "shortname": u.ShortName, "pio_env": "repeatertastic"}})
+		}
+	}
+	return svcs
+}
+
+// onIdentityEvent calls fn for each identity event until events closes.
+func onIdentityEvent(events <-chan mesh.Event, fn func()) {
+	for e := range events {
+		if e.Type == "identity" {
+			fn()
+		}
 	}
 }
 

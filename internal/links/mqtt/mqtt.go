@@ -118,6 +118,22 @@ type Link struct {
 
 // New prepares a connection; Run connects it.
 func New(h *mesh.Host, opt Options, log *slog.Logger) *Link {
+	opt.fillModeDefaults()
+	opt.fillRateDefaults()
+	if opt.Origins == nil {
+		opt.Origins = NewOrigins()
+	}
+	opt.Origins.register(opt.Name, opt.CrossLink)
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Link{host: h, opt: opt, log: log.With("link", "mqtt", "connection", opt.Name), subscribed: map[string]bool{},
+		down: newBucket(opt.DownlinkPerMinute), up: newBucket(opt.UplinkPerMinute)}
+}
+
+// fillModeDefaults sets the name, mode, format and channel selection when they're unset, and
+// clears the bridge-only settings on other modes.
+func (opt *Options) fillModeDefaults() {
 	if opt.Name == "" {
 		opt.Name = "mqtt"
 	}
@@ -139,6 +155,11 @@ func New(h *mesh.Host, opt Options, log *slog.Logger) *Link {
 	if opt.Mode != ModeBridge {
 		opt.IgnoreConsent, opt.RelayHops = false, 0
 	}
+}
+
+// fillRateDefaults sets the rate limits, map report interval and position precision when they're
+// unset, with map reports no more often than every 15 minutes.
+func (opt *Options) fillRateDefaults() {
 	if opt.DownlinkPerMinute <= 0 {
 		opt.DownlinkPerMinute = 30
 	}
@@ -154,15 +175,6 @@ func New(h *mesh.Host, opt Options, log *slog.Logger) *Link {
 	if opt.PositionPrecision <= 0 {
 		opt.PositionPrecision = 14
 	}
-	if opt.Origins == nil {
-		opt.Origins = NewOrigins()
-	}
-	opt.Origins.register(opt.Name, opt.CrossLink)
-	if log == nil {
-		log = slog.Default()
-	}
-	return &Link{host: h, opt: opt, log: log.With("link", "mqtt", "connection", opt.Name), subscribed: map[string]bool{},
-		down: newBucket(opt.DownlinkPerMinute), up: newBucket(opt.UplinkPerMinute)}
 }
 
 func (l *Link) Name() string    { return "mqtt:" + l.opt.Name }
@@ -370,26 +382,38 @@ func (l *Link) publish(p *pb.MeshPacket, ch mesh.ChannelRef, data *pb.Data) {
 			return
 		}
 		sent = true
-		cp := proto.Clone(p).(*pb.MeshPacket)
-		cp.RxSnr, cp.RxRssi, cp.RxTime = 0, nil, nil
-		if b, err := proto.Marshal(&pb.ServiceEnvelope{Packet: cp, ChannelId: ch.Name, GatewayId: gw}); err == nil {
-			l.client.Publish(l.Root()+"/2/e/"+ch.Name+"/"+gw, 0, false, b)
-			l.Tx.Add(1)
-		}
+		l.publishEnvelope(p, ch, gw)
 	}
 	// JSON is plaintext: only for channels anyone could read, unless this is a bridge.
 	if l.opt.Format != FormatEncrypted && data != nil && (ch.PublicKey || l.opt.Mode == ModeBridge) {
-		b := jsonPacket(p, data, gw)
-		if b == nil {
-			return
-		}
-		if !sent && !l.up.take() {
-			l.Dropped.Add(1)
-			return
-		}
-		l.client.Publish(l.Root()+"/2/json/"+ch.Name+"/"+gw, 0, false, b)
+		l.publishJSON(p, ch, data, gw, sent)
+	}
+}
+
+// publishEnvelope publishes the encrypted packet in a ServiceEnvelope, without our reception
+// details.
+func (l *Link) publishEnvelope(p *pb.MeshPacket, ch mesh.ChannelRef, gw string) {
+	cp := proto.Clone(p).(*pb.MeshPacket)
+	cp.RxSnr, cp.RxRssi, cp.RxTime = 0, nil, nil
+	if b, err := proto.Marshal(&pb.ServiceEnvelope{Packet: cp, ChannelId: ch.Name, GatewayId: gw}); err == nil {
+		l.client.Publish(l.Root()+"/2/e/"+ch.Name+"/"+gw, 0, false, b)
 		l.Tx.Add(1)
 	}
+}
+
+// publishJSON publishes the packet's JSON form. counted is true when the encrypted copy has
+// already taken from the uplink rate limit.
+func (l *Link) publishJSON(p *pb.MeshPacket, ch mesh.ChannelRef, data *pb.Data, gw string, counted bool) {
+	b := jsonPacket(p, data, gw)
+	if b == nil {
+		return
+	}
+	if !counted && !l.up.take() {
+		l.Dropped.Add(1)
+		return
+	}
+	l.client.Publish(l.Root()+"/2/json/"+ch.Name+"/"+gw, 0, false, b)
+	l.Tx.Add(1)
 }
 
 // syncSubscriptions subscribes to every downlink channel and drops the rest.
@@ -397,26 +421,12 @@ func (l *Link) syncSubscriptions() {
 	if l.client == nil || !l.Connected() {
 		return
 	}
-	want := map[string]bool{}
-	if l.downlinks() {
-		for _, ch := range l.host.Channels() {
-			if l.selected(ch, false) && ch.Name != "" && !strings.ContainsAny(ch.Name, "+#/") {
-				want[ch.Name] = true
-			}
-		}
-	}
+	want := l.downlinkChannels()
 	l.subMu.Lock()
 	defer l.subMu.Unlock()
 	for ch := range want {
-		if l.subscribed[ch] {
-			continue
-		}
-		topic := l.Root() + "/2/e/" + ch + "/+"
-		name := ch
-		tok := l.client.Subscribe(topic, 0, func(_ paho.Client, m paho.Message) { l.onMessage(name, m.Payload()) })
-		if tok.WaitTimeout(10*time.Second) && tok.Error() == nil {
-			l.subscribed[ch] = true
-			l.log.Info("MQTT downlink subscribed", "topic", topic)
+		if !l.subscribed[ch] {
+			l.subscribeLocked(ch)
 		}
 	}
 	for ch := range l.subscribed {
@@ -425,6 +435,31 @@ func (l *Link) syncSubscriptions() {
 			delete(l.subscribed, ch)
 			l.log.Info("MQTT downlink unsubscribed", "channel", ch)
 		}
+	}
+}
+
+// downlinkChannels is the set of channel names to subscribe to; names with MQTT wildcards or
+// separators are left out.
+func (l *Link) downlinkChannels() map[string]bool {
+	want := map[string]bool{}
+	if !l.downlinks() {
+		return want
+	}
+	for _, ch := range l.host.Channels() {
+		if l.selected(ch, false) && ch.Name != "" && !strings.ContainsAny(ch.Name, "+#/") {
+			want[ch.Name] = true
+		}
+	}
+	return want
+}
+
+// subscribeLocked subscribes to a channel's downlink topic. l.subMu must be held.
+func (l *Link) subscribeLocked(ch string) {
+	topic := l.Root() + "/2/e/" + ch + "/+"
+	tok := l.client.Subscribe(topic, 0, func(_ paho.Client, m paho.Message) { l.onMessage(ch, m.Payload()) })
+	if tok.WaitTimeout(10*time.Second) && tok.Error() == nil {
+		l.subscribed[ch] = true
+		l.log.Info("MQTT downlink subscribed", "topic", topic)
 	}
 }
 

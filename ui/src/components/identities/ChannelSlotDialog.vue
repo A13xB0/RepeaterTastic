@@ -105,40 +105,33 @@ const candidates = computed(() => live.identities.filter((i) => !(channel.value 
 function randomPsk(): string {
   const b = new Uint8Array(32)
   crypto.getRandomValues(b)
-  return btoa(String.fromCharCode(...b))
+  return btoa(String.fromCodePoint(...b))
 }
 
-async function save() {
-  const c = channel.value
-  if (!c) return
-  // a random key is made once, so every identity in this batch shares it
-  const psk = mode.value === 'new' && keyKind.value === 'random' ? randomPsk() : c.psk
+/** Which identity/slot pairs get this channel: the given slot alone, or each target's first free slot. */
+function buildPlan(): { plan: { id: Identity; slot: number }[]; skipped: string[] } {
+  if (single.value) return { plan: [{ id: identity.value!, slot: props.slot! }], skipped: [] }
   const plan: { id: Identity; slot: number }[] = []
   const skipped: string[] = []
-  if (single.value) {
-    plan.push({ id: identity.value!, slot: props.slot! })
-  } else {
-    for (const nodeId of targets.value) {
-      const i = findIdentity(nodeId)
-      const slot = i && freeSlot(i)
-      if (!i) continue
-      if (slot === undefined) {
-        skipped.push(i.long_name)
-        continue
-      }
-      plan.push({ id: i, slot })
+  for (const nodeId of targets.value) {
+    const i = findIdentity(nodeId)
+    if (!i) continue
+    const slot = freeSlot(i)
+    if (slot === undefined) {
+      skipped.push(i.long_name)
+      continue
     }
+    plan.push({ id: i, slot })
   }
-  if (!plan.length) {
-    error.value = skipped.length ? `No free slot on ${skipped.join(', ')}.` : 'Pick at least one identity.'
-    return
-  }
-  saving.value = true
-  error.value = ''
+  return { plan, skipped }
+}
+
+/** PUTs the channel onto every planned slot, collecting per-identity failures. */
+async function applyPlan(plan: { id: Identity; slot: number }[], name: string, psk: string): Promise<{ done: number; failed: string[] }> {
   const failed: string[] = []
   let done = 0
   for (const p of plan) {
-    const body = { name: c.name, psk, role: 'SECONDARY', uplink: uplink.value, downlink: downlink.value }
+    const body = { name, psk, role: 'SECONDARY', uplink: uplink.value, downlink: downlink.value }
     try {
       upsertIdentity(await api.put<Identity>(`/identities/${enc(p.id.node_id)}/channels/${p.slot}`, body))
       done++
@@ -146,14 +139,37 @@ async function save() {
       failed.push(`${p.id.long_name}: ${(e as Error).message}`)
     }
   }
+  return { done, failed }
+}
+
+function successMessage(c: { name: string }, plan: { id: Identity; slot: number }[], skipped: string[]): string {
+  const where = plan.length === 1 ? plan[0]!.id.long_name : `${plan.length} identities`
+  const verb = editing.value ? 'saved on' : 'added to'
+  const skipNote = skipped.length ? ` · no free slot on ${skipped.join(', ')}` : ''
+  return `${c.name} ${verb} ${where}${skipNote}`
+}
+
+async function save() {
+  const c = channel.value
+  if (!c) return
+  // a random key is made once, so every identity in this batch shares it
+  const psk = mode.value === 'new' && keyKind.value === 'random' ? randomPsk() : c.psk
+  const { plan, skipped } = buildPlan()
+  if (!plan.length) {
+    error.value = skipped.length ? `No free slot on ${skipped.join(', ')}.` : 'Pick at least one identity.'
+    return
+  }
+  saving.value = true
+  error.value = ''
+  const { done, failed } = await applyPlan(plan, c.name, psk)
   saving.value = false
   if (failed.length) {
-    error.value = `${done ? `Saved on ${done}; ` : ''}not saved on ${failed.join('; ')}`
+    const prefix = done ? `Saved on ${done}; ` : ''
+    error.value = `${prefix}not saved on ${failed.join('; ')}`
     if (!done) toastError(new Error(failed[0]))
     return
   }
-  const where = plan.length === 1 ? plan[0]!.id.long_name : `${plan.length} identities`
-  toast(`${c.name} ${editing.value ? 'saved on' : 'added to'} ${where}${skipped.length ? ` · no free slot on ${skipped.join(', ')}` : ''}`)
+  toast(successMessage(c, plan, skipped))
   emit('close')
 }
 </script>
@@ -166,10 +182,11 @@ async function save() {
     @close="emit('close')"
   >
     <div class="grid gap-4">
-      <div v-if="!editing" class="seg" role="group" aria-label="Channel source">
+      <fieldset v-if="!editing" class="seg">
+        <legend class="sr-only">Channel source</legend>
         <button type="button" :aria-pressed="mode === 'existing'" :disabled="!offered.length" @click="mode = 'existing'">Existing channel</button>
         <button type="button" :aria-pressed="mode === 'new'" @click="mode = 'new'">New channel</button>
-      </div>
+      </fieldset>
 
       <div v-if="mode === 'existing' && !editing">
         <label class="label" for="cs-ch">Channel</label>
@@ -212,8 +229,8 @@ async function save() {
       </fieldset>
 
       <div class="flex flex-wrap gap-5 text-[13px]">
-        <label class="flex items-center gap-2"><Toggle v-model="uplink" label="MQTT uplink" />MQTT uplink</label>
-        <label class="flex items-center gap-2"><Toggle v-model="downlink" label="MQTT downlink" />MQTT downlink</label>
+        <span class="flex items-center gap-2" @click.self="uplink = !uplink"><Toggle v-model="uplink" label="MQTT uplink" />MQTT uplink</span>
+        <span class="flex items-center gap-2" @click.self="downlink = !downlink"><Toggle v-model="downlink" label="MQTT downlink" />MQTT downlink</span>
       </div>
       <p v-if="error" class="hint !text-bad">{{ error }}</p>
     </div>

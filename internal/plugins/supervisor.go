@@ -18,9 +18,14 @@ type runner struct {
 }
 
 const (
-	stopGrace    = 5 * time.Second
 	quickCrash   = 15 * time.Second // an exit sooner than this counts towards giving up
 	maxQuickExit = 5
+)
+
+// Timings, variables so tests can shorten them.
+var (
+	stopGrace      = 5 * time.Second // how long a plugin has to leave before it is signalled
+	restartBackoff = time.Second     // the first restart delay; it doubles with each quick exit
 )
 
 func (m *Manager) startPlugin(parent context.Context, p *plugin) {
@@ -107,7 +112,7 @@ func (m *Manager) supervise(ctx context.Context, p *plugin, r *runner) {
 			m.notify(p.id)
 			return
 		}
-		wait := min(time.Minute, time.Second<<quick)
+		wait := min(time.Minute, restartBackoff<<quick)
 		p.state, p.detail = "restarting", fmt.Sprintf("%s; restarting in %s", msg, wait)
 		m.mu.Unlock()
 		p.logs.add("warn", "host", p.detail)

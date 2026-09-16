@@ -115,6 +115,14 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("unknown permission %q", p)
 		}
 	}
+	if err := m.validateSettings(); err != nil {
+		return err
+	}
+	return m.validatePaths()
+}
+
+// validateSettings checks the settings schema and fills in default types and labels.
+func (m *Manifest) validateSettings() error {
 	keys := map[string]bool{}
 	for i, s := range m.Settings {
 		if !settingPattern.MatchString(s.Key) || keys[s.Key] {
@@ -133,6 +141,11 @@ func (m *Manifest) Validate() error {
 			m.Settings[i].Label = s.Key
 		}
 	}
+	return nil
+}
+
+// validatePaths checks the logo, panel and program paths stay inside the bundle.
+func (m *Manifest) validatePaths() error {
 	for _, f := range []struct{ name, p string }{{"logo", m.Logo}, {"ui.panel", m.UI.Panel}} {
 		if f.p != "" && !localPath(f.p) {
 			return fmt.Errorf("%s %q must be a relative path inside the bundle", f.name, f.p)

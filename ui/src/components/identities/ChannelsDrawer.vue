@@ -36,7 +36,7 @@ const pskKind = (psk: string) => {
   if (!psk) return 'no encryption'
   if (psk === 'AQ==') return 'default key'
   const len = atob(psk).length
-  return len === 1 ? `default key #${atob(psk).charCodeAt(0)}` : `AES-${len * 8}`
+  return len === 1 ? `default key #${atob(psk).codePointAt(0)}` : `AES-${len * 8}`
 }
 
 
@@ -65,7 +65,10 @@ async function doImport() {
   }
 }
 
-const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' : r === 'SECONDARY' ? 'bg-info/12 text-info' : 'bg-ink-3/12 text-ink-3')
+function roleCls(r: ChannelRole): string {
+  if (r === 'PRIMARY') return 'bg-brand/14 text-brand'
+  return r === 'SECONDARY' ? 'bg-info/12 text-info' : 'bg-ink-3/12 text-ink-3'
+}
 </script>
 
 <template>
@@ -110,7 +113,7 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
               <div v-else class="flex size-[200px] items-center justify-center text-ink-3"><QrIcon class="size-8" /></div>
             </div>
             <div class="w-full min-w-0 flex-1">
-              <label class="label">Channel URL</label>
+              <span class="label">Channel URL</span>
               <div class="flex items-center gap-1 rounded-xl border border-line-soft bg-raised px-3 py-2">
                 <span class="mono min-w-0 flex-1 break-all text-xs">{{ shareUrl || '…' }}</span>
                 <CopyButton v-if="shareUrl" :text="shareUrl" label="Channel URL" />

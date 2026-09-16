@@ -42,7 +42,13 @@ const siteChannels = computed<SiteChannel[]>(() => {
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
 })
 const colours = computed(() => new Map(siteChannels.value.map((c, n) => [c.key, palette[n % palette.length]!])))
-const keyKind = (psk: string) => (!psk ? 'no encryption' : psk === 'AQ==' ? 'default key' : atob(psk).length === 1 ? 'default key variant' : 'private key')
+/** Describes a channel's key, from its PSK, for the "· default key" style hints. */
+function keyKind(psk: string) {
+  if (!psk) return 'no encryption'
+  if (psk === 'AQ==') return 'default key'
+  if (atob(psk).length === 1) return 'default key variant'
+  return 'private key'
+}
 
 const open = ref<string | null>(null)
 const dialog = ref<{ identityId?: string; slot?: number; preset?: SiteChannel | null } | null>(null)

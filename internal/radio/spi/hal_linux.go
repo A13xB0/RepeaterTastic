@@ -35,73 +35,105 @@ func openHAL(b Board, logf func(string, ...any)) (hal, error) {
 		return nil, fmt.Errorf("open %s: %w (is SPI enabled, e.g. dtparam=spi=on, and is the user in the spi group?)", dev, err)
 	}
 	h := &linuxHAL{spi: fd, speed: b.SPISpeed, log: logf}
-	fail := func(err error) (hal, error) {
+	if err := h.setupSPI(b.SPISpeed); err != nil {
 		h.Close()
 		return nil, err
 	}
+	if err := h.openLines(b); err != nil {
+		h.Close()
+		return nil, err
+	}
+	return h, nil
+}
+
+// setupSPI sets the spidev to mode 0, 8 bits per word and speed Hz.
+func (h *linuxHAL) setupSPI(speed uint32) error {
 	mode := uint8(0)
 	bits := uint8(8)
-	if err := ioctlPtr(fd, spiIOCWrMode, unsafe.Pointer(&mode)); err != nil {
-		return fail(fmt.Errorf("spidev mode: %w", err))
+	if err := ioctlPtr(h.spi, spiIOCWrMode, unsafe.Pointer(&mode)); err != nil {
+		return fmt.Errorf("spidev mode: %w", err)
 	}
-	if err := ioctlPtr(fd, spiIOCWrBitsPerWord, unsafe.Pointer(&bits)); err != nil {
-		return fail(fmt.Errorf("spidev bits: %w", err))
+	if err := ioctlPtr(h.spi, spiIOCWrBitsPerWord, unsafe.Pointer(&bits)); err != nil {
+		return fmt.Errorf("spidev bits: %w", err)
 	}
-	speed := b.SPISpeed
-	if err := ioctlPtr(fd, spiIOCWrMaxSpeedHz, unsafe.Pointer(&speed)); err != nil {
-		return fail(fmt.Errorf("spidev speed: %w", err))
+	if err := ioctlPtr(h.spi, spiIOCWrMaxSpeedHz, unsafe.Pointer(&speed)); err != nil {
+		return fmt.Errorf("spidev speed: %w", err)
 	}
+	return nil
+}
 
-	out := func(p Pin, name string, initial bool) (*gpioLine, error) {
-		if !p.Set {
-			return nil, nil
-		}
-		l, err := requestLine(p, gpioFlagOutput, "repeatertastic-"+name, initial)
-		if err != nil {
-			return nil, fmt.Errorf("%s (%s): %w", name, p, err)
-		}
-		return l, nil
+// outputLine requests p as an output starting at initial; nil when p isn't connected.
+func outputLine(p Pin, name string, initial bool) (*gpioLine, error) {
+	if !p.Set {
+		return nil, nil
 	}
-	for _, p := range b.High {
-		l, err := out(p, "enable", true)
-		if err != nil {
-			return fail(err)
-		}
-		h.high = append(h.high, l)
+	l, err := requestLine(p, gpioFlagOutput, "repeatertastic-"+name, initial)
+	if err != nil {
+		return nil, fmt.Errorf("%s (%s): %w", name, p, err)
 	}
-	if len(b.High) > 0 {
-		time.Sleep(50 * time.Millisecond) // let a switched radio power up before reset
+	return l, nil
+}
+
+// openLines requests the board's GPIO lines, powering a switched radio up before anything else.
+func (h *linuxHAL) openLines(b Board) error {
+	if err := h.openEnablePins(b.High); err != nil {
+		return err
 	}
-	if b.CS.Set {
-		cs, err := out(b.CS, "cs", true)
-		if errors.Is(err, unix.EBUSY) {
-			// The SPI controller already owns this pin as its chip select: let spidev drive it.
-			logf("CS %s is owned by the SPI driver; using the spidev's own chip select", b.CS)
-		} else if err != nil {
-			return fail(err)
-		}
-		h.cs = cs
+	if err := h.openCS(b.CS); err != nil {
+		return err
 	}
-	if h.reset, err = out(b.Reset, "reset", true); err != nil {
-		return fail(err)
+	var err error
+	if h.reset, err = outputLine(b.Reset, "reset", true); err != nil {
+		return err
 	}
-	if h.txen, err = out(b.TXen, "txen", false); err != nil {
-		return fail(err)
+	if h.txen, err = outputLine(b.TXen, "txen", false); err != nil {
+		return err
 	}
-	if h.rxen, err = out(b.RXen, "rxen", false); err != nil {
-		return fail(err)
+	if h.rxen, err = outputLine(b.RXen, "rxen", false); err != nil {
+		return err
 	}
 	if b.Busy.Set {
 		if h.busy, err = requestLine(b.Busy, gpioFlagInput, "repeatertastic-busy", false); err != nil {
-			return fail(fmt.Errorf("busy (%s): %w", b.Busy, err))
+			return fmt.Errorf("busy (%s): %w", b.Busy, err)
 		}
 	}
 	if b.IRQ.Set {
 		if h.irq, err = requestLine(b.IRQ, gpioFlagInput|gpioFlagEdgeRising, "repeatertastic-irq", false); err != nil {
-			return fail(fmt.Errorf("irq (%s): %w", b.IRQ, err))
+			return fmt.Errorf("irq (%s): %w", b.IRQ, err)
 		}
 	}
-	return h, nil
+	return nil
+}
+
+// openEnablePins drives the enable pins high and gives the radio time to power up.
+func (h *linuxHAL) openEnablePins(pins []Pin) error {
+	for _, p := range pins {
+		l, err := outputLine(p, "enable", true)
+		if err != nil {
+			return err
+		}
+		h.high = append(h.high, l)
+	}
+	if len(pins) > 0 {
+		time.Sleep(50 * time.Millisecond) // let a switched radio power up before reset
+	}
+	return nil
+}
+
+// openCS requests the chip select line, if the board has one the SPI controller doesn't own.
+func (h *linuxHAL) openCS(p Pin) error {
+	if !p.Set {
+		return nil
+	}
+	cs, err := outputLine(p, "cs", true)
+	if errors.Is(err, unix.EBUSY) {
+		// The SPI controller already owns this pin as its chip select: let spidev drive it.
+		h.log("CS %s is owned by the SPI driver; using the spidev's own chip select", p)
+	} else if err != nil {
+		return err
+	}
+	h.cs = cs
+	return nil
 }
 
 func (h *linuxHAL) Transfer(tx []byte) ([]byte, error) {

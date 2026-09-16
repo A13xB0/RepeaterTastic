@@ -10,9 +10,14 @@ import { num } from '@/lib/format'
 function dutyLimit(id: string): number {
   return live.statuses[id]?.airtime.duty_limit_pct ?? 10
 }
+/** Gauge colour: red once airtime nears the duty limit, amber while approaching it. */
+function gaugeClass(ratio: number): string {
+  if (ratio > 0.9) return 'bg-bad'
+  return ratio > 0.7 ? 'bg-warn' : 'bg-brand'
+}
 function gauge(id: string, txPct: number) {
   const ratio = txPct / (dutyLimit(id) || 100)
-  return { pct: Math.min(100, ratio * 100), cls: ratio > 0.9 ? 'bg-bad' : ratio > 0.7 ? 'bg-warn' : 'bg-brand' }
+  return { pct: Math.min(100, ratio * 100), cls: gaugeClass(ratio) }
 }
 const rows = computed(() => live.radios)
 </script>

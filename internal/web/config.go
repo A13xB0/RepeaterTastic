@@ -5,6 +5,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -107,38 +108,8 @@ func fromMQTTDTOs(ds []mqttDTO, saved config.MQTTLinks) (config.MQTTLinks, error
 		if m.Name == "" {
 			return nil, fmt.Errorf("mqtt connection %d needs a name", i+1)
 		}
-		if m.Gateway == "relay" {
-			m.Gateway = ""
-		}
-		if m.Mode == config.MQTTGateway {
-			m.Mode = ""
-		}
-		if m.Format == "encrypted" || (m.Format == "json" && m.Mode == config.MQTTMonitor) {
-			m.Format = ""
-		}
-		if m.Mode != config.MQTTBridge {
-			m.BridgeAcknowledged = false
-		}
-		if len(m.UplinkChannels) == 0 {
-			m.UplinkChannels = nil
-		}
-		if len(m.DownlinkChannels) == 0 {
-			m.DownlinkChannels = nil
-		}
-		key := d.Key
-		if key == "" {
-			key = m.Name
-		}
-		switch {
-		case d.Password != "":
-			m.Password = d.Password
-		case !d.ClearPassword:
-			for _, old := range saved {
-				if old.Name == key {
-					m.Password = old.Password
-				}
-			}
-		}
+		dropMQTTDefaults(&m)
+		m.Password = mqttPassword(d, m.Name, saved)
 		m.MapReport.Enabled, m.MapReport.PositionPrecision = d.MapReport.Enabled, d.MapReport.PositionPrecision
 		m.MapReport.Latitude, m.MapReport.Longitude = d.MapReport.Latitude, d.MapReport.Longitude
 		iv, err := time.ParseDuration(d.MapReport.Interval)
@@ -149,6 +120,51 @@ func fromMQTTDTOs(ds []mqttDTO, saved config.MQTTLinks) (config.MQTTLinks, error
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+// dropMQTTDefaults clears fields left at their defaults (or meaningless in the chosen mode) so they
+// stay out of the config file.
+func dropMQTTDefaults(m *config.MQTT) {
+	if m.Gateway == "relay" {
+		m.Gateway = ""
+	}
+	if m.Mode == config.MQTTGateway {
+		m.Mode = ""
+	}
+	if m.Format == "encrypted" || (m.Format == "json" && m.Mode == config.MQTTMonitor) {
+		m.Format = ""
+	}
+	if m.Mode != config.MQTTBridge {
+		m.BridgeAcknowledged = false
+	}
+	if len(m.UplinkChannels) == 0 {
+		m.UplinkChannels = nil
+	}
+	if len(m.DownlinkChannels) == 0 {
+		m.DownlinkChannels = nil
+	}
+}
+
+// mqttPassword picks a connection's password: a new one, none if cleared, or else the one saved
+// under its key (its old name, as the GUI may have renamed it).
+func mqttPassword(d mqttDTO, name string, saved config.MQTTLinks) string {
+	if d.Password != "" {
+		return d.Password
+	}
+	if d.ClearPassword {
+		return ""
+	}
+	key := d.Key
+	if key == "" {
+		key = name
+	}
+	pw := ""
+	for _, old := range saved {
+		if old.Name == key {
+			pw = old.Password
+		}
+	}
+	return pw
 }
 
 type configDTO struct {
@@ -319,40 +335,103 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Unlock()
 
 	d := cur
-	for section, body := range raw {
-		var target any
-		switch section {
-		case "radio":
-			target = &d.Radio
-		case "relay":
-			target = &d.Relay
-		case "airtime":
-			target = &d.Airtime
-		case "web":
-			if !main {
-				writeError(w, http.StatusBadRequest, "web settings belong to the main radio")
-				return
-			}
-			target = &d.Web
-		case "position":
-			target = &d.Position
-		case "hardware":
-			target = &d.Hardware
-		case "mqtt":
-			if t := bytes.TrimSpace(body); len(t) > 0 && t[0] == '{' { // one connection, as before multi-MQTT
-				body = append(append([]byte{'['}, t...), ']')
-			}
-			d.MQTT = nil
-			target = &d.MQTT
-		default:
-			writeError(w, http.StatusBadRequest, "unknown config section "+section)
-			return
+	if err := mergeConfigSections(&d, raw, main); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := applyConfigDTO(&next, &old, d, cur, rc.host, main); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var err error
+	if main {
+		err = s.applyConfig(r, &next)
+	} else {
+		err = s.applyRadioConfig(r, rc, &next)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.afterConfigApplied(rc, main, &next, &old)
+	restart := len(s.restartReasons()) > 0
+	s.cfgMu.Lock()
+	out := toDTO(s.radioConfig(rc), rc.host)
+	s.cfgMu.Unlock()
+	out.RadioID, out.Main = rc.id, main
+	out.Web.MapKeySource = s.mapKeySource()
+	writeJSON(w, http.StatusOK, map[string]any{"config": out, "restart_required": restart})
+}
+
+// mergeConfigSections decodes each section the GUI sent over the current settings in d.
+func mergeConfigSections(d *configDTO, raw map[string]json.RawMessage, main bool) error {
+	for section, sent := range raw {
+		target, body, err := configSection(d, section, sent, main)
+		if err != nil {
+			return err
 		}
 		if err := json.Unmarshal(body, target); err != nil {
-			writeError(w, http.StatusBadRequest, section+": "+err.Error())
-			return
+			return errors.New(section + ": " + err.Error())
 		}
 	}
+	return nil
+}
+
+// configSection returns where a section decodes to, and its body (a lone MQTT connection, as sent
+// before multi-MQTT, becomes a list of one).
+func configSection(d *configDTO, section string, body json.RawMessage, main bool) (any, json.RawMessage, error) {
+	switch section {
+	case "radio":
+		return &d.Radio, body, nil
+	case "relay":
+		return &d.Relay, body, nil
+	case "airtime":
+		return &d.Airtime, body, nil
+	case "web":
+		if !main {
+			return nil, nil, errors.New("web settings belong to the main radio")
+		}
+		return &d.Web, body, nil
+	case "position":
+		return &d.Position, body, nil
+	case "hardware":
+		return &d.Hardware, body, nil
+	case "mqtt":
+		if t := bytes.TrimSpace(body); len(t) > 0 && t[0] == '{' {
+			body = append(append([]byte{'['}, t...), ']')
+		}
+		d.MQTT = nil
+		return &d.MQTT, body, nil
+	}
+	return nil, nil, errors.New("unknown config section " + section)
+}
+
+// applyConfigDTO copies the GUI's settings into next, checking the ones config.Validate can't.
+func applyConfigDTO(next, old *config.Config, d, cur configDTO, h *mesh.Host, main bool) error {
+	if err := applyRadioDTO(next, d); err != nil {
+		return err
+	}
+	if err := applyTelemetryInterval(next, d.Airtime.TelemetryInterval); err != nil {
+		return err
+	}
+	applyRelayDTO(next, d)
+	if err := applyAirtimeDTO(next, d, cur, h.RadioParams().Region.DutyCyclePct); err != nil {
+		return err
+	}
+	applyWebDTO(next, old, d, main)
+	if err := applyPositionDTO(next, d); err != nil {
+		return err
+	}
+	mq, err := fromMQTTDTOs(d.MQTT, old.Links.MQTT)
+	if err != nil {
+		return err
+	}
+	next.Links.MQTT = mq
+	return nil
+}
+
+// applyRadioDTO copies the radio section.
+func applyRadioDTO(next *config.Config, d configDTO) error {
 	next.Radio.Driver, next.Radio.Device = d.Radio.Type, d.Radio.Port
 	next.Mesh.Region, next.Mesh.Preset, next.Mesh.PrimaryChannel = strings.ToUpper(d.Radio.Region), strings.ToUpper(d.Radio.Preset), d.Radio.PrimaryChannel
 	next.Mesh.TxPowerDBm, next.Mesh.FreqOffsetMHz = d.Radio.TxPowerDBm, d.Radio.FrequencyOffsetMHz
@@ -360,22 +439,30 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		next.Radio.Baud = d.Radio.Baud
 	}
 	if d.Radio.HopLimit < 1 || d.Radio.HopLimit > 7 {
-		writeError(w, http.StatusBadRequest, "radio.hop_limit must be 1-7")
-		return
+		return errors.New("radio.hop_limit must be 1-7")
 	}
 	next.Mesh.HopLimit, next.Mesh.ChannelNum, next.Mesh.OverrideFreqMHz = d.Radio.HopLimit, d.Radio.ChannelNum, d.Radio.OverrideFreqMHz
 	next.Airtime.OverrideDutyCycle = d.Airtime.OverrideDutyCycle
-	switch d.Airtime.TelemetryInterval {
+	return nil
+}
+
+// applyTelemetryInterval sets the telemetry interval: off, or at least 30 minutes.
+func applyTelemetryInterval(next *config.Config, v string) error {
+	switch v {
 	case "", "off", "0", "0s":
 		next.Airtime.TelemetryInterval = 0
-	default:
-		iv, err := time.ParseDuration(d.Airtime.TelemetryInterval)
-		if err != nil || iv < 30*time.Minute {
-			writeError(w, http.StatusBadRequest, "airtime.telemetry_interval must be off or a duration of at least 30m, e.g. 3h")
-			return
-		}
-		next.Airtime.TelemetryInterval = iv
+		return nil
 	}
+	iv, err := time.ParseDuration(v)
+	if err != nil || iv < 30*time.Minute {
+		return errors.New("airtime.telemetry_interval must be off or a duration of at least 30m, e.g. 3h")
+	}
+	next.Airtime.TelemetryInterval = iv
+	return nil
+}
+
+// applyRelayDTO copies the relay section, writing favourites as node ids where they parse.
+func applyRelayDTO(next *config.Config, d configDTO) {
 	next.Relay.Rebroadcast = strings.ToLower(d.Relay.Rebroadcast)
 	next.Relay.Favorites = nil
 	for _, f := range d.Relay.Favorites {
@@ -390,17 +477,26 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	next.Relay.Role, next.Relay.LongName, next.Relay.ShortName = mesh.NormalizeRelayRole(d.Relay.Role), d.Relay.LongName, d.Relay.ShortName
 	next.Links.LocalDMOverRF = d.Relay.LocalDM == "also_rf"
+}
+
+// applyAirtimeDTO copies the airtime shares and NodeInfo interval; an unchanged NodeInfo interval
+// that doesn't parse is left as it is.
+func applyAirtimeDTO(next *config.Config, d, cur configDTO, regionDuty float64) error {
 	next.Airtime.DutyCyclePct = d.Airtime.DutyCyclePercent
-	if d.Airtime.DutyCyclePercent == rc.host.RadioParams().Region.DutyCyclePct {
+	if d.Airtime.DutyCyclePercent == regionDuty {
 		next.Airtime.DutyCyclePct = 0 // the region's default, so it follows the region
 	}
 	next.Airtime.IdentitySharePct = d.Airtime.IdentitySharePercent
 	if iv, err := time.ParseDuration(d.Airtime.NodeInfoInterval); err == nil && iv >= 10*time.Minute {
 		next.Airtime.NodeInfoInterval = iv
 	} else if d.Airtime.NodeInfoInterval != cur.Airtime.NodeInfoInterval {
-		writeError(w, http.StatusBadRequest, "nodeinfo_interval must be a duration of at least 10m, e.g. 3h")
-		return
+		return errors.New("nodeinfo_interval must be a duration of at least 10m, e.g. 3h")
 	}
+	return nil
+}
+
+// applyWebDTO copies the web section; tiles, mDNS and logging only exist on the main radio.
+func applyWebDTO(next, old *config.Config, d configDTO, main bool) {
 	next.Web.Bind, next.Web.Port = d.Web.Bind, d.Web.Port
 	if main {
 		next.Web.MapTileURL, next.MDNS.Enabled, next.LogLevel = strings.TrimSpace(d.Web.MapTileURL), d.Web.MDNS, strings.ToLower(d.Web.LogLevel)
@@ -411,36 +507,26 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	if ttl, err := time.ParseDuration(d.Web.SessionTTL); err == nil && ttl >= time.Minute {
 		next.Web.SessionTTL = ttl
 	}
+}
 
+// applyPositionDTO copies the position and hardware sections.
+func applyPositionDTO(next *config.Config, d configDTO) error {
 	next.Position = config.Position{Latitude: d.Position.Latitude, Longitude: d.Position.Longitude, Altitude: d.Position.Altitude,
 		PrecisionBits: d.Position.PrecisionBits, Identities: strings.ToLower(d.Position.Identities)}
-	if iv, err := time.ParseDuration(d.Position.Interval); err == nil && iv >= 30*time.Minute {
-		next.Position.Interval = iv
-	} else {
-		writeError(w, http.StatusBadRequest, "position.interval must be a duration of at least 30m, e.g. 3h")
-		return
+	iv, err := time.ParseDuration(d.Position.Interval)
+	if err != nil || iv < 30*time.Minute {
+		return errors.New("position.interval must be a duration of at least 30m, e.g. 3h")
 	}
+	next.Position.Interval = iv
 	next.Mesh.HwModel = strings.ToUpper(strings.TrimSpace(d.Hardware.HwModel))
 	if next.Mesh.HwModel == "AUTO" {
 		next.Mesh.HwModel = "auto"
 	}
+	return nil
+}
 
-	mq, err := fromMQTTDTOs(d.MQTT, old.Links.MQTT)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	next.Links.MQTT = mq
-
-	if main {
-		err = s.applyConfig(r, &next)
-	} else {
-		err = s.applyRadioConfig(r, rc, &next)
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+// afterConfigApplied renames the relay and changes the log level live once a config is in place.
+func (s *Server) afterConfigApplied(rc *radioCtx, main bool, next, old *config.Config) {
 	if rel := rc.host.Relay(); rel != nil && (next.Relay.LongName != old.Relay.LongName || next.Relay.ShortName != old.Relay.ShortName) {
 		rel.SetOwner(next.Relay.LongName, next.Relay.ShortName)
 		s.saveIdentities()
@@ -451,13 +537,6 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 			s.opt.LogLevel.Set(l) // "" leaves l at info
 		}
 	}
-	restart := len(s.restartReasons()) > 0
-	s.cfgMu.Lock()
-	out := toDTO(s.radioConfig(rc), rc.host)
-	s.cfgMu.Unlock()
-	out.RadioID, out.Main = rc.id, main
-	out.Web.MapKeySource = s.mapKeySource()
-	writeJSON(w, http.StatusOK, map[string]any{"config": out, "restart_required": restart})
 }
 
 func (s *Server) mapKeySource() string {
@@ -572,11 +651,11 @@ func mapTileURL(u string) string {
 // withMapKey fills {api_key} in a tile URL. Without a key the query parameter holding it
 // (?key={api_key}, &api_key={api_key}, ...) is dropped, so a keyless provider URL still works.
 func withMapKey(u, key string) string {
-	if !strings.Contains(u, "{api_key}") {
+	if !strings.Contains(u, apiKeyPlaceholder) {
 		return u
 	}
 	if key != "" {
-		return strings.ReplaceAll(u, "{api_key}", url.QueryEscape(key))
+		return strings.ReplaceAll(u, apiKeyPlaceholder, url.QueryEscape(key))
 	}
 	u = mapKeyParam.ReplaceAllStringFunc(u, func(m string) string {
 		if m[0] == '?' && strings.HasSuffix(m, "&") {
@@ -584,7 +663,10 @@ func withMapKey(u, key string) string {
 		}
 		return ""
 	})
-	return strings.ReplaceAll(u, "{api_key}", "")
+	return strings.ReplaceAll(u, apiKeyPlaceholder, "")
 }
+
+// apiKeyPlaceholder marks where a tile URL takes the map API key.
+const apiKeyPlaceholder = "{api_key}"
 
 var mapKeyParam = regexp.MustCompile(`\?[A-Za-z0-9_]+=\{api_key\}&|[?&][A-Za-z0-9_]+=\{api_key\}`)

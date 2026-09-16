@@ -189,34 +189,38 @@ func (c *Config) normalizeRoles() {
 func (c *Config) fillRadioDefaults() {
 	d := Default()
 	for i := range c.Radios {
-		r := &c.Radios[i]
-		if r.Radio.Driver == "" {
-			r.Radio.Driver = d.Radio.Driver
+		c.fillOneRadioDefaults(&c.Radios[i], d)
+	}
+}
+
+// fillOneRadioDefaults fills one extra radio's unset fields from d and the main radio.
+func (c *Config) fillOneRadioDefaults(r *RadioInstance, d *Config) {
+	if r.Radio.Driver == "" {
+		r.Radio.Driver = d.Radio.Driver
+	}
+	if r.Radio.Baud == 0 {
+		r.Radio.Baud = d.Radio.Baud
+	}
+	if r.Mesh.Region == "" {
+		r.Mesh.Region = c.Mesh.Region
+	}
+	if r.Mesh.HopLimit == 0 {
+		r.Mesh.HopLimit = d.Mesh.HopLimit
+	}
+	if r.Relay.Role == "" {
+		r.Relay.Role = mesh.RoleClientMute
+	}
+	if r.Relay.LongName == "" {
+		r.Relay.LongName = "RepeaterTastic " + r.ID + " Relay"
+	}
+	if r.Relay.ShortName == "" {
+		r.Relay.ShortName = strings.ToUpper(r.ID)
+		if len(r.Relay.ShortName) > 4 {
+			r.Relay.ShortName = r.Relay.ShortName[:4]
 		}
-		if r.Radio.Baud == 0 {
-			r.Radio.Baud = d.Radio.Baud
-		}
-		if r.Mesh.Region == "" {
-			r.Mesh.Region = c.Mesh.Region
-		}
-		if r.Mesh.HopLimit == 0 {
-			r.Mesh.HopLimit = d.Mesh.HopLimit
-		}
-		if r.Relay.Role == "" {
-			r.Relay.Role = mesh.RoleClientMute
-		}
-		if r.Relay.LongName == "" {
-			r.Relay.LongName = "RepeaterTastic " + r.ID + " Relay"
-		}
-		if r.Relay.ShortName == "" {
-			r.Relay.ShortName = strings.ToUpper(r.ID)
-			if len(r.Relay.ShortName) > 4 {
-				r.Relay.ShortName = r.Relay.ShortName[:4]
-			}
-		}
-		if r.Airtime.NodeInfoInterval == 0 {
-			r.Airtime.NodeInfoInterval = c.Airtime.NodeInfoInterval
-		}
+	}
+	if r.Airtime.NodeInfoInterval == 0 {
+		r.Airtime.NodeInfoInterval = c.Airtime.NodeInfoInterval
 	}
 }
 
@@ -228,38 +232,64 @@ func (c *Config) validateRadios() error {
 	seenPort := map[int]string{}
 	for i, rc := range c.RadioConfigs() {
 		if i > 0 {
-			if !radioIDPattern.MatchString(rc.ID) {
-				return fmt.Errorf("radios: id %q must be 1-24 lowercase letters, digits or dashes", rc.ID)
-			}
-			if seenID[rc.ID] {
-				return fmt.Errorf("radios: id %q is used twice (%q is the top-level radio)", rc.ID, MainRadioID)
-			}
-			seenID[rc.ID] = true
-			if err := rc.validateOne(); err != nil {
-				return fmt.Errorf("radios[%s]: %w", rc.ID, err)
+			if err := rc.validateExtra(seenID); err != nil {
+				return err
 			}
 		}
-		if (rc.Radio.Driver == "kiss" || rc.Radio.Driver == "spi" || rc.Radio.Driver == "meshtastic") && rc.Radio.Device != "" {
-			dev := rc.Radio.Device
-			if addr, err := mtclient.TCPAddress(dev); rc.Radio.Driver == "meshtastic" && !mtclient.IsSerial(dev) && err == nil {
-				dev = strings.ToLower(addr) // one board, one client
-			} else if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
-				dev = real
-			}
-			if other, ok := seenDev[dev]; ok {
-				return fmt.Errorf("radios %s and %s both use %s", other, rc.ID, rc.Radio.Device)
-			}
-			seenDev[dev] = rc.ID
+		if err := rc.claimDevice(seenDev); err != nil {
+			return err
 		}
-		for _, id := range rc.Identities {
-			if id.APIPort <= 0 {
-				continue
-			}
-			if other, ok := seenPort[id.APIPort]; ok {
-				return fmt.Errorf("api_port %d is used by radios %s and %s", id.APIPort, other, rc.ID)
-			}
-			seenPort[id.APIPort] = rc.ID
+		if err := rc.claimAPIPorts(seenPort); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// validateExtra checks an extra radio's ID is well formed and unused, then its sections.
+func (rc RadioConfig) validateExtra(seenID map[string]bool) error {
+	if !radioIDPattern.MatchString(rc.ID) {
+		return fmt.Errorf("radios: id %q must be 1-24 lowercase letters, digits or dashes", rc.ID)
+	}
+	if seenID[rc.ID] {
+		return fmt.Errorf("radios: id %q is used twice (%q is the top-level radio)", rc.ID, MainRadioID)
+	}
+	seenID[rc.ID] = true
+	if err := rc.validateOne(); err != nil {
+		return fmt.Errorf("radios[%s]: %w", rc.ID, err)
+	}
+	return nil
+}
+
+// claimDevice records the radio's device in seenDev, failing if another radio already has it.
+func (rc RadioConfig) claimDevice(seenDev map[string]string) error {
+	drv := rc.Radio.Driver
+	if (drv != "kiss" && drv != "spi" && drv != "meshtastic") || rc.Radio.Device == "" {
+		return nil
+	}
+	dev := rc.Radio.Device
+	if addr, err := mtclient.TCPAddress(dev); drv == "meshtastic" && !mtclient.IsSerial(dev) && err == nil {
+		dev = strings.ToLower(addr) // one board, one client
+	} else if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
+		dev = real
+	}
+	if other, ok := seenDev[dev]; ok {
+		return fmt.Errorf("radios %s and %s both use %s", other, rc.ID, rc.Radio.Device)
+	}
+	seenDev[dev] = rc.ID
+	return nil
+}
+
+// claimAPIPorts records the radio's identity API ports in seenPort, failing on a clash.
+func (rc RadioConfig) claimAPIPorts(seenPort map[int]string) error {
+	for _, id := range rc.Identities {
+		if id.APIPort <= 0 {
+			continue
+		}
+		if other, ok := seenPort[id.APIPort]; ok {
+			return fmt.Errorf("api_port %d is used by radios %s and %s", id.APIPort, other, rc.ID)
+		}
+		seenPort[id.APIPort] = rc.ID
 	}
 	return nil
 }
@@ -453,24 +483,8 @@ func (m MQTT) SelectionOrDefault() string {
 }
 
 func (m MQTT) validate() error {
-	switch m.ModeOrDefault() {
-	case MQTTGateway, MQTTUplinkOnly, MQTTMapOnly, MQTTMonitor:
-	case MQTTBridge:
-		if !m.BridgeAcknowledged {
-			return errors.New("mode bridge can carry private channels off the mesh: set bridge_acknowledged to confirm")
-		}
-	default:
-		return fmt.Errorf("mode must be gateway, uplink_only, map_only, monitor or bridge, not %q", m.Mode)
-	}
-	switch m.FormatOrDefault() {
-	case "encrypted", "json", "both":
-	default:
-		return fmt.Errorf("format must be encrypted, json or both, not %q", m.Format)
-	}
-	switch m.SelectionOrDefault() {
-	case ChannelsOverride, ChannelsCombine, ChannelsIdentity:
-	default:
-		return fmt.Errorf("channel_selection must be override, combine or identity, not %q", m.ChannelSelection)
+	if err := m.validateChoices(); err != nil {
+		return err
 	}
 	if m.IgnoreConsent && m.ModeOrDefault() != MQTTBridge {
 		return errors.New("ignore_consent is only allowed on a bridge")
@@ -489,6 +503,30 @@ func (m MQTT) validate() error {
 	}
 	if p := m.MapReport.PositionPrecision; p < 0 || p > 32 {
 		return errors.New("map_report.position_precision must be 0-32")
+	}
+	return nil
+}
+
+// validateChoices checks the mode, format and channel selection are known values.
+func (m MQTT) validateChoices() error {
+	switch m.ModeOrDefault() {
+	case MQTTGateway, MQTTUplinkOnly, MQTTMapOnly, MQTTMonitor:
+	case MQTTBridge:
+		if !m.BridgeAcknowledged {
+			return errors.New("mode bridge can carry private channels off the mesh: set bridge_acknowledged to confirm")
+		}
+	default:
+		return fmt.Errorf("mode must be gateway, uplink_only, map_only, monitor or bridge, not %q", m.Mode)
+	}
+	switch m.FormatOrDefault() {
+	case "encrypted", "json", "both":
+	default:
+		return fmt.Errorf("format must be encrypted, json or both, not %q", m.Format)
+	}
+	switch m.SelectionOrDefault() {
+	case ChannelsOverride, ChannelsCombine, ChannelsIdentity:
+	default:
+		return fmt.Errorf("channel_selection must be override, combine or identity, not %q", m.ChannelSelection)
 	}
 	return nil
 }
@@ -643,6 +681,17 @@ func (c *Config) Validate() error {
 
 // validateOne checks one radio's sections.
 func (c *Config) validateOne() error {
+	checks := []func() error{c.validateMeshRelay, c.validateHosted, c.validateRadio, c.validateHwModel, c.validatePosition, c.validateMQTTLinks}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateMeshRelay checks the preset, region, telemetry interval and relay section.
+func (c *Config) validateMeshRelay() error {
 	if _, err := c.PresetValue(); err != nil {
 		return err
 	}
@@ -663,6 +712,11 @@ func (c *Config) validateOne() error {
 			return fmt.Errorf("relay.favorites: %q isn't a node ID such as !a1b2c3d4", f)
 		}
 	}
+	return nil
+}
+
+// validateHosted checks the hosted-node ports and meshtasticd program.
+func (c *Config) validateHosted() error {
 	if pb := c.Hosted.PortBase; pb != 0 && (pb < 1024 || pb > 64000) {
 		return errors.New("hosted.port_base must be between 1024 and 64000")
 	}
@@ -675,6 +729,11 @@ func (c *Config) validateOne() error {
 	if strings.ContainsAny(c.Hosted.DockerImage, " \t\n") || strings.HasPrefix(c.Hosted.DockerImage, "-") {
 		return errors.New("hosted.docker_image must be an image name such as meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian")
 	}
+	return nil
+}
+
+// validateRadio checks the radio driver and the device it needs.
+func (c *Config) validateRadio() error {
 	switch c.Radio.Driver {
 	case "kiss", "sim", "none":
 	case "spi":
@@ -682,23 +741,41 @@ func (c *Config) validateOne() error {
 			return errors.New("radio.driver spi needs radio.device: a meshtasticd board file, a built-in board name such as MeshAdv-900M30S, or auto")
 		}
 	case "meshtastic":
-		dev := strings.TrimSpace(c.Radio.Device)
-		if dev == "" {
-			return errors.New("radio.driver meshtastic needs radio.device: the board's serial port (/dev/ttyACM0, /dev/serial/by-id/…) or a network board's address (host or host:port)")
-		}
-		if !mtclient.IsSerial(dev) {
-			if _, err := mtclient.TCPAddress(dev); err != nil {
-				return fmt.Errorf("radio.device: %w", err)
-			}
-		}
+		return validateMeshtasticDevice(strings.TrimSpace(c.Radio.Device))
 	default:
 		return fmt.Errorf("radio.driver must be kiss, spi, meshtastic or none, not %q", c.Radio.Driver)
 	}
-	if name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel)); name != "" && name != "AUTO" {
-		if _, ok := pb.HardwareModel_value[name]; !ok {
-			return fmt.Errorf("mesh.hw_model %q is not a Meshtastic hardware model (or auto)", c.Mesh.HwModel)
-		}
+	return nil
+}
+
+// validateMeshtasticDevice checks a Meshtastic board's serial port or network address.
+func validateMeshtasticDevice(dev string) error {
+	if dev == "" {
+		return errors.New("radio.driver meshtastic needs radio.device: the board's serial port (/dev/ttyACM0, /dev/serial/by-id/…) or a network board's address (host or host:port)")
 	}
+	if mtclient.IsSerial(dev) {
+		return nil
+	}
+	if _, err := mtclient.TCPAddress(dev); err != nil {
+		return fmt.Errorf("radio.device: %w", err)
+	}
+	return nil
+}
+
+// validateHwModel checks mesh.hw_model names a Meshtastic hardware model or auto.
+func (c *Config) validateHwModel() error {
+	name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel))
+	if name == "" || name == "AUTO" {
+		return nil
+	}
+	if _, ok := pb.HardwareModel_value[name]; !ok {
+		return fmt.Errorf("mesh.hw_model %q is not a Meshtastic hardware model (or auto)", c.Mesh.HwModel)
+	}
+	return nil
+}
+
+// validatePosition checks the fixed position section.
+func (c *Config) validatePosition() error {
 	if p := c.Position; p.Latitude < -90 || p.Latitude > 90 || p.Longitude < -180 || p.Longitude > 180 {
 		return errors.New("position.latitude/longitude out of range")
 	}
@@ -710,6 +787,11 @@ func (c *Config) validateOne() error {
 	default:
 		return errors.New(`position.identities must be "relay" or "all"`)
 	}
+	return nil
+}
+
+// validateMQTTLinks checks each broker connection and that their names are unique.
+func (c *Config) validateMQTTLinks() error {
 	names := map[string]bool{}
 	for i, m := range c.Links.MQTT {
 		label := m.Name
@@ -723,12 +805,16 @@ func (c *Config) validateOne() error {
 		if err := m.validate(); err != nil {
 			return fmt.Errorf("links.mqtt %s: %w", label, err)
 		}
-		if m.Enabled && m.MapReport.Enabled && m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0 &&
-			c.Position.Latitude == 0 && c.Position.Longitude == 0 {
+		if m.Enabled && m.MapReport.Enabled && m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0 && !c.hasPosition() {
 			return fmt.Errorf("links.mqtt %s: map_report needs a position (its own latitude/longitude or the radio's position:)", label)
 		}
 	}
 	return nil
+}
+
+// hasPosition reports whether the radio has a fixed position set.
+func (c *Config) hasPosition() bool {
+	return c.Position.Latitude != 0 || c.Position.Longitude != 0
 }
 
 // MeshConfig converts to the host configuration.

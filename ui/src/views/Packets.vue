@@ -1,7 +1,6 @@
 <script setup lang="ts">
 // Packet archive with filters, live prepend and a byte-level detail drawer (after openHop's PacketArchive).
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { markRaw } from 'vue'
+import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Radio, RotateCcw } from '@lucide/vue'
 import { api, qs, withRadio } from '@/api/client'
 import type { Packet, PacketKind } from '@/api/types'
@@ -19,7 +18,7 @@ const KINDS: PacketKind[] = ['ours', 'delivered', 'relayed', 'dup', 'undecryptab
 const RANGES = [
   { id: '', label: 'Any time' },
   { id: '15m', label: 'Last 15 min', ms: 15 * 60_000 },
-  { id: '1h', label: 'Last hour', ms: 3600_000 },
+  { id: '1h', label: 'Last hour', ms: 3_600_000 },
   { id: '24h', label: 'Last 24 h', ms: 86_400_000 },
 ]
 
@@ -104,9 +103,9 @@ function reset() {
         <h2 class="page-title">Packets</h2>
         <p class="page-sub">Every frame the modem heard or sent, newest first · {{ list.length }} loaded</p>
       </div>
-      <label class="flex items-center gap-2 text-[13px] text-ink-2">
+      <label for="packets-live-toggle" class="flex items-center gap-2 text-[13px] text-ink-2">
         <Radio :class="['size-4', liveOn ? 'text-ok' : 'text-ink-3']" />Live
-        <Toggle v-model="liveOn" label="Live updates" />
+        <Toggle id="packets-live-toggle" v-model="liveOn" label="Live updates" />
       </label>
     </div>
 

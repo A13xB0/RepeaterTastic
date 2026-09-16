@@ -4,7 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Check, CheckCheck, CircleAlert, Clock3, Hash, Lock, MessageCirclePlus, Search, Send } from '@lucide/vue'
 import { api, enc, qs } from '@/api/client'
-import type { Conversation, Identity, Message } from '@/api/types'
+import type { Channel, Conversation, Identity, MeshNode, Message } from '@/api/types'
 import { live, nodeLabel, on, radioName } from '@/store/live'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Modal from '@/components/ui/Modal.vue'
@@ -160,6 +160,23 @@ onBeforeUnmount(() => {
   clearTimeout(convTimer)
 })
 
+/** Subtitle for a channel conversation header: its slot, role and key kind. */
+function channelSub(idx: number, ch?: Channel) {
+  if (!ch) return ''
+  const key = ch.psk === 'AQ==' ? 'default key' : 'private key'
+  return `channel ${idx} · ${ch.role.toLowerCase()} · ${key}`
+}
+
+/** Subtitle for a DM header: the node id plus how it's reached. */
+function dmStatus(n: MeshNode) {
+  if (n.local) return 'local identity, delivered without RF'
+  if (n.has_public_key) return `PKI encrypted · heard ${relTime(n.last_heard, now.value)}`
+  return 'no public key yet, will use the channel key'
+}
+function dmSub(nodeId: string, n?: MeshNode) {
+  return n ? `${nodeId} · ${dmStatus(n)}` : nodeId
+}
+
 const current = computed(() => {
   const k = convKey.value
   if (!k) return null
@@ -167,7 +184,7 @@ const current = computed(() => {
   if (k.startsWith('ch:')) {
     const idx = Number(k.slice(3))
     const ch = identity.value?.channels[idx]
-    return { kind: 'channel' as const, title: conv?.title ?? ch?.display_name ?? `Channel ${idx}`, channel: idx, to: BROADCAST, sub: ch ? `channel ${idx} · ${ch.role.toLowerCase()} · ${ch.psk === 'AQ==' ? 'default key' : 'private key'}` : '' }
+    return { kind: 'channel' as const, title: conv?.title ?? ch?.display_name ?? `Channel ${idx}`, channel: idx, to: BROADCAST, sub: channelSub(idx, ch) }
   }
   const nodeId = k.slice(3)
   const n = live.nodes[nodeId]
@@ -177,7 +194,7 @@ const current = computed(() => {
     channel: 0,
     to: nodeId,
     nodeId,
-    sub: n ? `${nodeId} · ${n.local ? 'local identity, delivered without RF' : n.has_public_key ? `PKI encrypted · heard ${relTime(n.last_heard, now.value)}` : 'no public key yet, will use the channel key'}` : nodeId,
+    sub: dmSub(nodeId, n),
   }
 })
 

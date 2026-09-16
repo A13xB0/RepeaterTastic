@@ -5,12 +5,12 @@ import { ChevronDown } from '@lucide/vue'
 import type { RelayRole } from '@/api/types'
 import { relayModes } from '@/lib/relay'
 
-const props = defineProps<{ role: string; label: string; disabled?: boolean }>()
-const emit = defineEmits<{ pick: [role: RelayRole] }>()
+const props = defineProps<{ mode: string; label: string; disabled?: boolean }>()
+const emit = defineEmits<{ pick: [mode: RelayRole] }>()
 
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
-const current = computed(() => relayModes.find((m) => m.id === props.role))
+const current = computed(() => relayModes.find((m) => m.id === props.mode))
 
 function onDocClick(e: MouseEvent) {
   if (open.value && root.value && !root.value.contains(e.target as Node)) open.value = false
@@ -25,9 +25,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKey)
 })
 
-function pick(role: RelayRole) {
+function pick(mode: RelayRole) {
   open.value = false
-  emit('pick', role)
+  emit('pick', mode)
 }
 // "CLIENT: rebroadcasts after routers…" → "rebroadcasts after routers…"
 const detail = (title: string) => title.replace(/^[A-Z_]+: /, '')
@@ -39,25 +39,25 @@ const detail = (title: string) => title.replace(/^[A-Z_]+: /, '')
       type="button"
       class="flex h-6 items-center gap-1 rounded-md border border-line-soft bg-surface-solid px-2 text-xs font-medium transition-colors hover:border-line disabled:opacity-60"
       :class="current?.tone"
-      :aria-label="`Relay mode on ${label}: ${current?.label ?? role}`"
+      :aria-label="`Relay mode on ${label}: ${current?.label ?? mode}`"
       :aria-expanded="open"
       aria-haspopup="menu"
       :disabled="disabled"
       @click.stop="open = !open"
     >
-      {{ current?.label ?? role }}<ChevronDown class="size-3 text-ink-3" />
+      {{ current?.label ?? mode }}<ChevronDown class="size-3 text-ink-3" />
     </button>
     <div v-if="open" role="menu" :aria-label="`Relay mode on ${label}`" class="absolute right-0 top-full z-50 mt-1.5 w-72 rounded-xl border border-line bg-surface-solid p-1 shadow-xl">
       <template v-for="(m, i) in relayModes" :key="m.id">
-        <div v-if="i > 0 && relayModes[i - 1]!.group !== m.group" class="mx-2 my-1 h-px bg-line-soft" role="separator" />
+        <hr v-if="i > 0 && relayModes[i - 1]!.group !== m.group" class="mx-2 my-1 h-px border-0 bg-line-soft" />
         <button
           type="button"
           role="menuitemradio"
-          :aria-checked="m.id === role"
-          :class="['block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-raised', m.id === role && 'bg-raised']"
+          :aria-checked="m.id === mode"
+          :class="['block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-raised', m.id === mode && 'bg-raised']"
           @click="pick(m.id)"
         >
-          <span :class="['block text-[13px] font-medium', m.id === role ? m.tone : '']">{{ m.label }}</span>
+          <span :class="['block text-[13px] font-medium', m.id === mode ? m.tone : '']">{{ m.label }}</span>
           <span class="block text-2xs leading-snug text-ink-3">{{ detail(m.title) }}</span>
         </button>
       </template>

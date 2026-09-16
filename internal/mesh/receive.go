@@ -31,26 +31,18 @@ type decodeResult struct {
 // the air, else nil.
 func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	if raw == nil && p.GetEncrypted() != nil { // from a link, not the radio
-		for _, t := range h.airTaps() {
-			if lt, ok := t.(LinkTap); ok {
-				lt.LinkHeard(p)
-			}
-		}
+		h.tapLinkHeard(p)
 	}
 	if h.remoteOnly() {
 		return // a real node does its own receiving; links can't feed it frames
 	}
-	relay := h.Relay()
 	now := time.Now()
 	h.Counters.Rx.Add(1)
 	k := pktKey{p.From, p.Id}
-	var relayByte uint8
-	if relay != nil {
-		relayByte = wire.LastByte(relay.NodeNum)
-	}
+	relayByte := h.relayLastByte()
 	rec := h.baseRecord(p, raw, "rx", "heard")
 
-	if p.HopStart != 0 && p.HopStart < p.HopLimit {
+	if badHops(p) {
 		h.Counters.RxBad.Add(1)
 		rec.Kind = "bad"
 		h.publishPacket(rec)
@@ -68,21 +60,56 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 
 	sr := h.hist.Observe(k, p.HopLimit, uint8(p.RelayNode), uint8(p.NextHop), relayByte, now)
 	if sr.Seen || sr.Upgraded {
-		if sr.Upgraded {
-			h.txq.RemoveLowerHop(k, p.HopLimit)
-		} else if !sr.WeWereNextHop && p.TransportMechanism == pb.MeshPacket_TRANSPORT_LORA && !h.relaysAsRouter(p) {
-			// Someone else relayed it first: a relay still waiting for the channel stands down.
-			if h.txq.Cancel(k, false) {
-				h.Counters.RelayCancelled.Add(1)
-			}
-		}
+		h.heardAgain(p, k, sr)
 		h.Counters.RxDupe.Add(1)
 		rec.Kind = "dup"
 		h.describe(&rec, p)
 		h.publishPacket(rec)
 		return
 	}
+	h.handleFirstSighting(p, rec, now)
+}
 
+// tapLinkHeard tells the air taps that want them about a packet a link brought in.
+func (h *Host) tapLinkHeard(p *pb.MeshPacket) {
+	for _, t := range h.airTaps() {
+		if lt, ok := t.(LinkTap); ok {
+			lt.LinkHeard(p)
+		}
+	}
+}
+
+// relayLastByte is the relay persona's relay byte, 0 without one.
+func (h *Host) relayLastByte() uint8 {
+	if relay := h.Relay(); relay != nil {
+		return wire.LastByte(relay.NodeNum)
+	}
+	return 0
+}
+
+// badHops reports a packet whose hop limit is above the hop count it started with.
+func badHops(p *pb.MeshPacket) bool {
+	return p.HopStart != 0 && p.HopStart < p.HopLimit
+}
+
+// heardAgain handles a duplicate: a better copy replaces our queued relay, and a copy someone
+// else relayed first makes a relay still waiting for the channel stand down.
+func (h *Host) heardAgain(p *pb.MeshPacket, k pktKey, sr seenResult) {
+	if sr.Upgraded {
+		h.txq.RemoveLowerHop(k, p.HopLimit)
+		return
+	}
+	if sr.WeWereNextHop || p.TransportMechanism != pb.MeshPacket_TRANSPORT_LORA || h.relaysAsRouter(p) {
+		return
+	}
+	if h.txq.Cancel(k, false) {
+		h.Counters.RelayCancelled.Add(1)
+	}
+}
+
+// handleFirstSighting decodes a packet heard for the first time, sniffs it and passes channel
+// packets to the links that want them.
+func (h *Host) handleFirstSighting(p *pb.MeshPacket, rec PacketRecord, now time.Time) {
 	dec := h.decode(p)
 	h.DB.UpdateFromPacket(p, now)
 	if !dec.ok {
@@ -109,15 +136,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	decoded.PkiEncrypted = dec.pki
 
 	if !dec.pki && dec.group != nil {
-		ref := dec.group.ref()
-		ref.OKToMQTT = dec.data.Bitfield != nil && *dec.data.Bitfield&1 != 0
-		h.linkMu.RLock()
-		for _, l := range h.links {
-			if cl, ok := l.(ChannelLink); ok {
-				cl.ChannelPacketHeard(p, ref, dec.data)
-			}
-		}
-		h.linkMu.RUnlock()
+		h.channelPacketToLinks(p, dec)
 	}
 
 	h.sniffContent(decoded, dec, now)
@@ -128,40 +147,30 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	h.publishPacket(rec)
 }
 
+// channelPacketToLinks passes a packet decoded on one of our channels to the channel links.
+func (h *Host) channelPacketToLinks(p *pb.MeshPacket, dec decodeResult) {
+	ref := dec.group.ref()
+	ref.OKToMQTT = dec.data.Bitfield != nil && *dec.data.Bitfield&1 != 0
+	h.linkMu.RLock()
+	for _, l := range h.links {
+		if cl, ok := l.(ChannelLink); ok {
+			cl.ChannelPacketHeard(p, ref, dec.data)
+		}
+	}
+	h.linkMu.RUnlock()
+}
+
 // decode tries PKI for DMs to our identities, then every channel whose hash matches.
 func (h *Host) decode(p *pb.MeshPacket) decodeResult {
 	var r decodeResult
-	enc := p.GetEncrypted()
 	r.target = h.Identity(p.To)
-	if p.Channel == 0 && r.target != nil && len(enc) > wire.PKIOverhead {
-		r.matched = true
-		if peer := h.peerKey(p.From); peer != nil {
-			if plain, ok := wire.PKIDecrypt(r.target.PrivateKey, peer, p.From, p.Id, enc); ok {
-				d := &pb.Data{}
-				if proto.Unmarshal(plain, d) == nil && d.Portnum != pb.PortNum_UNKNOWN_APP {
-					r.ok, r.data, r.pki = true, d, true
-					r.deliveries = []delivery{{r.target, 0}}
-					return r
-				}
-				return r // authenticated but malformed
-			}
-		} else {
-			r.pkiNoKey = true
-		}
+	if p.Channel == 0 && r.target != nil && len(p.GetEncrypted()) > wire.PKIOverhead && h.decodePKI(p, &r) {
+		return r
 	}
 	for _, g := range h.channelGroups(uint8(p.Channel)) {
 		r.matched = true
-		var plain []byte
-		if g.aead {
-			var ok bool
-			if plain, ok = wire.AEADDecrypt(g.key, p.From, p.To, p.Id, enc); !ok {
-				continue
-			}
-		} else {
-			plain = wire.AESCTR(g.key, p.From, p.Id, enc)
-		}
-		d := &pb.Data{}
-		if proto.Unmarshal(plain, d) != nil || d.Portnum == pb.PortNum_UNKNOWN_APP {
+		d := decryptOnChannel(g, p)
+		if d == nil {
 			continue
 		}
 		if r.target != nil && d.Portnum == pb.PortNum_TEXT_MESSAGE_APP {
@@ -169,17 +178,61 @@ func (h *Host) decode(p *pb.MeshPacket) decodeResult {
 			return decodeResult{target: r.target, matched: true}
 		}
 		r.ok, r.data, r.group = true, d, g
-		for _, m := range g.members {
-			if !m.id.Enabled {
-				continue
-			}
-			if p.To == wire.Broadcast || p.To == m.id.NodeNum {
-				r.deliveries = append(r.deliveries, delivery(m))
-			}
-		}
+		r.deliveries = channelDeliveries(g, p.To)
 		return r
 	}
 	return r
+}
+
+// decodePKI tries a DM to r.target with the sender's public key. It reports true when the
+// packet authenticated, whether or not its payload was usable.
+func (h *Host) decodePKI(p *pb.MeshPacket, r *decodeResult) bool {
+	r.matched = true
+	peer := h.peerKey(p.From)
+	if peer == nil {
+		r.pkiNoKey = true
+		return false
+	}
+	plain, ok := wire.PKIDecrypt(r.target.PrivateKey, peer, p.From, p.Id, p.GetEncrypted())
+	if !ok {
+		return false
+	}
+	d := &pb.Data{}
+	if proto.Unmarshal(plain, d) == nil && d.Portnum != pb.PortNum_UNKNOWN_APP {
+		r.ok, r.data, r.pki = true, d, true
+		r.deliveries = []delivery{{r.target, 0}}
+	}
+	return true // authenticated, though perhaps malformed
+}
+
+// decryptOnChannel decrypts p with a channel's key, nil if that doesn't yield a known payload.
+func decryptOnChannel(g *chanGroup, p *pb.MeshPacket) *pb.Data {
+	enc := p.GetEncrypted()
+	var plain []byte
+	if g.aead {
+		var ok bool
+		if plain, ok = wire.AEADDecrypt(g.key, p.From, p.To, p.Id, enc); !ok {
+			return nil
+		}
+	} else {
+		plain = wire.AESCTR(g.key, p.From, p.Id, enc)
+	}
+	d := &pb.Data{}
+	if proto.Unmarshal(plain, d) != nil || d.Portnum == pb.PortNum_UNKNOWN_APP {
+		return nil
+	}
+	return d
+}
+
+// channelDeliveries lists the enabled channel members a packet to `to` is for.
+func channelDeliveries(g *chanGroup, to uint32) []delivery {
+	var out []delivery
+	for _, m := range g.members {
+		if m.id.Enabled && (to == wire.Broadcast || to == m.id.NodeNum) {
+			out = append(out, delivery(m))
+		}
+	}
+	return out
 }
 
 func (h *Host) peerKey(num uint32) []byte {
@@ -205,20 +258,26 @@ func (h *Host) sniffContent(p *pb.MeshPacket, dec decodeResult, now time.Time) {
 			}
 		}
 	case pb.PortNum_POSITION_APP:
-		pos := &pb.Position{}
-		if proto.Unmarshal(d.Payload, pos) == nil && (pos.GetLatitudeI() != 0 || pos.GetLongitudeI() != 0) {
-			if pos.Time == 0 {
-				pos.Time = uint32(now.Unix())
-			}
-			h.DB.Update(p.From, func(e *NodeEntry) { e.Position = pos })
-			h.Bus.Publish(Event{Type: "node", Data: wire.NodeID(p.From)})
-		}
+		h.sniffPosition(p.From, d.Payload, now)
 	case pb.PortNum_TELEMETRY_APP:
 		t := &pb.Telemetry{}
 		if proto.Unmarshal(d.Payload, t) == nil && t.GetDeviceMetrics() != nil {
 			h.DB.Update(p.From, func(e *NodeEntry) { e.Metrics = t.GetDeviceMetrics() })
 		}
 	}
+}
+
+// sniffPosition records a node's reported position, stamping it with now if it has no time.
+func (h *Host) sniffPosition(from uint32, payload []byte, now time.Time) {
+	pos := &pb.Position{}
+	if proto.Unmarshal(payload, pos) != nil || (pos.GetLatitudeI() == 0 && pos.GetLongitudeI() == 0) {
+		return
+	}
+	if pos.Time == 0 {
+		pos.Time = uint32(now.Unix())
+	}
+	h.DB.Update(from, func(e *NodeEntry) { e.Position = pos })
+	h.Bus.Publish(Event{Type: "node", Data: wire.NodeID(from)})
 }
 
 // sniffRouting learns next hops from responses and stands down relays already answered.

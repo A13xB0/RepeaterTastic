@@ -27,7 +27,8 @@ const logName = ref<string | null>(null)
 const logFor = computed<HostedInstance | null>(() => state.value?.instances.find((x) => x.name === logName.value) ?? null)
 const nodeName = (x: HostedInstance) => {
   const who = x.role === 'persona' ? 'Relay persona' : live.identities.find((i) => i.node_id === x.node_id)?.long_name ?? 'Identity'
-  return `${who}${x.node_id ? ` ${x.node_id}` : ''}`
+  const suffix = x.node_id ? ` ${x.node_id}` : ''
+  return `${who}${suffix}`
 }
 
 function load(s: HostedSettings) {
@@ -109,10 +110,11 @@ async function save() {
         <span :class="runtimes.docker.ok ? 'text-ok' : 'text-ink-3'">Docker: {{ runtimes.docker.ok ? `${runtimes.docker.version}, image ${runtimes.docker.image_present ? 'downloaded' : 'not downloaded yet'}` : runtimes.docker.error }}</span>
       </p>
       <div class="mt-3 flex flex-wrap items-center gap-2">
-        <div class="seg" role="group" aria-label="How to run meshtasticd">
+        <fieldset class="seg">
+          <legend class="sr-only">How to run meshtasticd</legend>
           <button type="button" :aria-pressed="via === 'exec'" @click="via = 'exec'">Installed</button>
           <button type="button" :aria-pressed="via === 'docker'" :disabled="!!runtimes && !runtimes.docker.ok" @click="via = 'docker'">Docker</button>
-        </div>
+        </fieldset>
         <input v-if="via === 'exec'" id="hosted-bin" v-model="binary" class="input h-8 mono min-w-0 flex-1 text-xs" :placeholder="runtimes && !runtimes.meshtasticd.found ? 'not on the PATH: enter where it is' : 'meshtasticd (on PATH) or /usr/bin/meshtasticd'" spellcheck="false" aria-label="meshtasticd program" />
         <input v-else id="hosted-image" v-model="image" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />
       </div>

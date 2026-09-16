@@ -121,7 +121,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set(cacheControl, "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	radios := s.radiosFor(r)
 	ch := make(chan radioEvent, 512)
@@ -129,36 +129,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	for _, rc := range radios {
 		sub, unsub := rc.host.Bus.Subscribe(512)
 		defer unsub()
-		go func() {
-			for e := range sub {
-				select {
-				case ch <- radioEvent{rc, e}:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
+		go forwardEvents(ctx, rc, sub, ch)
 	}
-	send := func(event string, v any) bool {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return true
-		}
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b); err != nil {
-			return false
-		}
-		fl.Flush()
-		return true
-	}
-	sendStatus := func() bool {
-		for _, rc := range radios {
-			if !send("status", s.radioStatus(ctx, rc)) {
-				return false
-			}
-		}
-		return true
-	}
-	if !sendStatus() {
+	out := sseStream{w: w, fl: fl}
+	if !s.sendStatuses(ctx, out, radios) {
 		return
 	}
 	tick := time.NewTicker(5 * time.Second)
@@ -168,16 +142,56 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if !sendStatus() {
+			if !s.sendStatuses(ctx, out, radios) {
 				return
 			}
 		case re := <-ch:
 			payload, ok := s.eventPayload(re, radios)
-			if ok && !send(re.e.Type, payload) {
+			if ok && !out.send(re.e.Type, payload) {
 				return
 			}
 		}
 	}
+}
+
+// forwardEvents passes a radio's bus events into the stream's channel until the request ends.
+func forwardEvents(ctx context.Context, rc *radioCtx, sub <-chan mesh.Event, ch chan<- radioEvent) {
+	for e := range sub {
+		select {
+		case ch <- radioEvent{rc, e}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// sseStream writes server-sent events.
+type sseStream struct {
+	w  http.ResponseWriter
+	fl http.Flusher
+}
+
+// send writes one event; false means the client has gone. A value that can't be encoded is skipped.
+func (o sseStream) send(event string, v any) bool {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return true
+	}
+	if _, err := fmt.Fprintf(o.w, "event: %s\ndata: %s\n\n", event, b); err != nil {
+		return false
+	}
+	o.fl.Flush()
+	return true
+}
+
+// sendStatuses sends a status event per radio; false means the client has gone.
+func (s *Server) sendStatuses(ctx context.Context, out sseStream, radios []*radioCtx) bool {
+	for _, rc := range radios {
+		if !out.send("status", s.radioStatus(ctx, rc)) {
+			return false
+		}
+	}
+	return true
 }
 
 // eventPayload is what the stream sends for a bus event (false: skip it).
@@ -186,31 +200,9 @@ func (s *Server) eventPayload(re radioEvent, radios []*radioCtx) (any, bool) {
 	site := len(radios) > 1
 	switch e.Type {
 	case "identity":
-		idStr, _ := e.Data.(string)
-		num, _ := wire.ParseNodeID(idStr)
-		if id := re.rc.host.Identity(num); id != nil {
-			return s.identityJSON(id), true
-		}
-		if site && s.radioHolding(num) != nil {
-			return nil, false // it moved to another radio, which announces it
-		}
-		return map[string]any{"node_id": idStr, "deleted": true}, true
+		return s.identityEventPayload(re, site)
 	case "node":
-		idStr, _ := e.Data.(string)
-		num, _ := wire.ParseNodeID(idStr)
-		if site {
-			if n := s.siteNodes(radios, num); len(n) == 1 {
-				return n[0], true
-			}
-			return nil, false
-		}
-		en, ok := re.rc.host.DB.Get(num)
-		if !ok {
-			return nil, false
-		}
-		n := nodeJSON(en, s.localIDs(re.rc.host))
-		n["heard_by"] = heardBy(en, re.rc.id)
-		return n, true
+		return s.nodeEventPayload(re, radios)
 	case "log", "plugin":
 		// Published on every radio's bus: send them once.
 		if site && re.rc != radios[0] {
@@ -219,14 +211,51 @@ func (s *Server) eventPayload(re radioEvent, radios []*radioCtx) (any, bool) {
 		if e.Type == "log" {
 			return e.Data, true
 		}
-		id, _ := e.Data.(string)
-		if s.opt.Plugins == nil {
-			return nil, false
-		}
-		if in, err := s.opt.Plugins.Get(id); err == nil {
-			return s.pluginJSON(in), true
-		}
-		return map[string]any{"id": id, "deleted": true}, true
+		return s.pluginEventPayload(e)
 	}
 	return e.Data, true
+}
+
+// identityEventPayload is an identity's new state, or a note that it's gone.
+func (s *Server) identityEventPayload(re radioEvent, site bool) (any, bool) {
+	idStr, _ := re.e.Data.(string)
+	num, _ := wire.ParseNodeID(idStr)
+	if id := re.rc.host.Identity(num); id != nil {
+		return s.identityJSON(id), true
+	}
+	if site && s.radioHolding(num) != nil {
+		return nil, false // it moved to another radio, which announces it
+	}
+	return map[string]any{"node_id": idStr, "deleted": true}, true
+}
+
+// nodeEventPayload is a node's new state: across the site when the stream covers several radios.
+func (s *Server) nodeEventPayload(re radioEvent, radios []*radioCtx) (any, bool) {
+	idStr, _ := re.e.Data.(string)
+	num, _ := wire.ParseNodeID(idStr)
+	if len(radios) > 1 {
+		if n := s.siteNodes(radios, num); len(n) == 1 {
+			return n[0], true
+		}
+		return nil, false
+	}
+	en, ok := re.rc.host.DB.Get(num)
+	if !ok {
+		return nil, false
+	}
+	n := nodeJSON(en, s.localIDs(re.rc.host))
+	n["heard_by"] = heardBy(en, re.rc.id)
+	return n, true
+}
+
+// pluginEventPayload is a plugin's new state, or a note that it's gone.
+func (s *Server) pluginEventPayload(e mesh.Event) (any, bool) {
+	id, _ := e.Data.(string)
+	if s.opt.Plugins == nil {
+		return nil, false
+	}
+	if in, err := s.opt.Plugins.Get(id); err == nil {
+		return s.pluginJSON(in), true
+	}
+	return map[string]any{"id": id, "deleted": true}, true
 }

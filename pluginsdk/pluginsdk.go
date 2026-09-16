@@ -55,6 +55,9 @@ type Client struct {
 	err     error
 }
 
+// heartbeatInterval is how often the plugin tells RepeaterTastic it is alive (a variable for tests).
+var heartbeatInterval = 30 * time.Second
+
 type tokenCreds string
 
 func (t tokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
@@ -143,7 +146,7 @@ func (c *Client) readLoop() {
 }
 
 func (c *Client) heartbeat() {
-	t := time.NewTicker(30 * time.Second)
+	t := time.NewTicker(heartbeatInterval)
 	defer t.Stop()
 	for {
 		select {

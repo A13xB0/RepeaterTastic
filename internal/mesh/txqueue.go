@@ -110,18 +110,7 @@ func (q *TxQueue) Len() int {
 func (q *TxQueue) Next(ctx context.Context) (*txItem, error) {
 	for {
 		q.mu.Lock()
-		now := time.Now()
-		best := -1
-		var earliest time.Time
-		for i, x := range q.items {
-			if !x.due.After(now) {
-				if best < 0 || x.prio > q.items[best].prio || (x.prio == q.items[best].prio && x.seq < q.items[best].seq) {
-					best = i
-				}
-			} else if earliest.IsZero() || x.due.Before(earliest) {
-				earliest = x.due
-			}
-		}
+		best, earliest := q.pickDue(time.Now())
 		if best >= 0 {
 			it := q.items[best]
 			q.items = append(q.items[:best], q.items[best+1:]...)
@@ -143,6 +132,27 @@ func (q *TxQueue) Next(ctx context.Context) (*txItem, error) {
 		}
 		t.Stop()
 	}
+}
+
+// pickDue returns the index of the item to send now (-1 if none is due) and the earliest due
+// time of the rest. Called with q.mu held.
+func (q *TxQueue) pickDue(now time.Time) (best int, earliest time.Time) {
+	best = -1
+	for i, x := range q.items {
+		if !x.due.After(now) {
+			if best < 0 || sendsBefore(x, q.items[best]) {
+				best = i
+			}
+		} else if earliest.IsZero() || x.due.Before(earliest) {
+			earliest = x.due
+		}
+	}
+	return best, earliest
+}
+
+// sendsBefore reports whether due item a goes before due item b: higher priority, then FIFO.
+func sendsBefore(a, b *txItem) bool {
+	return a.prio > b.prio || (a.prio == b.prio && a.seq < b.seq)
 }
 
 // DropOrigin removes every queued packet an identity originated and returns their packet IDs.

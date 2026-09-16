@@ -100,7 +100,9 @@ type Radio struct {
 // interrupts. Configure before receiving or sending.
 func Open(ctx context.Context, b Board, logf func(string, ...any)) (*Radio, error) {
 	if logf == nil {
-		logf = func(string, ...any) {}
+		logf = func(string, ...any) {
+			// No logger given: drop the messages.
+		}
 	}
 	var (
 		h   hal
@@ -249,34 +251,50 @@ func (r *Radio) loop() {
 		if !r.hal.HasIRQ() {
 			wait = 10 * time.Millisecond
 		}
-		if _, err := r.hal.WaitIRQ(wait); err != nil {
-			if deviceGone(err) {
-				r.log("spi: the adapter is gone (%v); closing so it can be opened again", err)
-				r.lost.Store(true)
-				go r.Close() // Close waits for this loop to end
-				return
-			}
-			r.log("spi: waiting for IRQ: %v", err)
-			time.Sleep(wait)
+		if !r.waitIRQ(wait) {
+			return
 		}
-		r.mu.Lock()
-		ev, err := r.chip.events()
-		if err != nil {
-			r.mu.Unlock()
-			r.errs.Add(1)
-			time.Sleep(wait)
-			continue
-		}
-		if ev != 0 {
-			r.handle(ev)
-		} else if r.haveCfg && r.receiving.Load() == 0 && time.Since(lastNoise) > 5*time.Second {
-			if v, err := r.chip.rssi(); err == nil {
-				r.noise.Store(int32(v))
-				lastNoise = time.Now()
-			}
-		}
-		r.mu.Unlock()
+		r.service(wait, &lastNoise)
 	}
+}
+
+// waitIRQ waits up to wait for an interrupt. It returns false when the adapter has gone and the
+// loop must end.
+func (r *Radio) waitIRQ(wait time.Duration) bool {
+	_, err := r.hal.WaitIRQ(wait)
+	if err == nil {
+		return true
+	}
+	if deviceGone(err) {
+		r.log("spi: the adapter is gone (%v); closing so it can be opened again", err)
+		r.lost.Store(true)
+		go r.Close() // Close waits for this loop to end
+		return false
+	}
+	r.log("spi: waiting for IRQ: %v", err)
+	time.Sleep(wait)
+	return true
+}
+
+// service handles the chip's pending events, or samples the noise floor every 5 s while idle.
+func (r *Radio) service(wait time.Duration, lastNoise *time.Time) {
+	r.mu.Lock()
+	ev, err := r.chip.events()
+	if err != nil {
+		r.mu.Unlock()
+		r.errs.Add(1)
+		time.Sleep(wait)
+		return
+	}
+	if ev != 0 {
+		r.handle(ev)
+	} else if r.haveCfg && r.receiving.Load() == 0 && time.Since(*lastNoise) > 5*time.Second {
+		if v, err := r.chip.rssi(); err == nil {
+			r.noise.Store(int32(v))
+			*lastNoise = time.Now()
+		}
+	}
+	r.mu.Unlock()
 }
 
 func (r *Radio) handle(ev event) {

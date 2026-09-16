@@ -33,48 +33,71 @@ watch(
   },
 )
 
-async function save() {
-  const i = props.identity
-  if (!i) return
-  const f = form.value
-  const everyone = live.identities
-  if (i.api && everyone.some((x) => x.node_id !== i.node_id && x.api?.port === f.api_port)) {
-    error.value = `Port ${f.api_port} is used by another identity`
-    return
-  }
+type Form = typeof form.value
+
+function apiBindValue(i: Identity): string {
+  return !i.api?.bind || i.api.bind === '0.0.0.0' ? '' : i.api.bind
+}
+
+/** Diffs the form against the loaded identity: only changed fields go in the PATCH body. */
+function buildPatch(i: Identity, f: Form): Record<string, unknown> {
   const patch: Record<string, unknown> = {}
   if (f.long_name !== i.long_name) patch.long_name = f.long_name.trim()
   if (f.short_name !== i.short_name) patch.short_name = f.short_name.trim()
   if (f.role !== i.role) patch.role = f.role
   if (f.enabled !== i.enabled) patch.enabled = f.enabled
   if (i.api && f.api_port !== i.api.port) patch.api_port = f.api_port
-  if (i.api && f.api_bind !== (!i.api.bind || i.api.bind === '0.0.0.0' ? '' : i.api.bind)) patch.api_bind = f.api_bind
+  if (i.api && f.api_bind !== apiBindValue(i)) patch.api_bind = f.api_bind
   if (f.share_limit_pct !== (i.share_limit_pct ?? 25)) patch.share_limit_pct = f.share_limit_pct
   if (f.hop_limit !== (i.hop_limit ?? 0)) patch.hop_limit = f.hop_limit
   if (f.position_secs !== (i.position_secs ?? 0)) patch.position_secs = f.position_secs
   const pos = f.own_position ? { latitude: f.latitude, longitude: f.longitude, altitude: f.altitude } : null
   if (JSON.stringify(pos) !== JSON.stringify(i.position ?? null)) patch.position = pos
-  const moving = !i.is_relay && live.radios.length > 1 && f.radio_id !== (i.radio_id ?? 'main')
-  if (!Object.keys(patch).length && !moving) return emit('close')
+  return patch
+}
+
+function isMoving(i: Identity, f: Form): boolean {
+  return !i.is_relay && live.radios.length > 1 && f.radio_id !== (i.radio_id ?? 'main')
+}
+
+/** Asks the user to confirm moving an identity to another radio; resolves false if they cancel. */
+async function confirmMove(i: Identity, f: Form): Promise<boolean> {
+  const target = live.radios.find((r) => r.id === f.radio_id)
+  return confirmDialog({
+    title: `Move ${i.long_name} to ${target?.name ?? f.radio_id}?`,
+    body: `It goes off air on ${i.radio_name} and comes back on ${target?.name} (${target?.phy.preset_name}, ${target?.phy.frequency_mhz.toFixed(3)} MHz) with the same node ID, key, app port and chats. Its primary channel becomes ${target?.phy.preset_name}; other channels stay as they are. Connected apps reconnect, and messages still waiting to send are marked failed.`,
+    confirm: 'Move identity',
+  })
+}
+
+/** Sends the move and/or patch to the API and toasts the result. */
+async function applyChanges(i: Identity, f: Form, patch: Record<string, unknown>, moving: boolean) {
   if (moving) {
-    const target = live.radios.find((r) => r.id === f.radio_id)
-    const ok = await confirmDialog({
-      title: `Move ${i.long_name} to ${target?.name ?? f.radio_id}?`,
-      body: `It goes off air on ${i.radio_name} and comes back on ${target?.name} (${target?.phy.preset_name}, ${target?.phy.frequency_mhz.toFixed(3)} MHz) with the same node ID, key, app port and chats. Its primary channel becomes ${target?.phy.preset_name}; other channels stay as they are. Connected apps reconnect, and messages still waiting to send are marked failed.`,
-      confirm: 'Move identity',
-    })
-    if (!ok) return
+    await api.post<Identity>(`/identities/${enc(i.node_id)}/move`, { radio_id: f.radio_id })
+    await refreshIdentities()
   }
+  if (Object.keys(patch).length) upsertIdentity(await api.patch<Identity>(`/identities/${enc(i.node_id)}`, patch))
+  if (moving) refreshIdentities().catch(() => {})
+  const movedTo = live.radios.find((r) => r.id === f.radio_id)?.name ?? f.radio_id
+  toast(moving ? `Moved to ${movedTo}` : 'Identity updated')
+}
+
+async function save() {
+  const i = props.identity
+  if (!i) return
+  const f = form.value
+  if (i.api && live.identities.some((x) => x.node_id !== i.node_id && x.api?.port === f.api_port)) {
+    error.value = `Port ${f.api_port} is used by another identity`
+    return
+  }
+  const patch = buildPatch(i, f)
+  const moving = isMoving(i, f)
+  if (!Object.keys(patch).length && !moving) return emit('close')
+  if (moving && !(await confirmMove(i, f))) return
   saving.value = true
   error.value = ''
   try {
-    if (moving) {
-      await api.post<Identity>(`/identities/${enc(i.node_id)}/move`, { radio_id: f.radio_id })
-      await refreshIdentities()
-    }
-    if (Object.keys(patch).length) upsertIdentity(await api.patch<Identity>(`/identities/${enc(i.node_id)}`, patch))
-    if (moving) refreshIdentities().catch(() => {})
-    toast(moving ? `Moved to ${live.radios.find((r) => r.id === f.radio_id)?.name ?? f.radio_id}` : 'Identity updated')
+    await applyChanges(i, f, patch, moving)
     emit('close')
   } catch (e) {
     error.value = (e as Error).message

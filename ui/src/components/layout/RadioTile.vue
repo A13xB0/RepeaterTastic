@@ -7,12 +7,18 @@ import RelayModeMenu from '@/components/layout/RelayModeMenu.vue'
 import { num } from '@/lib/format'
 
 const props = defineProps<{ status: Status; shared: string[]; busy?: boolean }>()
-const emit = defineEmits<{ role: [role: RelayRole] }>()
+const emit = defineEmits<{ relayMode: [mode: RelayRole] }>()
+
+/** Gauge colour: red once airtime nears the duty limit, amber while approaching it. */
+function gaugeClass(ratio: number): string {
+  if (ratio > 0.9) return 'bg-bad'
+  return ratio > 0.7 ? 'bg-warn' : 'bg-brand'
+}
 
 const st = computed(() => props.status)
 const gauge = computed(() => {
   const ratio = st.value.airtime.tx_pct / (st.value.airtime.duty_limit_pct || 100)
-  return { pct: Math.min(100, ratio * 100), cls: ratio > 0.9 ? 'bg-bad' : ratio > 0.7 ? 'bg-warn' : 'bg-brand' }
+  return { pct: Math.min(100, ratio * 100), cls: gaugeClass(ratio) }
 })
 const name = computed(() => st.value.radio_name ?? st.value.radio_id ?? 'Main')
 </script>
@@ -30,7 +36,7 @@ const name = computed(() => st.value.radio_name ?? st.value.radio_id ?? 'Main')
         class="chip shrink-0 bg-warn/15 !px-1.5 text-warn"
         :title="`Shares its channel with ${shared.join(', ')}: these radios take turns to transmit`"
       >shared</span>
-      <RelayModeMenu class="ml-auto" :role="st.relay.role" :label="name" :disabled="busy" @pick="emit('role', $event)" />
+      <RelayModeMenu class="ml-auto" :mode="st.relay.role" :label="name" :disabled="busy" @pick="emit('relayMode', $event)" />
     </div>
     <div
       class="mt-0.5 truncate text-2xs text-ink-3"

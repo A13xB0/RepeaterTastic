@@ -48,7 +48,7 @@ function onPointer(e: PointerEvent) {
   if (root.value?.contains(t) || menu.value?.contains(t)) return
   open.value = false
 }
-const optionButtons = () => Array.from(menu.value?.querySelectorAll<HTMLButtonElement>('button[role="option"]') ?? [])
+const optionButtons = () => Array.from(menu.value?.querySelectorAll<HTMLButtonElement>('li > button') ?? [])
 
 // The list lives at the end of <body>, so keyboard focus is moved into it and back by hand.
 function onKey(e: KeyboardEvent) {
@@ -110,33 +110,32 @@ onBeforeUnmount(() => listen(false))
     <div
       v-if="open"
       ref="menu"
-      role="listbox"
-      aria-multiselectable="true"
       class="fixed z-[400] overflow-y-auto rounded-xl border border-line bg-surface-solid p-1 shadow-xl"
       :style="{ left: `${place.left}px`, width: `${place.width}px`, top: place.top !== undefined ? `${place.top}px` : undefined, bottom: place.bottom !== undefined ? `${place.bottom}px` : undefined, maxHeight: `${place.maxHeight}px` }"
     >
-      <button
-        v-for="o in options"
-        :key="o.value"
-        type="button"
-        role="option"
-        :aria-selected="model.includes(o.value)"
-        class="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-sunken"
-        @click="toggle(o.value)"
-      >
-        <span
-          :class="[
-            'flex size-4 shrink-0 items-center justify-center rounded border',
-            model.includes(o.value) ? 'border-brand bg-brand text-brand-ink' : 'border-line bg-surface-solid',
-          ]"
-        >
-          <Check v-if="model.includes(o.value)" class="size-3" :stroke-width="3" />
-        </span>
-        <span class="min-w-0 flex-1">
-          <span class="block truncate">{{ o.label }}</span>
-          <span v-if="o.hint" class="mono block truncate text-2xs text-ink-3">{{ o.hint }}</span>
-        </span>
-      </button>
+      <ul>
+        <li v-for="o in options" :key="o.value">
+          <button
+            type="button"
+            :aria-pressed="model.includes(o.value)"
+            class="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-sunken"
+            @click="toggle(o.value)"
+          >
+            <span
+              :class="[
+                'flex size-4 shrink-0 items-center justify-center rounded border',
+                model.includes(o.value) ? 'border-brand bg-brand text-brand-ink' : 'border-line bg-surface-solid',
+              ]"
+            >
+              <Check v-if="model.includes(o.value)" class="size-3" :stroke-width="3" />
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="block truncate">{{ o.label }}</span>
+              <span v-if="o.hint" class="mono block truncate text-2xs text-ink-3">{{ o.hint }}</span>
+            </span>
+          </button>
+        </li>
+      </ul>
       <div v-if="!options.length" class="px-2.5 py-2 text-[13px] text-ink-3">Nothing to choose from.</div>
       <div v-if="model.length" class="border-t border-line-soft px-1 pt-1">
         <button type="button" class="w-full rounded-lg px-2.5 py-1.5 text-left text-xs text-ink-3 hover:bg-sunken hover:text-ink" @click="model = []">

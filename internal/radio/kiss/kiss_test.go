@@ -32,6 +32,8 @@ type fakeModem struct {
 	dropReplies int  // replace the next N command replies with TxBusy (full output queue)
 	chanBusy    bool
 	unplugged   bool
+	replies     map[byte][]byte // canned reply (sub-command first) overriding the built-in one
+	silent      map[byte]bool   // commands never answered
 
 	// state
 	conn                   net.Conn
@@ -48,7 +50,8 @@ type fakeModem struct {
 }
 
 func newFake() *fakeModem {
-	return &fakeModem{version: 2, name: "Heltec V3", txDelay: 10 * time.Millisecond, txResult: 1}
+	return &fakeModem{version: 2, name: "Heltec V3", txDelay: 10 * time.Millisecond, txResult: 1,
+		replies: map[byte][]byte{}, silent: map[byte]bool{}}
 }
 
 func (f *fakeModem) dial() (io.ReadWriteCloser, error) {
@@ -161,6 +164,12 @@ func (f *fakeModem) handle(c net.Conn, fr []byte) {
 func (f *fakeModem) command(cmd byte, a []byte) ([]byte, bool) {
 	ok := []byte{respOK}
 	u32 := binary.LittleEndian.AppendUint32
+	if r, found := f.replies[cmd]; found {
+		return r, true
+	}
+	if f.silent[cmd] {
+		return nil, false
+	}
 	switch cmd {
 	case cmdPing:
 		return []byte{0x97}, true

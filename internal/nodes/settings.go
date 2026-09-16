@@ -417,45 +417,68 @@ func (n *Node) edit(ctx context.Context, msgs []*pb.AdminMessage, rekey bool) er
 	defer stop()
 	all := append([]*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_BeginEditSettings{BeginEditSettings: true}}}, msgs...)
 	all = append(all, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_CommitEditSettings{CommitEditSettings: true}})
+	if err := n.sendEdits(ctx, all, rekey); err != nil {
+		return err
+	}
+	if err := n.awaitRestart(ctx, events); err != nil {
+		return err
+	}
+	n.awaitConfigured(ctx, events)
+	return nil
+}
+
+// sendEdits sends the wrapped admin messages in order; all's last message is the commit.
+func (n *Node) sendEdits(ctx context.Context, all []*pb.AdminMessage, rekey bool) error {
 	for i, m := range all {
-		if i == len(all)-1 {
+		last := i == len(all)-1
+		if last {
 			n.committed.Store(time.Now().UnixMilli())
 		}
-		if _, err := n.client.Admin(ctx, m); err != nil {
-			if i == len(all)-1 && (rekey || !n.client.Snapshot().Connected) {
-				break // the commit's ack was lost to the reboot (or the new number) it caused
-			}
-			return fmt.Errorf("meshtasticd refused the settings: %w", err)
+		_, err := n.client.Admin(ctx, m)
+		if err == nil {
+			continue
 		}
+		if last && (rekey || !n.client.Snapshot().Connected) {
+			return nil // the commit's ack was lost to the reboot (or the new number) it caused
+		}
+		return fmt.Errorf("meshtasticd refused the settings: %w", err)
 	}
-	// Some changes reboot the node; the client reconnects by itself. Otherwise re-read the config.
+	return nil
+}
+
+// awaitRestart waits for the node to drop the connection after an edit. Some changes reboot the
+// node and the client reconnects by itself; otherwise it reconnects to re-read the config.
+func (n *Node) awaitRestart(ctx context.Context, events <-chan mtclient.Event) error {
 	timer := time.NewTimer(n.rebootWait)
 	defer timer.Stop()
-wait:
 	for {
 		select {
 		case e := <-events:
 			if e.Kind == mtclient.Disconnected {
-				break wait
+				return nil
 			}
 		case <-timer.C:
 			n.client.Reconnect()
-			break wait
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	// Hand back once the node has answered again, so the next change reads fresh settings.
+}
+
+// awaitConfigured hands back once the node has answered again, so the next change reads fresh
+// settings. If it takes too long it comes back on its own; the next change waits for it.
+func (n *Node) awaitConfigured(ctx context.Context, events <-chan mtclient.Event) {
 	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
 		select {
 		case e := <-events:
 			if e.Kind == mtclient.Configured {
-				return nil
+				return
 			}
 		case <-wctx.Done():
-			return nil // it comes back on its own; the next change waits for it
+			return
 		}
 	}
 }

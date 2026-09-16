@@ -26,6 +26,13 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
+// Seams for tests: exit replaces os.Exit, and dialKISS (nil in production) replaces the serial
+// port a KISS modem is opened on.
+var (
+	exit     = os.Exit
+	dialKISS func() (io.ReadWriteCloser, error)
+)
+
 const usage = `usage: kisstool <command> [flags]
 
 commands:
@@ -44,7 +51,7 @@ send-text flags: --from !xxxxxxxx (default random)
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		exit(2)
 	}
 	cmd := os.Args[1]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
@@ -56,16 +63,7 @@ func main() {
 	preset := fs.String("preset", "LONG_FAST", "Meshtastic modem preset")
 	power := fs.Int("power", 10, "TX power dBm (0 = region limit)")
 	from := fs.String("from", "", "sender node number (!hex, 0x.., decimal); default random")
-	// Accept flags before and after positional arguments.
-	var args []string
-	for rest := os.Args[2:]; ; {
-		_ = fs.Parse(rest)
-		if fs.NArg() == 0 {
-			break
-		}
-		args = append(args, fs.Arg(0))
-		rest = fs.Args()[1:]
-	}
+	args := parseAnywhere(fs, os.Args[2:])
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -91,20 +89,10 @@ func main() {
 			run = func(ctx context.Context, m radio.Radio) error { return listen(ctx, m, rp) }
 			break
 		}
-		text := strings.Join(args, " ")
-		if text == "" {
-			fatal(errors.New("send-text needs a message"))
-		}
-		node := rand.Uint32N(0xFFFFFFF0-wire.NumReserved) + wire.NumReserved
-		if *from != "" {
-			if node, err = wire.ParseNodeID(*from); err != nil {
-				fatal(fmt.Errorf("--from: %w", err))
-			}
-		}
-		run = func(ctx context.Context, m radio.Radio) error { return sendText(ctx, m, rp, node, text) }
+		run = sendTextRun(rp, args, *from)
 	default:
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		exit(2)
 	}
 
 	octx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -120,9 +108,40 @@ func main() {
 	}
 }
 
+// parseAnywhere parses fs from args, accepting flags before and after positional arguments, and
+// returns the positional ones.
+func parseAnywhere(fs *flag.FlagSet, rest []string) []string {
+	var args []string
+	for {
+		_ = fs.Parse(rest)
+		if fs.NArg() == 0 {
+			return args
+		}
+		args = append(args, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+}
+
+// sendTextRun checks send-text's arguments and returns the command to run; from is the --from
+// flag (empty for a random node number).
+func sendTextRun(rp phy.RadioParams, args []string, from string) func(context.Context, radio.Radio) error {
+	text := strings.Join(args, " ")
+	if text == "" {
+		fatal(errors.New("send-text needs a message"))
+	}
+	node := rand.Uint32N(0xFFFFFFF0-wire.NumReserved) + wire.NumReserved
+	if from != "" {
+		var err error
+		if node, err = wire.ParseNodeID(from); err != nil {
+			fatal(fmt.Errorf("--from: %w", err))
+		}
+	}
+	return func(ctx context.Context, m radio.Radio) error { return sendText(ctx, m, rp, node, text) }
+}
+
 func open(ctx context.Context, dev string, baud int, board string) (radio.Radio, error) {
 	if board == "" {
-		m, err := kiss.Open(ctx, kiss.Options{Device: dev, Baud: baud})
+		m, err := kiss.Open(ctx, kiss.Options{Device: dev, Baud: baud, Dial: dialKISS})
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", dev, err)
 		}
@@ -143,7 +162,7 @@ func open(ctx context.Context, dev string, baud int, board string) (radio.Radio,
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "kisstool:", err)
-	os.Exit(1)
+	exit(1)
 }
 
 func resolve(region, preset string, power int) (phy.RadioParams, error) {

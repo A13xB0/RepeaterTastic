@@ -3,16 +3,10 @@ import { toast } from './toast'
 export async function copyText(text: string, label = 'Copied') {
   try {
     await navigator.clipboard.writeText(text)
+    toast(label)
   } catch {
-    // Fallback for http:// on a LAN, where the async clipboard API is unavailable.
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    ta.remove()
+    // The Clipboard API needs a secure context, which plain http:// on the LAN isn't: show the
+    // text selected instead, ready for Ctrl+C.
+    window.prompt('Press Ctrl+C (⌘C on a Mac) to copy, then Enter', text)
   }
-  toast(label)
 }

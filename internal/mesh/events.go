@@ -401,6 +401,17 @@ func (s *MessageStore) Save(path string) error {
 	return writeJSONAtomic(path, f)
 }
 
+// failUnacked marks outgoing messages still waiting for an acknowledgement as failed: the
+// restart lost their retries.
+func failUnacked(l []*Message) {
+	for _, m := range l {
+		if m.Direction == "out" && (m.Status == "queued" || m.Status == "sent") {
+			m.Status = "failed"
+			m.Error = "restarted before an acknowledgement arrived"
+		}
+	}
+}
+
 // Load restores messages saved by Save.
 func (s *MessageStore) Load(path string) error {
 	b, err := os.ReadFile(path)
@@ -421,12 +432,7 @@ func (s *MessageStore) Load(path string) error {
 		if err != nil {
 			continue
 		}
-		for _, m := range l {
-			if m.Direction == "out" && (m.Status == "queued" || m.Status == "sent") {
-				m.Status = "failed"
-				m.Error = "restarted before an acknowledgement arrived"
-			}
-		}
+		failUnacked(l)
 		s.per[uint32(id)] = l
 	}
 	for k, r := range f.Read {

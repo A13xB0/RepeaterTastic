@@ -36,6 +36,27 @@ ui:
 `
 
 func TestPluginsAPI(t *testing.T) {
+	srv, tok := testPluginServer(t)
+	installed := uploadWidget(t, srv, tok)
+
+	// Without a token, nothing.
+	if code, _, _ := call(t, srv, "GET", "/api/v1/plugins", "", nil); code != http.StatusUnauthorized {
+		t.Fatalf("list without token: %d", code)
+	}
+	checkPluginSettingsAndEnable(t, srv, tok)
+	checkPluginAssets(t, srv, installed)
+
+	if code, _, _ := call(t, srv, "DELETE", "/api/v1/plugins/widget", tok, nil); code != http.StatusNoContent {
+		t.Fatalf("remove: %d", code)
+	}
+	if code, _, _ := call(t, srv, "GET", "/api/v1/plugins/widget", tok, nil); code != http.StatusNotFound {
+		t.Fatalf("after remove: %d", code)
+	}
+}
+
+// testPluginServer is a set-up web server with plugins turned on, and a session token.
+func testPluginServer(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
 	cfg.StateDir = dir
@@ -56,22 +77,19 @@ func TestPluginsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(s.Handler())
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	_, obj, _ := call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse", "region": "EU_868", "preset": "LONG_FAST"})
 	tok, _ := obj["token"].(string)
+	return srv, tok
+}
 
-	// Upload a bundle.
-	var zb bytes.Buffer
-	zw := zip.NewWriter(&zb)
-	for name, body := range map[string]string{"plugin.yaml": panelManifest, "logo.svg": "<svg xmlns='http://www.w3.org/2000/svg'/>", "ui/index.html": "<p>hi</p>"} {
-		w, _ := zw.Create(name)
-		_, _ = io.WriteString(w, body)
-	}
-	_ = zw.Close()
+// uploadWidget uploads the widget bundle and returns the installed plugin's info.
+func uploadWidget(t *testing.T, srv *httptest.Server, tok string) map[string]any {
+	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, _ := mw.CreateFormFile("bundle", "widget.zip")
-	_, _ = fw.Write(zb.Bytes())
+	_, _ = fw.Write(widgetBundle())
 	_ = mw.Close()
 	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/plugins", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
@@ -86,11 +104,25 @@ func TestPluginsAPI(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated || installed["id"] != "widget" || installed["state"] != "disabled" {
 		t.Fatalf("install: %d %v", resp.StatusCode, installed)
 	}
+	return installed
+}
 
-	// Without a token, nothing.
-	if code, _, _ := call(t, srv, "GET", "/api/v1/plugins", "", nil); code != http.StatusUnauthorized {
-		t.Fatalf("list without token: %d", code)
+// widgetBundle is a zipped plugin with a logo and a panel.
+func widgetBundle() []byte {
+	var zb bytes.Buffer
+	zw := zip.NewWriter(&zb)
+	for name, body := range map[string]string{"plugin.yaml": panelManifest, "logo.svg": "<svg xmlns='http://www.w3.org/2000/svg'/>", "ui/index.html": "<p>hi</p>"} {
+		w, _ := zw.Create(name)
+		_, _ = io.WriteString(w, body)
 	}
+	_ = zw.Close()
+	return zb.Bytes()
+}
+
+// checkPluginSettingsAndEnable checks enabling needs the required secret and only the asked-for
+// permissions, and that the secret never comes back.
+func checkPluginSettingsAndEnable(t *testing.T, srv *httptest.Server, tok string) {
+	t.Helper()
 	// Enabling needs the required secret first.
 	if code, obj, _ := call(t, srv, "POST", "/api/v1/plugins/widget/enable", tok, map[string]any{"permissions": []string{"nodes.read"}}); code != http.StatusBadRequest {
 		t.Fatalf("enable without settings: %d %v", code, obj)
@@ -102,37 +134,35 @@ func TestPluginsAPI(t *testing.T) {
 	if code, obj, _ := call(t, srv, "POST", "/api/v1/plugins/widget/enable", tok, map[string]any{"permissions": []string{"radio.own"}}); code != http.StatusBadRequest {
 		t.Fatalf("enable with a permission it didn't ask for: %d %v", code, obj)
 	}
+}
 
-	// Assets: served with a sandbox policy under the capability key only.
+// checkPluginAssets checks assets are served with a sandbox policy under the capability key only.
+func checkPluginAssets(t *testing.T, srv *httptest.Server, installed map[string]any) {
+	t.Helper()
 	logo, _ := installed["logo_url"].(string)
 	panel, _ := installed["panel_url"].(string)
 	for _, u := range []string{logo, panel} {
-		r, err := http.Get(srv.URL + u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r.Body.Close()
-		if r.StatusCode != 200 || !strings.Contains(r.Header.Get("Content-Security-Policy"), "sandbox") {
-			t.Fatalf("asset %s: %d %q", u, r.StatusCode, r.Header.Get("Content-Security-Policy"))
+		code, csp := getAsset(t, srv.URL+u)
+		if code != 200 || !strings.Contains(csp, "sandbox") {
+			t.Fatalf("asset %s: %d %q", u, code, csp)
 		}
 	}
 	for _, u := range []string{"/plugin-assets/widget/0000/logo", strings.Replace(panel, "panel/", "panel/../plugin.yaml", 1), panel + "..%2fplugin.yaml"} {
-		r, err := http.Get(srv.URL + u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r.Body.Close()
-		if r.StatusCode == 200 {
+		if code, _ := getAsset(t, srv.URL+u); code == 200 {
 			t.Fatalf("asset %s served", u)
 		}
 	}
+}
 
-	if code, _, _ := call(t, srv, "DELETE", "/api/v1/plugins/widget", tok, nil); code != http.StatusNoContent {
-		t.Fatalf("remove: %d", code)
+// getAsset fetches a URL without a token and returns its status and Content-Security-Policy.
+func getAsset(t *testing.T, u string) (int, string) {
+	t.Helper()
+	r, err := http.Get(u)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if code, _, _ := call(t, srv, "GET", "/api/v1/plugins/widget", tok, nil); code != http.StatusNotFound {
-		t.Fatalf("after remove: %d", code)
-	}
+	r.Body.Close()
+	return r.StatusCode, r.Header.Get("Content-Security-Policy")
 }
 
 func jsonOf(v any) string {

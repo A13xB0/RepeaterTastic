@@ -208,7 +208,7 @@ const (
 // its client. The process restarts (with backoff) until ctx ends.
 func StartHosted(ctx context.Context, l Launcher, in Instance, logf func(string, ...any)) (*Hosted, error) {
 	if logf == nil {
-		logf = func(string, ...any) {}
+		logf = discardLogf
 	}
 	if err := os.MkdirAll(filepath.Join(in.Dir, "vfs"), 0o700); err != nil {
 		return nil, err
@@ -218,7 +218,7 @@ func StartHosted(ctx context.Context, l Launcher, in Instance, logf func(string,
 	}
 	ctx, stop := context.WithCancel(ctx)
 	addr := fmt.Sprintf("127.0.0.1:%d", in.Port)
-	c := mtclient.New(mtclient.Options{Address: addr, Logf: func(string, ...any) {}, ReconnectInterval: 500 * time.Millisecond,
+	c := mtclient.New(mtclient.Options{Address: addr, Logf: discardLogf, ReconnectInterval: 500 * time.Millisecond,
 		ConfigTimeout: 30 * time.Second})
 	h := &Hosted{Node: newNode(addr, in.Dir, c, logf), inst: in, launcher: l, ctx: ctx, stop: stop, done: make(chan struct{})}
 	go func() {

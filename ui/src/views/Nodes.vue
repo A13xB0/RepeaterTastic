@@ -67,10 +67,16 @@ const all = computed(() => {
     return live.identities.some((i) => i.node_id === n.node_id && i.radio_id === radioFilter.value)
   })
 })
+/** Ascending comparator for the sortable columns' string/number values. */
+function compareVals(x: string | number, y: string | number) {
+  if (x < y) return -1
+  if (x > y) return 1
+  return 0
+}
 const filtered = computed(() => {
   const term = q.value.trim().toLowerCase()
   const list = all.value.filter((n) => {
-    if (scope.value === 'active' && (n.local || now.value - n.last_heard > 2 * 3600_000)) return false
+    if (scope.value === 'active' && (n.local || now.value - n.last_heard > 2 * 3_600_000)) return false
     if (scope.value === 'local' && !n.local) return false
     if (scope.value === 'key' && !n.has_public_key) return false
     if (!term) return true
@@ -86,20 +92,21 @@ const filtered = computed(() => {
       case 'hw': return n.hw_model
     }
   }
-  return list.sort((a, b) => {
-    const x = val(a), y = val(b)
-    return (x < y ? -1 : x > y ? 1 : 0) * sortDir.value
-  })
+  return list.sort((a, b) => compareVals(val(a), val(b)) * sortDir.value)
 })
 const counts = computed(() => ({
   all: all.value.length,
-  active: all.value.filter((n) => !n.local && now.value - n.last_heard < 2 * 3600_000).length,
+  active: all.value.filter((n) => !n.local && now.value - n.last_heard < 2 * 3_600_000).length,
   local: all.value.filter((n) => n.local).length,
   key: all.value.filter((n) => n.has_public_key).length,
   positioned: filtered.value.filter((n) => n.position).length,
 }))
 
-const hopCls = (h: number | null) => (h === null ? 'text-ink-3' : h === 0 ? 'text-ink' : 'text-ink-2')
+/** Text colour for the hops column: dimmed when unknown, full strength at zero hops. */
+function hopCls(h: number | null) {
+  if (h === null) return 'text-ink-3'
+  return h === 0 ? 'text-ink' : 'text-ink-2'
+}
 const roleCls = computed(() => (view.value === 'split' ? 'max-md:hidden lg:max-2xl:hidden' : 'max-md:hidden'))
 const hwCls = computed(() => (view.value === 'split' ? 'hidden' : 'max-xl:hidden'))
 const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
@@ -119,11 +126,12 @@ const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
         <h2 class="page-title">Nodes &amp; map</h2>
         <p class="page-sub">The shared node DB every identity sees · {{ counts.active }} heard in the last 2 h</p>
       </div>
-      <div class="seg" role="group" aria-label="Layout">
+      <fieldset class="seg">
+        <legend class="sr-only">Layout</legend>
         <button type="button" :aria-pressed="view === 'split'" class="max-lg:hidden" @click="setView('split')">Split</button>
         <button type="button" :aria-pressed="view === 'list'" @click="setView('list')">List</button>
         <button type="button" :aria-pressed="view === 'map'" @click="setView('map')">Map</button>
-      </div>
+      </fieldset>
     </div>
 
     <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -176,7 +184,7 @@ const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
                 <td :class="['text-ink-2', hwCls]">{{ hwLabel(n.hw_model) }}</td>
                 <td class="whitespace-nowrap tabular-nums text-ink-2">
                   <span v-if="n.local" class="chip bg-brand/14 text-brand">local</span>
-                  <span v-else :class="now - n.last_heard > 2 * 3600_000 ? 'text-ink-3' : ''">{{ relTime(n.last_heard, now) }}</span>
+                  <span v-else :class="now - n.last_heard > 2 * 3_600_000 ? 'text-ink-3' : ''">{{ relTime(n.last_heard, now) }}</span>
                 </td>
                 <td :class="['num', snrClass(n.snr)]">{{ n.snr?.toFixed(1) ?? '—' }}</td>
                 <td :class="['num', hopCls(n.hops_away)]">{{ n.hops_away ?? '—' }}</td>

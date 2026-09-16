@@ -4,6 +4,7 @@ package web
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -106,7 +107,33 @@ func (s *Server) postChannelURL(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	frag := req.URL
+	set, ok := parseChannelURL(req.URL)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "that doesn't look like a Meshtastic channel URL (https://meshtastic.org/e/#…)")
+		return
+	}
+	host := s.hostFor(r)
+	before := channelSnapshot(id)
+	skipped, err := importChannels(host, id, set)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if skipped > 0 {
+		s.log.Info("channel URL import: no free slot for some channels", "identity", id.NodeID(), "skipped", skipped)
+	}
+	if err := pushChannels(r.Context(), id, changedChannels(before, id)...); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.saveIdentities()
+	writeJSON(w, http.StatusOK, s.identityJSON(id))
+}
+
+// parseChannelURL decodes the channel set in a Meshtastic channel URL, forgiving padding and
+// standard base64; it reports false unless the URL holds at least one channel.
+func parseChannelURL(raw string) (*pb.ChannelSet, bool) {
+	frag := raw
 	if i := strings.Index(frag, "#"); i >= 0 {
 		frag = frag[i+1:]
 	}
@@ -115,56 +142,64 @@ func (s *Server) postChannelURL(w http.ResponseWriter, r *http.Request) {
 	b, err := base64.RawURLEncoding.DecodeString(frag)
 	set := &pb.ChannelSet{}
 	if err != nil || proto.Unmarshal(b, set) != nil || len(set.Settings) == 0 {
-		writeError(w, http.StatusBadRequest, "that doesn't look like a Meshtastic channel URL (https://meshtastic.org/e/#…)")
-		return
+		return nil, false
 	}
-	primaryName := s.hostFor(r).Config().PrimaryChannel
-	free := func() int { // secondary channels go into free slots; existing channels are kept
-		for k := 1; k < mesh.MaxChannels; k++ {
-			if c := id.ChannelCopy(k); c == nil || c.Role == pb.Channel_DISABLED {
-				return k
-			}
-		}
-		return -1
-	}
+	return set, true
+}
+
+// importChannels applies a channel set to an identity: a first channel matching the shared primary
+// sets its key, and the rest go into free slots so existing channels are kept. It returns how many
+// found no free slot.
+func importChannels(host *mesh.Host, id *mesh.Identity, set *pb.ChannelSet) (int, error) {
+	primaryName := host.Config().PrimaryChannel
 	skipped := 0
-	before := make([]*pb.Channel, mesh.MaxChannels)
-	for i := range before {
-		before[i] = id.ChannelCopy(i)
-	}
 	for i, st := range set.Settings {
 		if i == 0 && (st.GetName() == primaryName || st.GetName() == "") {
 			ch := id.ChannelCopy(0)
 			ch.Settings.Psk = st.Psk
-			if err := s.hostFor(r).SetChannel(id, ch); err != nil {
-				writeError(w, http.StatusBadRequest, "primary channel: "+err.Error())
-				return
+			if err := host.SetChannel(id, ch); err != nil {
+				return skipped, errors.New("primary channel: " + err.Error())
 			}
 			continue
 		}
-		k := free()
+		k := freeChannelSlot(id)
 		if k < 0 {
 			skipped++
 			continue
 		}
-		if err := s.hostFor(r).SetChannel(id, &pb.Channel{Index: int32(k), Role: pb.Channel_SECONDARY, Settings: st}); err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("channel %q: %v", st.GetName(), err))
-			return
+		if err := host.SetChannel(id, &pb.Channel{Index: int32(k), Role: pb.Channel_SECONDARY, Settings: st}); err != nil {
+			return skipped, fmt.Errorf("channel %q: %w", st.GetName(), err)
 		}
 	}
-	if skipped > 0 {
-		s.log.Info("channel URL import: no free slot for some channels", "identity", id.NodeID(), "skipped", skipped)
+	return skipped, nil
+}
+
+// freeChannelSlot returns the first unused secondary slot, or -1 if they're all in use.
+func freeChannelSlot(id *mesh.Identity) int {
+	for k := 1; k < mesh.MaxChannels; k++ {
+		if c := id.ChannelCopy(k); c == nil || c.Role == pb.Channel_DISABLED {
+			return k
+		}
 	}
+	return -1
+}
+
+// channelSnapshot copies every channel slot so changes can be found afterwards.
+func channelSnapshot(id *mesh.Identity) []*pb.Channel {
+	before := make([]*pb.Channel, mesh.MaxChannels)
+	for i := range before {
+		before[i] = id.ChannelCopy(i)
+	}
+	return before
+}
+
+// changedChannels lists the slots that differ from a snapshot.
+func changedChannels(before []*pb.Channel, id *mesh.Identity) []int {
 	var changed []int
 	for i := range before {
 		if !proto.Equal(before[i], id.ChannelCopy(i)) {
 			changed = append(changed, i)
 		}
 	}
-	if err := pushChannels(r.Context(), id, changed...); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	s.saveIdentities()
-	writeJSON(w, http.StatusOK, s.identityJSON(id))
+	return changed
 }
