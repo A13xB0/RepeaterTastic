@@ -15,7 +15,7 @@ import (
 func TestRetarget(t *testing.T) {
 	var mu sync.Mutex
 	tried := []string{}
-	r := New(func(ctx context.Context, device string) (radio.Radio, error) {
+	r := New(func(ctx context.Context, driver, device string) (radio.Radio, error) {
 		mu.Lock()
 		tried = append(tried, device)
 		mu.Unlock()
@@ -26,7 +26,7 @@ func TestRetarget(t *testing.T) {
 	}, radio.Info{Driver: "kiss", Device: "/dev/bad"}, time.Hour, func(string, ...any) {})
 	defer r.Close()
 
-	if !r.Retarget("/dev/good") {
+	if !r.Retarget("kiss", "/dev/good") {
 		t.Fatal("retarget refused before the radio opened")
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -38,7 +38,7 @@ func TestRetarget(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if r.Retarget("/dev/other") {
+	if r.Retarget("kiss", "/dev/other") {
 		t.Fatal("retarget accepted after the radio opened")
 	}
 }

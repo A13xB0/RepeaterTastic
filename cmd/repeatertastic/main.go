@@ -252,19 +252,18 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 	}
 	var r radio.Radio
 	switch rc.Radio.Driver {
-	case "kiss":
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "kiss") }
+	case "kiss", "spi":
+		// One lazy radio for both drivers, so first-time setup can switch driver as well as device
+		// before anything has opened (see web.followUnopenedDevices).
 		baud := rc.Radio.Baud
-		r = lazy.New(func(ctx context.Context, device string) (radio.Radio, error) {
-			return kiss.Open(ctx, kiss.Options{Device: device, Baud: baud, Logf: logf})
-		},
-			radio.Info{Driver: "kiss", Device: rc.Radio.Device}, 5*time.Second, logf)
-	case "spi":
-		// Experimental: a LoRa chip on SPI or a CH341 USB adapter, described by a meshtasticd board
-		// file (a path, a built-in board name, or "auto").
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", "spi") }
 		var logged string // the board last described, so retries don't repeat it
-		r = lazy.New(func(ctx context.Context, device string) (radio.Radio, error) {
+		open := func(ctx context.Context, driver, device string) (radio.Radio, error) {
+			logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", driver) }
+			if driver != "spi" {
+				return kiss.Open(ctx, kiss.Options{Device: device, Baud: baud, Logf: logf})
+			}
+			// Experimental: a LoRa chip on SPI or a CH341 USB adapter, described by a meshtasticd
+			// board file (a path, a built-in board name, or "auto").
 			b, src, err := spi.Resolve(device)
 			if err != nil {
 				return nil, err
@@ -274,8 +273,9 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 				logged = src
 			}
 			return spi.Open(ctx, b, logf)
-		},
-			radio.Info{Driver: "spi", Device: rc.Radio.Device}, 5*time.Second, logf)
+		}
+		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.Radio.Driver) }
+		r = lazy.New(open, radio.Info{Driver: rc.Radio.Driver, Device: rc.Radio.Device}, 5*time.Second, logf)
 	default:
 		r = null.New()
 	}
