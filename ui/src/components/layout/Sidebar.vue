@@ -9,7 +9,7 @@ import Logo from '@/components/ui/Logo.vue'
 import Sparkline from '@/components/charts/Sparkline.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import { live } from '@/store/live'
-import { setToken } from '@/api/client'
+import { MAIN_RADIO, setToken } from '@/api/client'
 import { num, uptime } from '@/lib/format'
 
 defineProps<{ open: boolean }>()
@@ -18,6 +18,7 @@ const router = useRouter()
 
 const unread = computed(() => live.identities.reduce((s, i) => s + (i.unread ?? 0), 0))
 const nodeCount = computed(() => Object.values(live.nodes).filter((n) => !n.local).length)
+const multi = computed(() => live.radios.length > 1)
 
 const groups = computed(() => [
   {
@@ -48,7 +49,7 @@ const groups = computed(() => [
   },
 ])
 
-const noise = computed(() => [...live.noiseSeed, ...live.history.map((h) => h.noise)].slice(-60))
+const noise = computed(() => [...(live.noiseSeed[MAIN_RADIO] ?? []), ...(live.history[MAIN_RADIO] ?? []).map((h) => h.noise)].slice(-60))
 
 function logout() {
   setToken(null)
@@ -76,7 +77,8 @@ function logout() {
         <button type="button" class="icon-btn lg:hidden" aria-label="Close menu" @click="emit('close')"><X class="size-4" /></button>
       </div>
 
-      <div class="mx-3 rounded-xl border border-line-soft bg-raised/70 p-3">
+      <!-- Single-radio site: the one relay persona, its noise floor and uptime, as before. -->
+      <div v-if="!multi" class="mx-3 rounded-xl border border-line-soft bg-raised/70 p-3">
         <div class="flex items-center justify-between gap-2">
           <span class="eyebrow">Relay persona</span>
           <span :class="['inline-flex items-center gap-1.5 text-2xs font-medium', live.connected ? 'text-ok' : 'text-ink-3']">
@@ -97,6 +99,31 @@ function logout() {
             </div>
             <Sparkline class="mt-1" :data="noise" :height="22" color="var(--info)" />
           </div>
+        </template>
+        <div v-else class="mt-2 h-16 animate-pulse rounded-lg bg-sunken" />
+      </div>
+
+      <!-- Multi-radio site: every radio's persona and noise floor, compactly, plus the site's overall uptime. -->
+      <div v-else class="mx-3 rounded-xl border border-line-soft bg-raised/70 p-3">
+        <div class="flex items-center justify-between gap-2">
+          <span class="eyebrow">Relay personas</span>
+          <span :class="['inline-flex items-center gap-1.5 text-2xs font-medium', live.connected ? 'text-ok' : 'text-ink-3']">
+            <span :class="['dot', live.connected ? 'pulse-dot bg-ok text-ok' : 'bg-ink-3']" />{{ live.connected ? 'Live' : 'Offline' }}
+          </span>
+        </div>
+        <template v-if="live.radios.length">
+          <div v-for="r in live.radios" :key="r.id" class="mt-2 border-t border-line-soft pt-2 first:mt-1.5 first:border-t-0 first:pt-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="truncate text-[13px] font-semibold" :title="r.relay.long_name">{{ r.relay.long_name ?? r.name }}</span>
+              <span class="shrink-0 text-2xs tabular-nums text-ink-3">{{ num(r.noise_floor_dbm, 0) }} dBm</span>
+            </div>
+            <div class="flex items-center gap-1 text-2xs text-ink-3">
+              <span :class="['dot size-1.5', r.connected ? 'bg-ok' : 'bg-ink-3']" />
+              <span class="truncate">{{ r.name }}</span>
+              <span class="mono ml-auto truncate">{{ r.relay.node_id ?? '—' }}</span>
+            </div>
+          </div>
+          <div v-if="live.status" class="mt-2 border-t border-line-soft pt-2 text-2xs text-ink-3">up {{ uptime(live.status.uptime_s) }}</div>
         </template>
         <div v-else class="mt-2 h-16 animate-pulse rounded-lg bg-sunken" />
       </div>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, KeyRound, Plus, RotateCcw, Trash, Upload } from '@lucide/vue'
-import { api, API_BASE, enc, setToken as setAuthToken, token as authToken } from '@/api/client'
+import { api, API_BASE, enc, MAIN_RADIO, setToken as setAuthToken, token as authToken, withRadio } from '@/api/client'
 import type { ApiToken, Config, ConfigPutResult, Region, SerialPort } from '@/api/types'
 import { live, refreshStatus } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
@@ -32,26 +32,73 @@ const allTabs: { id: Tab; label: string }[] = [
   { id: 'meshtasticd', label: 'meshtasticd' },
   { id: 'backup', label: 'Backup & restore' },
 ]
-// The radio list, web settings, tokens and backups belong to the host, so they only show on the main radio.
-const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'meshtasticd'].includes(t.id)))
+// The Radios list, web settings, tokens and backups are site-wide: always shown, whichever radio
+// the tabs below are pointed at.
+const tabs = allTabs
+// Tabs whose form edits one radio's settings (GET/PUT /config for that radio).
+const radioTabs: Tab[] = ['relay', 'airtime', 'position', 'mqtt']
 const route = useRoute()
 const router = useRouter()
 const oldTabs: Record<string, Tab> = { experimental: 'meshtasticd' } // old links
 const tab = computed<Tab>(() => {
   const want = oldTabs[route.params.tab as string] ?? route.params.tab
-  return tabs.value.some((t) => t.id === want) ? (want as Tab) : 'radio' // 'radios' (old link) → Radios
+  return tabs.some((t) => t.id === want) ? (want as Tab) : 'radio' // 'radios' (old link) → Radios
 })
 const setTab = (t: Tab) => router.replace({ name: 'config', params: { tab: t } })
 
+const severalRadios = computed(() => live.radios.length > 1)
+// Which radio the Relay / Airtime & duty / Position & hardware / MQTT tabs are showing and edit.
+const configRadio = ref(MAIN_RADIO)
 const saved = ref<Config | null>(null)
 const form = ref<Config | null>(null)
 const saving = ref(false)
 
 async function load() {
-  const c = await api.get<Config>('/config')
+  const c = await api.get<Config>(withRadio('/config', configRadio.value))
   saved.value = c
   form.value = structuredClone(c)
 }
+
+/** Switches which radio the form edits, asking first if there are unsaved changes on this tab. */
+async function switchRadio(id: string) {
+  if (id === configRadio.value) return
+  if (dirty.value) {
+    const ok = await confirmDialog({
+      title: 'Switch radios?',
+      body: `Unsaved changes on this tab will be lost.`,
+      confirm: 'Discard and switch',
+      danger: true,
+    })
+    if (!ok) return
+  }
+  configRadio.value = id
+  try {
+    await load()
+  } catch (e) {
+    toastError(e)
+  }
+}
+
+// The selector wants the main radio's real id, not the "main" sentinel, so it can highlight it;
+// live.radios loads asynchronously, so pick it up once it arrives (no reload: same radio either way).
+watch(
+  () => live.radios,
+  (radios) => {
+    if (configRadio.value !== MAIN_RADIO) return
+    const main = radios.find((r) => r.main)
+    if (main) configRadio.value = main.id
+  },
+  { immediate: true },
+)
+
+// Web settings belong to the main radio: that tab always shows (and saves) the main radio's.
+watch(tab, (t) => {
+  const main = live.radios.find((r) => r.main)?.id ?? MAIN_RADIO
+  if (t === 'web' && configRadio.value !== main) {
+    configRadio.value = main
+    load().catch(toastError)
+  }
+})
 
 const section = computed(() => (['backup', 'meshtasticd', 'radio'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
 // The Position tab edits two config sections.
@@ -67,7 +114,7 @@ async function save() {
   try {
     const body: Record<string, unknown> = {}
     for (const s of sections.value) body[s] = form.value[s]
-    const r = await api.put<ConfigPutResult>('/config', body)
+    const r = await api.put<ConfigPutResult>(withRadio('/config', configRadio.value), body)
     saved.value = r.config
     const next = { ...form.value }
     for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(r.config[s])
@@ -243,6 +290,14 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
       <div v-if="!form" class="p-6"><div class="h-48 animate-pulse rounded-xl bg-sunken" /></div>
 
       <div v-else class="p-4 sm:p-6">
+        <!-- Relay / Airtime / Position / MQTT edit one radio's settings: pick which on a multi-radio site. -->
+        <div v-if="severalRadios && radioTabs.includes(tab)" class="mb-4 flex items-center gap-2">
+          <label class="label !mb-0" for="cfg-radio">Settings for</label>
+          <select id="cfg-radio" class="input !h-8 !w-auto !py-0 text-[13px]" :value="configRadio" @change="switchRadio(($event.target as HTMLSelectElement).value)">
+            <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }}</option>
+          </select>
+        </div>
+
         <!-- RADIOS: the site's radios; each is edited in a modal -->
         <RadiosPanel v-if="tab === 'radio'" :ports="ports" :regions="regions" @restart="refreshStatus()" />
 

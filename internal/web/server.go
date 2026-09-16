@@ -153,6 +153,14 @@ func (s *Server) radioFor(r *http.Request) *radioCtx {
 
 func (s *Server) hostFor(r *http.Request) *mesh.Host { return s.radioFor(r).host }
 
+// radiosFor is the radios a request is about: every radio with ?radio=all, else one.
+func (s *Server) radiosFor(r *http.Request) []*radioCtx {
+	if r.URL.Query().Get("radio") == "all" {
+		return s.radios
+	}
+	return []*radioCtx{s.radioFor(r)}
+}
+
 // radioOf finds the radio an identity lives on.
 func (s *Server) radioOf(id *mesh.Identity) *radioCtx {
 	for _, rc := range s.radios {
@@ -262,6 +270,7 @@ func (s *Server) routes() {
 	priv("DELETE /api/v1/radios/{id}", s.deleteRadio)
 	priv("GET /api/v1/hosted", s.getHosted)
 	priv("PUT /api/v1/hosted", s.putHosted)
+	priv("GET /api/v1/hosted/{name}/log", s.hostedLog)
 	priv("GET /api/v1/site", s.getSite)
 	priv("PUT /api/v1/site", s.putSite)
 	priv("POST /api/v1/restart", s.restartDaemon)

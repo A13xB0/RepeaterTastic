@@ -3,9 +3,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Check, CheckCheck, CircleAlert, Clock3, Hash, Lock, MessageCirclePlus, Search, Send } from '@lucide/vue'
-import { api, enc, qs, radio as currentRadio, setRadio } from '@/api/client'
-import type { Conversation, Message } from '@/api/types'
-import { live, nodeLabel, on, refreshAllIdentities } from '@/store/live'
+import { api, enc, qs } from '@/api/client'
+import type { Conversation, Identity, Message } from '@/api/types'
+import { live, nodeLabel, on, radioName } from '@/store/live'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -17,28 +17,29 @@ import { sendError } from '@/lib/relay'
 const route = useRoute()
 const router = useRouter()
 
-// Every identity can chat, the relay persona too (e.g. to DM a service that verifies the node);
-// ordinary identities come first.
+// Every identity on every radio can chat, the relay persona too (e.g. to DM a service that
+// verifies the node); ordinary identities come first.
+const severalRadios = computed(() => live.radios.length > 1)
 const chatIdentities = computed(() => [...live.identities].sort((a, b) => Number(a.is_relay) - Number(b.is_relay)))
+// Grouped by radio for the picker on multi-radio sites, in radio order.
+const groupedIdentities = computed(() => {
+  const order = new Map(live.radios.map((r, i) => [r.id, i]))
+  const groups = new Map<string, Identity[]>()
+  for (const i of chatIdentities.value) {
+    const key = i.radio_id ?? ''
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(i)
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+    .map(([radioId, items]) => ({ radioId, name: radioName(radioId), items }))
+})
 const identityId = computed(() => {
   const p = route.params.identity as string | undefined
   return p || chatIdentities.value.find((i) => i.enabled && !i.is_relay)?.node_id || chatIdentities.value[0]?.node_id || ''
 })
 const identity = computed(() => live.identities.find((i) => i.node_id === identityId.value))
 const convKey = computed(() => (route.params.conversation as string | undefined) || '')
-
-// A chat link for an identity on another radio (or one that has just moved) switches the page to
-// that radio instead of showing an empty chat.
-watch(
-  () => [identityId.value, live.identities.length, live.radios.length] as const,
-  async ([id, loaded, radios]) => {
-    if (!id || !loaded || radios < 2 || live.identities.some((i) => i.node_id === id)) return
-    await refreshAllIdentities()
-    const there = live.allIdentities.find((i) => i.node_id === id)
-    if (there?.radio_id && there.radio_id !== currentRadio.value) setRadio(there.radio_id)
-  },
-  { immediate: true },
-)
 
 const conversations = ref<Conversation[]>([])
 const loadingConvs = ref(false)
@@ -261,7 +262,14 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
           <label class="label" for="chat-ident">Speaking as</label>
           <div class="flex gap-2">
             <select id="chat-ident" class="input" :value="identityId" @change="selectIdentity(($event.target as HTMLSelectElement).value)">
-              <option v-for="i in chatIdentities" :key="i.node_id" :value="i.node_id">
+              <template v-if="severalRadios">
+                <optgroup v-for="g in groupedIdentities" :key="g.radioId" :label="g.name">
+                  <option v-for="i in g.items" :key="i.node_id" :value="i.node_id">
+                    {{ i.long_name }} ({{ i.short_name }}){{ i.is_relay ? ' · relay persona' : '' }}{{ i.enabled ? '' : ' · disabled' }}{{ i.unread ? ` · ${i.unread} unread` : '' }}
+                  </option>
+                </optgroup>
+              </template>
+              <option v-else v-for="i in chatIdentities" :key="i.node_id" :value="i.node_id">
                 {{ i.long_name }} ({{ i.short_name }}){{ i.is_relay ? ' · relay persona' : '' }}{{ i.enabled ? '' : ' · disabled' }}{{ i.unread ? ` · ${i.unread} unread` : '' }}
               </option>
             </select>

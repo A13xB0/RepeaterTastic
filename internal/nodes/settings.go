@@ -332,6 +332,7 @@ func (n *Node) firstRegion(ctx context.Context, lora *pb.Config_LoRaConfig) erro
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		n.logf("meshtasticd: node at %s: first region: %v (the answer is expected to go missing)", n.addr, err)
 	}
+	n.committed.Store(time.Now().UnixMilli())
 	time.Sleep(time.Second) // let it save
 	n.client.Reconnect()
 	return nil
@@ -345,6 +346,9 @@ func (n *Node) edit(ctx context.Context, msgs []*pb.AdminMessage, rekey bool) er
 	all := append([]*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_BeginEditSettings{BeginEditSettings: true}}}, msgs...)
 	all = append(all, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_CommitEditSettings{CommitEditSettings: true}})
 	for i, m := range all {
+		if i == len(all)-1 {
+			n.committed.Store(time.Now().UnixMilli())
+		}
 		if _, err := n.client.Admin(ctx, m); err != nil {
 			if i == len(all)-1 && (rekey || !n.client.Snapshot().Connected) {
 				break // the commit's ack was lost to the reboot (or the new number) it caused

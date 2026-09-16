@@ -246,7 +246,7 @@ func (x *Hosting) Health() Health {
 			h.Up++
 			continue
 		}
-		if now.Sub(r.e.started) < startGrace && r.st.Restarts == 0 {
+		if now.Sub(r.e.started) < startGrace && r.st.Restarts == 0 || rebooting(r.st, now) {
 			starting = true
 			continue
 		}
@@ -288,4 +288,25 @@ func (h *Hosted) label() string {
 		return id.NodeID()
 	}
 	return h.inst.Name
+}
+
+// rebooting reports whether a node is down only because it is rebooting to apply settings.
+func rebooting(st HostedStatus, now time.Time) bool {
+	if len(st.Stops) == 0 {
+		return false
+	}
+	last := st.Stops[len(st.Stops)-1]
+	return last.Reboot && now.Sub(time.UnixMilli(last.Time)) < startGrace
+}
+
+// InstanceLog is the log of the instance with that name, or false.
+func (x *Hosting) InstanceLog(name string) ([]LogLine, bool) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for _, e := range x.nodes {
+		if e.hn.Instance().Name == name {
+			return e.hn.Log(), true
+		}
+	}
+	return nil, false
 }

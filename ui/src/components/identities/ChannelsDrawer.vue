@@ -16,7 +16,7 @@ import { channelSlots } from '@/lib/channels'
 const props = defineProps<{ identityId: string | null }>()
 const emit = defineEmits<{ close: [] }>()
 
-const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
+const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId))
 const tab = ref<'edit' | 'share'>('edit')
 const shareUrl = ref('')
 const importUrl = ref('')

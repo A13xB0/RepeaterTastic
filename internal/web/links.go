@@ -53,8 +53,15 @@ func (s *Server) mqttLinksJSON(rc *radioCtx) []any {
 }
 
 func (s *Server) links(w http.ResponseWriter, r *http.Request) {
-	rc := s.radioFor(r)
-	writeJSON(w, http.StatusOK, append([]any{s.udpLinkJSON(rc)}, s.mqttLinksJSON(rc)...))
+	out := []any{}
+	for _, rc := range s.radiosFor(r) {
+		for _, l := range append([]any{s.udpLinkJSON(rc)}, s.mqttLinksJSON(rc)...) {
+			m := l.(map[string]any)
+			m["radio_id"], m["radio_name"] = rc.id, rc.name
+			out = append(out, m)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {

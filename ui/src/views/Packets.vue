@@ -3,11 +3,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { markRaw } from 'vue'
 import { Radio, RotateCcw } from '@lucide/vue'
-import { api, qs } from '@/api/client'
+import { api, qs, withRadio } from '@/api/client'
 import type { Packet, PacketKind } from '@/api/types'
 import { live, on } from '@/store/live'
 import PacketTable from '@/components/packets/PacketTable.vue'
 import PacketDrawer from '@/components/packets/PacketDrawer.vue'
+import RadioFilter from '@/components/ui/RadioFilter.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { toastError } from '@/composables/toast'
@@ -23,6 +24,8 @@ const RANGES = [
 ]
 
 const filters = ref({ node: '', port: '', kind: '', direction: '', channel: '', q: '', range: '' })
+/** 'all' or a radio id; kept outside `filters` so it doesn't count towards the active-filter chip. */
+const radioFilter = ref('all')
 const list = ref<Packet[]>([])
 const loading = ref(false)
 const more = ref(true)
@@ -30,6 +33,7 @@ const liveOn = ref(true)
 const selected = ref<Packet | null>(null)
 const flashSeq = ref(0)
 const PAGE = 100
+const severalRadios = computed(() => live.radios.length > 1)
 
 const channels = computed(() => {
   const set = new Set<string>()
@@ -48,7 +52,7 @@ async function load(append = false) {
   loading.value = true
   try {
     const before = append ? list.value[list.value.length - 1]?.time : undefined
-    const page = (await api.get<Packet[]>(`/packets${params(before)}`)).map((p) => markRaw(p))
+    const page = (await api.get<Packet[]>(withRadio(`/packets${params(before)}`, radioFilter.value))).map((p) => markRaw(p))
     list.value = append ? [...list.value, ...page] : page
     more.value = page.length === PAGE
   } catch (e) {
@@ -63,10 +67,12 @@ watch(filters, () => {
   clearTimeout(debounce)
   debounce = window.setTimeout(() => load(), 250)
 }, { deep: true })
+watch(radioFilter, () => load())
 onMounted(() => load())
 
 function matches(p: Packet) {
   const f = filters.value
+  if (radioFilter.value !== 'all' && (p.radio_id ?? 'main') !== radioFilter.value) return false
   if (f.node && p.from !== f.node && p.to !== f.node) return false
   if (f.port && p.port !== f.port) return false
   if (f.kind && p.kind !== f.kind) return false
@@ -135,13 +141,14 @@ function reset() {
           <button type="button" :aria-pressed="filters.direction === 'rx'" @click="filters.direction = 'rx'">RX</button>
           <button type="button" :aria-pressed="filters.direction === 'tx'" @click="filters.direction = 'tx'">TX</button>
         </div>
+        <RadioFilter v-model="radioFilter" id="packets-radio" />
         <button type="button" v-if="active" class="btn btn-sm btn-ghost" @click="reset"><RotateCcw class="size-3.5" />Clear {{ active }} filter{{ active === 1 ? '' : 's' }}</button>
         <Spinner v-if="loading" class="ml-auto text-ink-3" />
       </div>
     </section>
 
     <section class="card overflow-hidden">
-      <PacketTable :packets="list" :flash-seq="flashSeq" @select="selected = $event" />
+      <PacketTable :packets="list" :flash-seq="flashSeq" :show-radio="severalRadios" @select="selected = $event" />
       <div v-if="list.length" class="flex justify-center border-t border-line-soft p-3">
         <button type="button" v-if="more" class="btn btn-sm" :disabled="loading" @click="load(true)"><Spinner v-if="loading" />Load older</button>
         <span v-else class="text-xs text-ink-3">End of archive</span>

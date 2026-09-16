@@ -32,7 +32,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ close: [] }>()
 
-const findIdentity = (id?: string) => live.identities.find((i) => i.node_id === id) ?? live.allIdentities.find((i) => i.node_id === id)
+const findIdentity = (id?: string) => live.identities.find((i) => i.node_id === id)
 const identity = computed(() => findIdentity(props.identityId))
 const single = computed(() => props.slot !== undefined && !!identity.value)
 const existing = computed<Channel | undefined>(() => (single.value ? channelSlots(identity.value!)[props.slot!] : undefined))

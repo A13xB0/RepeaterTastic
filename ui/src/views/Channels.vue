@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Identities × channel slots. Slot 0 is each identity's primary; slots 1–7 are added, edited and
-// removed here, through the one slot dialog. This page shows the identities on the radio you're
-// viewing; each identity's channels are on its own radio.
+// removed here, through the one slot dialog. This page shows every identity on the site; each
+// identity's channels are on its own radio, so multi-radio sites get a Radio column.
 import { computed, ref } from 'vue'
 import { Lock, Plus, QrCode, X } from '@lucide/vue'
 import { api, enc } from '@/api/client'
@@ -14,7 +14,18 @@ import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { channelSlots } from '@/lib/channels'
 
-const list = computed(() => [...live.identities].sort((a, b) => Number(b.is_relay) - Number(a.is_relay) || (a.api?.port ?? 0) - (b.api?.port ?? 0)))
+// Every identity's channels, across every radio on the site; grouped by radio on multi-radio sites
+// since each identity's channels live on its own radio.
+const severalRadios = computed(() => live.radios.length > 1)
+const radioOrder = computed(() => new Map(live.radios.map((r, i) => [r.id, i])))
+const list = computed(() =>
+  [...live.identities].sort(
+    (a, b) =>
+      (radioOrder.value.get(a.radio_id ?? '') ?? 0) - (radioOrder.value.get(b.radio_id ?? '') ?? 0) ||
+      Number(b.is_relay) - Number(a.is_relay) ||
+      (a.api?.port ?? 0) - (b.api?.port ?? 0),
+  ),
+)
 
 // A channel is its name and key.
 const chanKey = (c: { name: string; psk: string }) => `${c.name}|${c.psk}`
@@ -92,6 +103,7 @@ async function removeEverywhere(ch: SiteChannel) {
           <thead>
             <tr>
               <th>Identity</th>
+              <th v-if="severalRadios">Radio</th>
               <th v-for="s in 8" :key="s" class="w-[9%] text-center">{{ s - 1 }}</th>
               <th class="w-0"><span class="sr-only">Share</span></th>
             </tr>
@@ -106,6 +118,10 @@ async function removeEverywhere(ch: SiteChannel) {
                     <div class="mono text-2xs text-ink-3">{{ i.node_id }}</div>
                   </div>
                 </div>
+              </td>
+              <td v-if="severalRadios" class="whitespace-nowrap text-[13px]">
+                {{ i.radio_name }}
+                <div class="text-2xs text-ink-3">{{ live.radios.find((r) => r.id === i.radio_id)?.phy.preset_name }}</div>
               </td>
               <td v-for="c in channelSlots(i)" :key="c.index" class="!px-1 text-center">
                 <div

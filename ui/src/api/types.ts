@@ -182,6 +182,8 @@ export interface Message {
 export interface MeshNode {
   node_id: string
   node_num: number
+  /** The radios that heard it (empty for this site's own identities). */
+  heard_by?: string[]
   long_name: string
   short_name: string
   hw_model: string
@@ -203,6 +205,8 @@ export interface MeshNode {
 export interface Packet {
   seq: number
   time: number
+  /** The radio that heard or sent it. */
+  radio_id?: string
   direction: 'rx' | 'tx'
   kind: PacketKind
   id: number
@@ -273,6 +277,7 @@ export interface RfStats {
 /** Proposed: GET /stats/identities */
 export interface IdentityStat {
   node_id: string
+  radio_id?: string
   tx: number
   rx: number
   ack_ok: number
@@ -332,6 +337,8 @@ export interface ApiToken {
 export interface Link {
   name: string
   type: string
+  radio_id?: string
+  radio_name?: string
   enabled: boolean
   connected: boolean
   rx: number
@@ -520,10 +527,28 @@ export interface HostedInstance {
   port: number
   running: boolean
   connected: boolean
+  /** When the current process started (0 while it isn't running). */
+  since: number
+  /** Unexpected stops. */
   restarts: number
+  /** Stops that applied settings RepeaterTastic had just given it. */
+  reboots: number
   last_error?: string
+  stops: HostedStop[]
   firmware?: string
   node_id?: string
+}
+
+export interface HostedStop {
+  time: number
+  reason: string
+  reboot: boolean
+}
+
+/** GET /hosted/{name}/log: a line meshtasticd printed. */
+export interface HostedLogLine {
+  time: number
+  text: string
 }
 
 /** What this machine can run hosted nodes with (GET /setup/runtimes). */

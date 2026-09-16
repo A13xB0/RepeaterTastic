@@ -5,7 +5,7 @@ import type { Identity } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, refreshAllIdentities, refreshIdentities, upsertIdentity } from '@/store/live'
+import { live, refreshIdentities, upsertIdentity } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import { hostedIdentityRoles } from '@/lib/relay'
 import RadioFields from '@/components/identities/RadioFields.vue'
@@ -25,7 +25,7 @@ watch(
   () => props.identity,
   (i) => {
     if (!i) return
-    refreshAllIdentities()
+    refreshIdentities().catch(() => {})
     error.value = ''
     form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
       own_position: !!i.position, latitude: i.position?.latitude ?? 0, longitude: i.position?.longitude ?? 0, altitude: i.position?.altitude ?? 0,
@@ -37,7 +37,7 @@ async function save() {
   const i = props.identity
   if (!i) return
   const f = form.value
-  const everyone = live.allIdentities.length ? live.allIdentities : live.identities
+  const everyone = live.identities
   if (i.api && everyone.some((x) => x.node_id !== i.node_id && x.api?.port === f.api_port)) {
     error.value = `Port ${f.api_port} is used by another identity`
     return
@@ -70,10 +70,10 @@ async function save() {
   try {
     if (moving) {
       await api.post<Identity>(`/identities/${enc(i.node_id)}/move`, { radio_id: f.radio_id })
-      await Promise.all([refreshIdentities(), refreshAllIdentities()])
+      await refreshIdentities()
     }
     if (Object.keys(patch).length) upsertIdentity(await api.patch<Identity>(`/identities/${enc(i.node_id)}`, patch))
-    if (moving) refreshAllIdentities()
+    if (moving) refreshIdentities().catch(() => {})
     toast(moving ? `Moved to ${live.radios.find((r) => r.id === f.radio_id)?.name ?? f.radio_id}` : 'Identity updated')
     emit('close')
   } catch (e) {

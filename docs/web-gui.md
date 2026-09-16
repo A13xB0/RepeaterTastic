@@ -11,11 +11,14 @@ many open tabs don't use up the browser's connections to the host, and catches u
 
 ## Top bar
 
-- **Radio switcher** (with more than one radio): every page and the Relay, Airtime, Position and
-  MQTT settings follow the radio picked here.
-- **Modem state, frequency and preset**, and the **airtime gauge**: this hour's transmit time against
-  the duty-cycle budget.
-- **Relay switch:** the Meshtastic role of this radio's relay persona (client, client base, client
+- **Every radio at once.** With one radio, the bar shows its modem state, frequency and preset, and
+  the **airtime gauge** (this hour's transmit time against the duty-cycle budget). With several, it
+  has a row for each radio: connection, preset and frequency, airtime gauge and its own relay mode.
+- **Nothing is hidden behind a radio.** Every page shows the whole site. Packets, nodes, links, the
+  dashboard and statistics have a **radio filter** to narrow them to one radio, and tables show
+  which radio each row belongs to. The per-radio settings under Configuration (Relay, Airtime,
+  Position, MQTT) have a radio selector at the top of the tab.
+- **Relay switch:** the Meshtastic role of the radio's relay persona (client, client base, client
   mute, router or router late), then **Monitor** (the
   radio only listens and transmits nothing) and **Off** (the radio is ignored). Both ask before
   switching. In either, sends from identities, the relay persona and plugins fail with "the radio

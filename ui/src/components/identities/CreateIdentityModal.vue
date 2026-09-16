@@ -2,13 +2,13 @@
 // Create or import an identity. The key is previewed first so the node number and last-byte clash are visible before saving.
 import { computed, ref, watch } from 'vue'
 import { RefreshCw, TriangleAlert, CircleCheck } from '@lucide/vue'
-import { api, radio } from '@/api/client'
+import { MAIN_RADIO, api } from '@/api/client'
 import type { Identity, KeyPreview } from '@/api/types'
 import { hostedIdentityRoles } from '@/lib/relay'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import RadioFields from '@/components/identities/RadioFields.vue'
-import { live, nodeLabel, refreshAllIdentities, upsertIdentity } from '@/store/live'
+import { live, nodeLabel, refreshIdentities, upsertIdentity } from '@/store/live'
 import { toast } from '@/composables/toast'
 
 const props = defineProps<{ open: boolean; mode: 'create' | 'import' }>()
@@ -20,7 +20,7 @@ const shortTouched = ref(false)
 const port = ref(4403)
 // Only the relay persona repeats; other identities say so by default.
 const role = ref('CLIENT_MUTE')
-const radioId = ref(radio.value)
+const radioId = ref(MAIN_RADIO)
 const tab = ref<'generate' | 'import'>('generate')
 const importKey = ref('')
 const preview = ref<KeyPreview | null>(null)
@@ -34,7 +34,7 @@ const error = ref('')
 const roles = hostedIdentityRoles
 
 function nextPort() {
-  const used = new Set((live.allIdentities.length ? live.allIdentities : live.identities).map((i) => i.api?.port).filter(Boolean))
+  const used = new Set(live.identities.map((i) => i.api?.port).filter(Boolean))
   let p = 4403
   while (used.has(p)) p++
   return p
@@ -44,13 +44,13 @@ watch(
   () => props.open,
   (o) => {
     if (!o) return
-    refreshAllIdentities()
+    refreshIdentities().catch(() => {})
     longName.value = ''
     shortName.value = ''
     shortTouched.value = false
     port.value = nextPort()
     role.value = 'CLIENT_MUTE'
-    radioId.value = radio.value
+    radioId.value = MAIN_RADIO
     tab.value = props.mode === 'import' ? 'import' : 'generate'
     importKey.value = ''
     preview.value = null
@@ -103,7 +103,7 @@ watch(tab, (t) => {
 })
 
 const idParts = computed(() => (preview.value ? { head: preview.value.node_id.slice(0, 7), tail: preview.value.node_id.slice(7) } : null))
-const portClash = computed(() => (live.allIdentities.length ? live.allIdentities : live.identities).some((i) => i.api?.port === port.value))
+const portClash = computed(() => live.identities.some((i) => i.api?.port === port.value))
 const canSave = computed(
   () => !!longName.value.trim() && !!shortName.value.trim() && !!preview.value && !portClash.value && (!preview.value.collision || acceptClash.value),
 )

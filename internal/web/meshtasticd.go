@@ -140,3 +140,18 @@ func (s *Server) putHosted(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("meshtasticd settings changed", "meshtasticd", req.Meshtasticd, "docker_image", req.DockerImage)
 	s.getHosted(w, r)
 }
+
+// hostedLog is GET /hosted/{name}/log: the last lines an instance's meshtasticd printed.
+func (s *Server) hostedLog(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	for _, x := range s.opt.Hosting {
+		if x == nil {
+			continue
+		}
+		if lines, ok := x.InstanceLog(name); ok {
+			writeJSON(w, http.StatusOK, lines)
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, "no meshtasticd "+name)
+}

@@ -203,7 +203,14 @@ func TestSupervisorRestarts(t *testing.T) {
 	if st.Connected || st.LastError != "exit status 1" || st.Launcher != "fake" || st.Port != 45999 {
 		t.Fatalf("status %+v", st)
 	}
-	eventually(t, "log tail", func() bool { return len(h.Status().Log) >= 3 })
+	eventually(t, "log tail", func() bool { return len(h.Log()) >= 3 })
+	if stops := h.Status().Stops; len(stops) == 0 || stops[0].Reboot || stops[0].Reason != "exit status 1" {
+		t.Fatalf("stops %+v", stops)
+	}
+
+	// A stop right after a settings commit is the reboot that applies them.
+	h.committed.Store(time.Now().UnixMilli())
+	eventually(t, "a reboot", func() bool { return h.Status().Reboots >= 1 })
 	mu.Lock()
 	defer mu.Unlock()
 	errs := 0

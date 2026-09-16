@@ -65,6 +65,7 @@ func (h *Host) fillRecordFromDecoded(r *PacketRecord, dec decodeResult) {
 func (h *Host) publishPacket(r PacketRecord) {
 	mp, data, holders := r.Mesh, r.Data, r.Holders
 	r.Mesh, r.Data, r.Holders = nil, nil, nil
+	r.Radio = h.RadioID()
 	r = h.Packets.Add(r)
 	// Copies for plugins, only when some are listening: the pipeline keeps using the originals.
 	if h.PacketCopies.Load() {

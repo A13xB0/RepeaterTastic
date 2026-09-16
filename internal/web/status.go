@@ -3,6 +3,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,13 +16,17 @@ import (
 )
 
 func (s *Server) statusJSON(r *http.Request) map[string]any {
-	rc := s.radioFor(r)
+	return s.radioStatus(r.Context(), s.radioFor(r))
+}
+
+// radioStatus is one radio's status: its radio, PHY, relay, airtime and counters.
+func (s *Server) radioStatus(ctx context.Context, rc *radioCtx) map[string]any {
 	h := rc.host
 	now := time.Now()
 	rp := h.RadioParams()
 	hc := h.Config()
 	info := h.Radio().Info()
-	st := rc.stats(r.Context())
+	st := rc.stats(ctx)
 	txMs, rxMs := h.Air.HourTotals(now)
 	duty := hc.DutyCyclePct
 	if duty == 0 {
@@ -101,6 +106,14 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.opt.Logs.Recent(limit))
 }
 
+// radioEvent is a bus event from one of the radios.
+type radioEvent struct {
+	rc *radioCtx
+	e  mesh.Event
+}
+
+// events is GET /events: the live stream for one radio, or with ?radio=all for every radio
+// (a status event per radio, nodes merged across radios).
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -110,8 +123,22 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
-	ch, unsub := s.hostFor(r).Bus.Subscribe(512)
-	defer unsub()
+	radios := s.radiosFor(r)
+	ch := make(chan radioEvent, 512)
+	ctx := r.Context()
+	for _, rc := range radios {
+		sub, unsub := rc.host.Bus.Subscribe(512)
+		defer unsub()
+		go func() {
+			for e := range sub {
+				select {
+				case ch <- radioEvent{rc, e}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 	send := func(event string, v any) bool {
 		b, err := json.Marshal(v)
 		if err != nil {
@@ -123,55 +150,83 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		fl.Flush()
 		return true
 	}
-	if !send("status", s.statusJSON(r)) {
+	sendStatus := func() bool {
+		for _, rc := range radios {
+			if !send("status", s.radioStatus(ctx, rc)) {
+				return false
+			}
+		}
+		return true
+	}
+	if !sendStatus() {
 		return
 	}
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if !send("status", s.statusJSON(r)) {
+			if !sendStatus() {
 				return
 			}
-		case e, ok := <-ch:
-			if !ok {
-				return
-			}
-			payload := e.Data
-			switch e.Type {
-			case "identity":
-				idStr, _ := e.Data.(string)
-				num, _ := wire.ParseNodeID(idStr)
-				if id := s.hostFor(r).Identity(num); id != nil {
-					payload = s.identityJSON(id)
-				} else {
-					payload = map[string]any{"node_id": idStr, "deleted": true}
-				}
-			case "node":
-				idStr, _ := e.Data.(string)
-				num, _ := wire.ParseNodeID(idStr)
-				en, ok := s.hostFor(r).DB.Get(num)
-				if !ok {
-					continue
-				}
-				payload = nodeJSON(en, s.localIDs(s.hostFor(r)))
-			case "plugin":
-				id, _ := e.Data.(string)
-				if s.opt.Plugins == nil {
-					continue
-				}
-				if in, err := s.opt.Plugins.Get(id); err == nil {
-					payload = s.pluginJSON(in)
-				} else {
-					payload = map[string]any{"id": id, "deleted": true}
-				}
-			}
-			if !send(e.Type, payload) {
+		case re := <-ch:
+			payload, ok := s.eventPayload(re, radios)
+			if ok && !send(re.e.Type, payload) {
 				return
 			}
 		}
 	}
+}
+
+// eventPayload is what the stream sends for a bus event (false: skip it).
+func (s *Server) eventPayload(re radioEvent, radios []*radioCtx) (any, bool) {
+	e := re.e
+	site := len(radios) > 1
+	switch e.Type {
+	case "identity":
+		idStr, _ := e.Data.(string)
+		num, _ := wire.ParseNodeID(idStr)
+		if id := re.rc.host.Identity(num); id != nil {
+			return s.identityJSON(id), true
+		}
+		if site && s.radioHolding(num) != nil {
+			return nil, false // it moved to another radio, which announces it
+		}
+		return map[string]any{"node_id": idStr, "deleted": true}, true
+	case "node":
+		idStr, _ := e.Data.(string)
+		num, _ := wire.ParseNodeID(idStr)
+		if site {
+			if n := s.siteNodes(radios, num); len(n) == 1 {
+				return n[0], true
+			}
+			return nil, false
+		}
+		en, ok := re.rc.host.DB.Get(num)
+		if !ok {
+			return nil, false
+		}
+		n := nodeJSON(en, s.localIDs(re.rc.host))
+		n["heard_by"] = heardBy(en, re.rc.id)
+		return n, true
+	case "log", "plugin":
+		// Published on every radio's bus: send them once.
+		if site && re.rc != radios[0] {
+			return nil, false
+		}
+		if e.Type == "log" {
+			return e.Data, true
+		}
+		id, _ := e.Data.(string)
+		if s.opt.Plugins == nil {
+			return nil, false
+		}
+		if in, err := s.opt.Plugins.Get(id); err == nil {
+			return s.pluginJSON(in), true
+		}
+		return map[string]any{"id": id, "deleted": true}, true
+	}
+	return e.Data, true
 }

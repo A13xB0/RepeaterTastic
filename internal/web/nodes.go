@@ -128,12 +128,65 @@ func (s *Server) localIDs(h *mesh.Host) []string {
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
-	out := []map[string]any{}
-	known := s.localIDs(s.hostFor(r))
-	for _, e := range s.hostFor(r).DB.Snapshot() {
-		out = append(out, nodeJSON(e, known))
+	radios := s.radiosFor(r)
+	if len(radios) == 1 {
+		out := []map[string]any{}
+		known := s.localIDs(radios[0].host)
+		for _, e := range radios[0].host.DB.Snapshot() {
+			n := nodeJSON(e, known)
+			n["heard_by"] = heardBy(e, radios[0].id)
+			out = append(out, n)
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, s.siteNodes(radios))
+}
+
+// heardBy lists the radio as one that heard the node, unless the node is one of its own.
+func heardBy(e mesh.NodeEntry, radio string) []string {
+	if e.Local || e.LastHeard.IsZero() {
+		return []string{}
+	}
+	return []string{radio}
+}
+
+// siteNodes merges the radios' node DBs: each node as its freshest radio knows it, with every
+// radio that heard it and every identity that knows it.
+func (s *Server) siteNodes(radios []*radioCtx, only ...uint32) []map[string]any {
+	type merged struct {
+		e     mesh.NodeEntry
+		heard []string
+		known []string
+	}
+	byNum := map[uint32]*merged{}
+	var order []uint32
+	for _, rc := range radios {
+		known := s.localIDs(rc.host)
+		for _, e := range rc.host.DB.Snapshot() {
+			if len(only) > 0 && e.Num != only[0] {
+				continue
+			}
+			m := byNum[e.Num]
+			if m == nil {
+				m = &merged{e: e, heard: []string{}, known: []string{}}
+				byNum[e.Num] = m
+				order = append(order, e.Num)
+			} else if e.LastHeard.After(m.e.LastHeard) || (e.Local && !m.e.Local) {
+				m.e = e
+			}
+			m.heard = append(m.heard, heardBy(e, rc.id)...)
+			m.known = append(m.known, known...)
+		}
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, num := range order {
+		m := byNum[num]
+		n := nodeJSON(m.e, m.known)
+		n["heard_by"] = m.heard
+		out = append(out, n)
+	}
+	return out
 }
 
 func (s *Server) fromIdentity(w http.ResponseWriter, r *http.Request) (*mesh.Identity, uint32, bool) {

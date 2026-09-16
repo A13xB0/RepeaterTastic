@@ -175,10 +175,34 @@ type Hosted struct {
 
 	mu       sync.Mutex
 	restarts int
+	reboots  int
 	lastErr  string
 	running  bool
-	logTail  []string
+	started  time.Time
+	stops    []HostedStop
+	logTail  []LogLine
 }
+
+// HostedStop is one time meshtasticd stopped.
+type HostedStop struct {
+	Time   int64  `json:"time"` // Unix ms
+	Reason string `json:"reason"`
+	// Reboot: it stopped to apply settings RepeaterTastic had just given it.
+	Reboot bool `json:"reboot"`
+}
+
+// LogLine is a line meshtasticd printed.
+type LogLine struct {
+	Time int64  `json:"time"` // Unix ms
+	Text string `json:"text"`
+}
+
+const (
+	logKeep  = 1000
+	stopKeep = 20
+	// rebootWindow: a stop this soon after a settings commit is the reboot that applies them.
+	rebootWindow = 30 * time.Second
+)
 
 // StartHosted writes the instance's config, starts meshtasticd under supervision and connects
 // its client. The process restarts (with backoff) until ctx ends.
@@ -213,16 +237,20 @@ func (h *Hosted) Instance() Instance { return h.inst }
 
 // HostedStatus is what the GUI shows about a hosted node.
 type HostedStatus struct {
-	Name      string   `json:"name"`
-	Launcher  string   `json:"launcher"`
-	Port      int      `json:"port"`
-	Running   bool     `json:"running"`
-	Connected bool     `json:"connected"`
-	Restarts  int      `json:"restarts"`
-	LastError string   `json:"last_error,omitempty"`
-	Firmware  string   `json:"firmware,omitempty"`
-	NodeID    string   `json:"node_id,omitempty"`
-	Log       []string `json:"log,omitempty"`
+	Name      string `json:"name"`
+	Launcher  string `json:"launcher"`
+	Port      int    `json:"port"`
+	Running   bool   `json:"running"`
+	Connected bool   `json:"connected"`
+	// Since is when the current process started (Unix ms; 0 while it isn't running).
+	Since int64 `json:"since"`
+	// Restarts counts unexpected stops; Reboots the ones that applied settings.
+	Restarts  int          `json:"restarts"`
+	Reboots   int          `json:"reboots"`
+	LastError string       `json:"last_error,omitempty"`
+	Stops     []HostedStop `json:"stops"`
+	Firmware  string       `json:"firmware,omitempty"`
+	NodeID    string       `json:"node_id,omitempty"`
 }
 
 // Status reports the process and link state.
@@ -231,12 +259,22 @@ func (h *Hosted) Status() HostedStatus {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	st := HostedStatus{Name: h.inst.Name, Launcher: h.launcher.Describe(), Port: h.inst.Port, Running: h.running,
-		Connected: s.Connected, Restarts: h.restarts, LastError: h.lastErr, Firmware: s.Metadata.GetFirmwareVersion(),
-		Log: append([]string(nil), h.logTail...)}
+		Connected: s.Connected, Restarts: h.restarts, Reboots: h.reboots, LastError: h.lastErr,
+		Stops: append([]HostedStop{}, h.stops...), Firmware: s.Metadata.GetFirmwareVersion()}
+	if h.running {
+		st.Since = h.started.UnixMilli()
+	}
 	if s.NodeNum() != 0 {
 		st.NodeID = fmt.Sprintf("!%08x", s.NodeNum())
 	}
 	return st
+}
+
+// Log is the last lines meshtasticd printed, oldest first.
+func (h *Hosted) Log() []LogLine {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]LogLine{}, h.logTail...)
 }
 
 func (h *Hosted) supervise(ctx context.Context) {
@@ -244,26 +282,28 @@ func (h *Hosted) supervise(ctx context.Context) {
 	for ctx.Err() == nil {
 		pr, pw := io.Pipe()
 		go h.collect(pr)
-		h.mu.Lock()
-		h.running = true
-		h.mu.Unlock()
 		start := time.Now()
-		err := h.launcher.Run(ctx, h.inst, pw)
-		pw.Close()
 		h.mu.Lock()
-		h.running = false
-		if ctx.Err() == nil {
-			h.restarts++
-			if err == nil {
-				err = errors.New("exited")
-			}
-			h.lastErr = err.Error()
-		}
+		h.running, h.started = true, start
 		h.mu.Unlock()
+		err := h.launcher.Run(ctx, h.inst, pw)
+		_ = pw.Close()
 		if ctx.Err() != nil {
+			h.setStopped()
 			return
 		}
-		h.logf("meshtasticd %s (%s) stopped: %v; restarting in %v", h.inst.Name, h.launcher.Describe(), err, backoff)
+		if err == nil {
+			err = errors.New("exited")
+		}
+		// meshtasticd reboots (exits) to apply some settings: that's expected, not a failure.
+		reboot := time.Since(time.UnixMilli(h.committed.Load())) < rebootWindow
+		h.recordStop(err, reboot)
+		if reboot {
+			h.logf("meshtasticd %s (%s) rebooted to apply its settings", h.inst.Name, h.launcher.Describe())
+			backoff = time.Second
+		} else {
+			h.logf("meshtasticd %s (%s) stopped: %v; restarting in %v", h.inst.Name, h.launcher.Describe(), err, backoff)
+		}
 		if time.Since(start) > time.Minute {
 			backoff = time.Second
 		}
@@ -272,7 +312,32 @@ func (h *Hosted) supervise(ctx context.Context) {
 			return
 		case <-time.After(backoff):
 		}
-		backoff = min(backoff*2, time.Minute)
+		if !reboot {
+			backoff = min(backoff*2, time.Minute)
+		}
+	}
+}
+
+func (h *Hosted) setStopped() {
+	h.mu.Lock()
+	h.running = false
+	h.mu.Unlock()
+}
+
+// recordStop notes why the process stopped.
+func (h *Hosted) recordStop(err error, reboot bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.running = false
+	if reboot {
+		h.reboots++
+	} else {
+		h.restarts++
+		h.lastErr = err.Error()
+	}
+	h.stops = append(h.stops, HostedStop{Time: time.Now().UnixMilli(), Reason: err.Error(), Reboot: reboot})
+	if len(h.stops) > stopKeep {
+		h.stops = h.stops[len(h.stops)-stopKeep:]
 	}
 }
 
@@ -283,9 +348,9 @@ func (h *Hosted) collect(r io.Reader) {
 	for sc.Scan() {
 		line := sc.Text()
 		h.mu.Lock()
-		h.logTail = append(h.logTail, line)
-		if len(h.logTail) > 200 {
-			h.logTail = h.logTail[len(h.logTail)-200:]
+		h.logTail = append(h.logTail, LogLine{Time: time.Now().UnixMilli(), Text: line})
+		if len(h.logTail) > logKeep {
+			h.logTail = h.logTail[len(h.logTail)-logKeep:]
 		}
 		h.mu.Unlock()
 		if (strings.Contains(line, "ERROR") || strings.Contains(line, "CRIT")) && !bootNoise(line) {

@@ -1,13 +1,17 @@
 package web
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/logbuf"
@@ -15,6 +19,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/phoneapi"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
 	"github.com/ScotMesh/RepeaterTastic/internal/site"
+	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // Two simulated radios (LongFast main + MediumFast extra) behind one web server.
@@ -405,5 +410,75 @@ func TestConfigurationGaps(t *testing.T) {
 	b["radio_identities"].(map[string]any)["../evil"] = []any{}
 	if code, _, _ := call(t, srv, "POST", "/api/v1/restore", tok, b); code != 400 {
 		t.Fatalf("restore with a path-like radio id accepted: %d", code)
+	}
+}
+
+func TestSiteWideViews(t *testing.T) {
+	srv, hosts := testWebTwoRadiosHosts(t)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+
+	// A node heard on both radios, best on mf; one heard on main only.
+	now := time.Now()
+	hosts[0].DB.Update(0x0badcafe, func(e *mesh.NodeEntry) { e.LastHeard, e.SNR, e.RSSI = now.Add(-time.Minute), 1, -100 })
+	hosts[1].DB.Update(0x0badcafe, func(e *mesh.NodeEntry) { e.LastHeard, e.SNR, e.RSSI, e.HopsAway = now, 7, -90, 0 })
+	hosts[0].DB.Update(0x11112222, func(e *mesh.NodeEntry) { e.LastHeard = now })
+	for i, h := range hosts {
+		h.LogInternal(&pb.MeshPacket{From: 1, To: 2, Id: uint32(100 + i)}, nil)
+	}
+
+	_, _, nodes := call(t, srv, "GET", "/api/v1/nodes?radio=all", tok, nil)
+	seen := map[string][]any{}
+	for _, n := range nodes {
+		m := n.(map[string]any)
+		seen[m["node_id"].(string)] = m["heard_by"].([]any)
+		if m["node_id"] == "!0badcafe" && m["snr"] != float64(7) {
+			t.Errorf("merged node should be the freshest sighting: %v", m)
+		}
+	}
+	if fmt.Sprint(seen["!0badcafe"]) != "[main mf]" || fmt.Sprint(seen["!11112222"]) != "[main]" {
+		t.Fatalf("heard_by = %v", seen)
+	}
+	if _, _, one := call(t, srv, "GET", "/api/v1/nodes?radio=mf", tok, nil); len(one) >= len(nodes) {
+		t.Fatalf("one radio's nodes (%d) should be fewer than the site's (%d)", len(one), len(nodes))
+	}
+
+	_, _, pkts := call(t, srv, "GET", "/api/v1/packets?radio=all", tok, nil)
+	radios := map[any]bool{}
+	for _, p := range pkts {
+		radios[p.(map[string]any)["radio_id"]] = true
+	}
+	if !radios["main"] || !radios["mf"] {
+		t.Fatalf("packets from %v", radios)
+	}
+
+	_, _, links := call(t, srv, "GET", "/api/v1/links?radio=all", tok, nil)
+	if len(links) < 2 || links[0].(map[string]any)["radio_id"] != "main" || links[len(links)-1].(map[string]any)["radio_id"] != "mf" {
+		t.Fatalf("links = %v", links)
+	}
+
+	// One stream, a status for each radio.
+	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/events?radio=all", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	statuses := map[string]bool{}
+	for sc.Scan() && len(statuses) < 2 {
+		if line := sc.Text(); strings.HasPrefix(line, "data: ") && strings.Contains(line, `"radio_id"`) {
+			var st map[string]any
+			if json.Unmarshal([]byte(line[6:]), &st) == nil && st["phy"] != nil {
+				statuses[st["radio_id"].(string)] = true
+			}
+		}
+	}
+	if !statuses["main"] || !statuses["mf"] {
+		t.Fatalf("statuses for %v", statuses)
 	}
 }

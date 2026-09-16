@@ -106,11 +106,7 @@ func (s *Server) identityParam(w http.ResponseWriter, r *http.Request) *mesh.Ide
 
 func (s *Server) listIdentities(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
-	radios := []*radioCtx{s.radioFor(r)}
-	if r.URL.Query().Get("radio") == "all" {
-		radios = s.radios
-	}
-	for _, rc := range radios {
+	for _, rc := range s.radiosFor(r) {
 		for _, id := range rc.host.Identities() {
 			out = append(out, s.identityJSON(id))
 		}

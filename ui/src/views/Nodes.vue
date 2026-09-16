@@ -2,9 +2,10 @@
 import { computed, defineAsyncComponent, ref } from 'vue'
 import { ArrowDown, ArrowUp, Lock, Search } from '@lucide/vue'
 import type { MeshNode } from '@/api/types'
-import { live } from '@/store/live'
+import { live, radioName } from '@/store/live'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import NodeDrawer from '@/components/nodes/NodeDrawer.vue'
+import RadioFilter from '@/components/ui/RadioFilter.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { now } from '@/composables/now'
 import { hwLabel, relTime, roleLabel, snrClass } from '@/lib/format'
@@ -36,6 +37,14 @@ function setView(v: View) {
 
 const q = ref('')
 const scope = ref<'all' | 'active' | 'local' | 'key'>('all')
+const radioFilter = ref('all')
+const severalRadios = computed(() => live.radios.length > 1)
+/** The radios that heard this node; own identities (empty heard_by) show their own radio. */
+function nodeRadios(n: MeshNode): string[] {
+  if (n.heard_by?.length) return n.heard_by.map((id) => radioName(id))
+  const own = live.identities.find((i) => i.node_id === n.node_id)
+  return own ? [radioName(own.radio_id ?? 'main')] : []
+}
 type SortKey = 'name' | 'last_heard' | 'snr' | 'hops' | 'role' | 'hw'
 const sortKey = ref<SortKey>('last_heard')
 const sortDir = ref<1 | -1>(-1)
@@ -49,7 +58,15 @@ function sortBy(k: SortKey) {
   }
 }
 
-const all = computed(() => Object.values(live.nodes))
+const all = computed(() => {
+  const nodes = Object.values(live.nodes)
+  if (radioFilter.value === 'all') return nodes
+  return nodes.filter((n) => {
+    if (n.heard_by?.length) return n.heard_by.includes(radioFilter.value)
+    // Empty heard_by: one of the site's own identities. Keep only if it belongs to this radio.
+    return live.identities.some((i) => i.node_id === n.node_id && i.radio_id === radioFilter.value)
+  })
+})
 const filtered = computed(() => {
   const term = q.value.trim().toLowerCase()
   const list = all.value.filter((n) => {
@@ -120,6 +137,7 @@ const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
         <button type="button" :aria-pressed="scope === 'local'" @click="scope = 'local'">Local {{ counts.local }}</button>
         <button type="button" :aria-pressed="scope === 'key'" @click="scope = 'key'">With key {{ counts.key }}</button>
       </div>
+      <RadioFilter v-model="radioFilter" id="nodes-radio" />
     </div>
 
     <div :class="['grid gap-4', view === 'split' ? 'lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]' : '']">
@@ -134,6 +152,7 @@ const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
                     <template v-if="sortKey === c.key"><ArrowUp v-if="sortDir === 1" class="size-3" /><ArrowDown v-else class="size-3" /></template>
                   </button>
                 </th>
+                <th v-if="severalRadios" class="max-lg:hidden">Radios</th>
                 <th class="text-center">Key</th>
               </tr>
             </thead>
@@ -161,6 +180,11 @@ const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
                 </td>
                 <td :class="['num', snrClass(n.snr)]">{{ n.snr?.toFixed(1) ?? '—' }}</td>
                 <td :class="['num', hopCls(n.hops_away)]">{{ n.hops_away ?? '—' }}</td>
+                <td v-if="severalRadios" class="max-lg:hidden">
+                  <div class="flex flex-wrap gap-1">
+                    <span v-for="r in nodeRadios(n)" :key="r" class="chip bg-sunken text-ink-2">{{ r }}</span>
+                  </div>
+                </td>
                 <td class="text-center">
                   <Lock v-if="n.has_public_key" class="inline size-3.5 text-ok" aria-label="public key known" />
                   <span v-else class="text-ink-3">—</span>

@@ -78,6 +78,7 @@ type PacketRecord struct {
 	Payload     map[string]any `json:"payload,omitempty"`
 	Raw         string         `json:"raw,omitempty"`
 	Transport   string         `json:"transport,omitempty"`
+	Radio       string         `json:"radio_id,omitempty"` // the radio that heard or sent it
 
 	// Mesh and Data travel on the bus only (plugins): the packet as heard or sent, and its
 	// decoded payload when one of this radio's channels or keys could read it. Never logged.

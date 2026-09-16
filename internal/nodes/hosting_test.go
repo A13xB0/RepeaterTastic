@@ -286,6 +286,12 @@ func TestHostingHealth(t *testing.T) {
 		t.Fatalf("problem = %q", p)
 	}
 
-	l.kill(base) // the persona's meshtasticd dies too
+	// The persona's meshtasticd dies too, well after its last settings change.
+	x.mu.Lock()
+	for _, e := range x.nodes {
+		e.hn.committed.Store(0)
+	}
+	x.mu.Unlock()
+	l.kill(base)
 	eventually(t, "persona down", func() bool { return x.Health().State == HealthError })
 }

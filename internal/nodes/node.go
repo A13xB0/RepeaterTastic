@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -45,6 +46,9 @@ type Node struct {
 
 	// rebootWait is how long a settings change waits for the node to reboot before re-reading it.
 	rebootWait time.Duration
+	// committed is when settings were last committed (Unix ms): meshtasticd reboots to apply
+	// some, so an exit soon after is expected.
+	committed atomic.Int64
 	// editMu keeps settings changes one at a time: each reads the node, edits it and waits for it
 	// to come back before the next one looks.
 	editMu sync.Mutex

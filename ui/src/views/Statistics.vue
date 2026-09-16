@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { api } from '@/api/client'
+import { MAIN_RADIO, api, withRadio } from '@/api/client'
 import type { AirtimeStats, IdentityStat, PortStat, RfStats, StatsWindow } from '@/api/types'
-import { live, nodeLabel } from '@/store/live'
+import { live, nodeLabel, radioName } from '@/store/live'
 import StackedBars from '@/components/charts/StackedBars.vue'
 import TimeChart from '@/components/charts/TimeChart.vue'
 import HBars from '@/components/charts/HBars.vue'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
+import RadioFilter from '@/components/ui/RadioFilter.vue'
 import { toastError } from '@/composables/toast'
 import { compact, portLabel, seconds } from '@/lib/format'
 
 const win = ref<StatsWindow>('24h')
+/** 'all' (the whole site) or one radio id. */
+const radioFilter = ref('all')
+const severalRadios = computed(() => live.radios.length > 1)
 const airtime = ref<AirtimeStats | null>(null)
 const rf = ref<RfStats | null>(null)
 const ports = ref<PortStat[]>([])
@@ -21,11 +25,12 @@ async function load() {
   loading.value = true
   try {
     const w = win.value
+    const radio = radioFilter.value
     const [a, r, p, i] = await Promise.all([
-      api.get<AirtimeStats>(`/stats/airtime?window=${w}`),
-      api.get<RfStats>(`/stats/rf?window=${w}`),
-      api.get<PortStat[]>(`/stats/ports?window=${w}`),
-      api.get<IdentityStat[]>(`/stats/identities?window=${w}`),
+      api.get<AirtimeStats>(withRadio(`/stats/airtime?window=${w}`, radio)),
+      api.get<RfStats>(withRadio(`/stats/rf?window=${w}`, radio)),
+      api.get<PortStat[]>(withRadio(`/stats/ports?window=${w}`, radio)),
+      api.get<IdentityStat[]>(withRadio(`/stats/identities?window=${w}`, radio)),
     ])
     airtime.value = a
     rf.value = r
@@ -37,7 +42,7 @@ async function load() {
     loading.value = false
   }
 }
-watch(win, load, { immediate: true })
+watch([win, radioFilter], load, { immediate: true })
 
 const SLOTS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)']
 // Colour follows the identity (sorted by id), not its rank, so filters never repaint series.
@@ -51,6 +56,15 @@ const unit = computed(() => {
   return bucket >= 3600 ? { div: 1000, fmt: (v: number) => `${compact(Math.round(v))} s` } : { div: 1000, fmt: (v: number) => `${v.toFixed(v < 10 ? 1 : 0)} s` }
 })
 
+// The duty-cycle budget line is one radio's: the one picked, or the main radio's while looking at the
+// whole site (there's no single "site budget" to draw when radios can each run their own limit).
+const budgetStatus = computed(() => (radioFilter.value !== 'all' ? live.statuses[radioFilter.value] : live.statuses[MAIN_RADIO]) ?? live.status)
+const budgetLabel = computed(() => {
+  const limit = budgetStatus.value?.airtime.duty_limit_pct ?? 10
+  const name = radioFilter.value !== 'all' ? radioName(radioFilter.value) : severalRadios.value ? radioName(MAIN_RADIO) : ''
+  return name ? `${limit}% budget · ${name}` : `${limit}% budget`
+})
+
 const stacked = computed(() => {
   const a = airtime.value
   if (!a) return null
@@ -61,7 +75,7 @@ const stacked = computed(() => {
       { name: 'Relay', color: 'var(--ink-3)', values: a.buckets.map((b) => b.relay_ms / unit.value.div) },
       ...ids.map((id) => ({ name: nodeLabel(id).long, color: identityColors.value.get(id)!, values: a.buckets.map((b) => (b.by_identity[id] ?? 0) / unit.value.div) })),
     ],
-    budget: ((live.status?.airtime.duty_limit_pct ?? 10) / 100) * a.bucket_s,
+    budget: ((budgetStatus.value?.airtime.duty_limit_pct ?? 10) / 100) * a.bucket_s,
   }
 })
 
@@ -88,7 +102,11 @@ const rfCharts = computed(() => {
 
 const identityRows = computed(() =>
   idents.value
-    .map((s) => ({ ...s, ident: live.identities.find((i) => i.node_id === s.node_id), ack: s.ack_ok + s.ack_fail ? (s.ack_ok / (s.ack_ok + s.ack_fail)) * 100 : null }))
+    .map((s) => ({
+      ...s,
+      ident: live.identities.find((i) => i.node_id === s.node_id && (!s.radio_id || i.radio_id === s.radio_id)),
+      ack: s.ack_ok + s.ack_fail ? (s.ack_ok / (s.ack_ok + s.ack_fail)) * 100 : null,
+    }))
     .sort((a, b) => b.airtime_ms - a.airtime_ms),
 )
 const maxAir = computed(() => Math.max(1, ...idents.value.map((i) => i.airtime_ms)))
@@ -108,8 +126,11 @@ const windows: { id: StatsWindow; label: string }[] = [
         <h2 class="page-title">Statistics</h2>
         <p class="page-sub">Who is using the shared airtime, and how the channel is doing</p>
       </div>
-      <div class="seg" role="group" aria-label="Window">
-        <button type="button" v-for="w in windows" :key="w.id" :aria-pressed="win === w.id" :disabled="loading" @click="win = w.id">{{ w.label }}</button>
+      <div class="flex flex-wrap items-center gap-2">
+        <RadioFilter v-model="radioFilter" id="stats-radio-filter" />
+        <div class="seg" role="group" aria-label="Window">
+          <button type="button" v-for="w in windows" :key="w.id" :aria-pressed="win === w.id" :disabled="loading" @click="win = w.id">{{ w.label }}</button>
+        </div>
       </div>
     </div>
 
@@ -143,7 +164,7 @@ const windows: { id: StatsWindow; label: string }[] = [
           :series="stacked.series"
           :height="260"
           :format="unit.fmt"
-          :ref-line="{ value: stacked.budget, label: `${live.status?.airtime.duty_limit_pct ?? 10}% budget` }"
+          :ref-line="{ value: stacked.budget, label: budgetLabel }"
         />
         <div v-else class="mx-3 h-[260px] animate-pulse rounded-xl bg-sunken" />
       </div>
@@ -158,16 +179,24 @@ const windows: { id: StatsWindow; label: string }[] = [
         <div class="scroll-thin overflow-x-auto">
           <table class="tbl">
             <thead>
-              <tr><th>Identity</th><th>Airtime</th><th class="num">TX</th><th class="num">RX</th><th>ACK success</th></tr>
+              <tr>
+                <th>Identity</th>
+                <th v-if="severalRadios">Radio</th>
+                <th>Airtime</th>
+                <th class="num">TX</th>
+                <th class="num">RX</th>
+                <th>ACK success</th>
+              </tr>
             </thead>
             <tbody>
-              <tr v-for="r in identityRows" :key="r.node_id">
+              <tr v-for="r in identityRows" :key="`${r.radio_id ?? ''}${r.node_id}`">
                 <td>
                   <div class="flex items-center gap-2">
                     <NodeAvatar :id="r.node_id" :short="r.ident?.short_name ?? r.node_id.slice(-4)" size="sm" />
                     <span class="truncate font-medium">{{ r.ident?.long_name ?? r.node_id }}</span>
                   </div>
                 </td>
+                <td v-if="severalRadios" class="whitespace-nowrap text-ink-2">{{ r.ident?.radio_name ?? radioName(r.radio_id ?? '') }}</td>
                 <td class="min-w-36">
                   <div class="flex items-center gap-2">
                     <div class="h-1.5 flex-1 rounded-full bg-ink-3/15">
