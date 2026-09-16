@@ -38,8 +38,10 @@ type BoardRadio struct {
 	logf   func(string, ...any)
 
 	rx, tx, errs atomic.Uint32
-	closeOnce    sync.Once
 	stop         context.CancelFunc
+	// frameMu guards sends on frames against its close: the echo timer can fire after it.
+	frameMu sync.Mutex
+	closed  bool
 
 	// contact returns what the host knows of a node (nil = nothing): a board takes a direct message
 	// over MQTT only when it knows both ends.
@@ -84,14 +86,14 @@ var _ radio.Radio = (*BoardRadio)(nil)
 // The node's state (for starts while the board is away) is kept in stateDir.
 func OpenBoard(ctx context.Context, device, stateDir string, logf func(string, ...any)) (*BoardRadio, error) {
 	if logf == nil {
-		logf = func(string, ...any) {}
+		logf = discardLogf
 	}
 	if !mtclient.IsSerial(device) {
 		if _, err := mtclient.TCPAddress(device); err != nil {
 			return nil, err
 		}
 	}
-	c := mtclient.New(mtclient.Options{Address: device, Logf: func(string, ...any) {}, ConfigTimeout: 30 * time.Second})
+	c := mtclient.New(mtclient.Options{Address: device, Logf: discardLogf, ConfigTimeout: 30 * time.Second})
 	return startBoard(ctx, c, device, stateDir, logf)
 }
 
@@ -114,7 +116,7 @@ func (b *BoardRadio) Node() *Node { return b.node }
 
 func (b *BoardRadio) uplinks(ctx context.Context, events <-chan mtclient.Event, unsubscribe func()) {
 	defer unsubscribe()
-	defer b.closeOnce.Do(func() { close(b.frames) })
+	defer b.closeFrames()
 	for {
 		select {
 		case <-ctx.Done():
@@ -123,26 +125,55 @@ func (b *BoardRadio) uplinks(ctx context.Context, events <-chan mtclient.Event, 
 			if !ok {
 				return
 			}
-			m := e.FromRadio.GetMqttClientProxyMessage()
-			if e.Kind != mtclient.Received || m == nil {
-				continue
-			}
-			p := uplinkPacket(m)
-			if p == nil {
-				continue
-			}
-			frame, err := wire.EncodeFrame(p)
-			if err != nil {
-				b.errs.Add(1)
-				continue
-			}
-			b.rx.Add(1)
-			select {
-			case b.frames <- radio.Frame{Data: frame, RSSI: int16(p.GetRxRssi()), SNR: p.GetRxSnr()}:
-			default:
-				b.errs.Add(1) // the host is behind: drop, as a busy radio would
-			}
+			b.uplink(e)
 		}
+	}
+}
+
+// uplink turns an MQTT uplink from the board into a received frame.
+func (b *BoardRadio) uplink(e mtclient.Event) {
+	m := e.FromRadio.GetMqttClientProxyMessage()
+	if e.Kind != mtclient.Received || m == nil {
+		return
+	}
+	p := uplinkPacket(m)
+	if p == nil {
+		return
+	}
+	frame, err := wire.EncodeFrame(p)
+	if err != nil {
+		b.errs.Add(1)
+		return
+	}
+	b.rx.Add(1)
+	if !b.deliver(radio.Frame{Data: frame, RSSI: int16(p.GetRxRssi()), SNR: p.GetRxSnr()}) {
+		b.errs.Add(1) // the host is behind: drop, as a busy radio would
+	}
+}
+
+// deliver hands the host a frame without waiting. It reports false when there's no room or the
+// radio has closed.
+func (b *BoardRadio) deliver(f radio.Frame) bool {
+	b.frameMu.Lock()
+	defer b.frameMu.Unlock()
+	if b.closed {
+		return false
+	}
+	select {
+	case b.frames <- f:
+		return true
+	default:
+		return false
+	}
+}
+
+// closeFrames ends the host's frame stream, once.
+func (b *BoardRadio) closeFrames() {
+	b.frameMu.Lock()
+	defer b.frameMu.Unlock()
+	if !b.closed {
+		b.closed = true
+		close(b.frames)
 	}
 }
 
@@ -216,11 +247,7 @@ func (b *BoardRadio) echo(s mtclient.Snapshot, p *pb.MeshPacket) {
 		return
 	}
 	time.AfterFunc(echoDelay, func() {
-		defer func() { _ = recover() }() // the radio closed meanwhile
-		select {
-		case b.frames <- radio.Frame{Data: frame, RSSI: loopRSSI, SNR: loopSNR}:
-		default:
-		}
+		b.deliver(radio.Frame{Data: frame, RSSI: loopRSSI, SNR: loopSNR}) // dropped if the radio closed meanwhile
 	})
 }
 

@@ -2,9 +2,10 @@
 // Configuration → meshtasticd: which meshtasticd runs the nodes, and how each one is doing.
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '@/api/client'
-import type { HostedSettings, RadiosResponse, Runtimes } from '@/api/types'
+import type { HostedInstance, HostedSettings, RadiosResponse, Runtimes } from '@/api/types'
 import Spinner from '@/components/ui/Spinner.vue'
 import NodesHealthChip from '@/components/layout/NodesHealthChip.vue'
+import MeshtasticdLogDrawer from '@/components/config/MeshtasticdLogDrawer.vue'
 import { live, refreshStatus } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
 
@@ -21,6 +22,14 @@ const boardRadios = computed(() => radios.value.filter((r) => r.driver === 'mesh
 const radioName = (id: string) => radios.value.find((r) => r.id === id)?.name ?? id
 const error = ref('')
 const health = computed(() => live.status?.nodes)
+// The instance whose log is open (kept current by the poll).
+const logName = ref<string | null>(null)
+const logFor = computed<HostedInstance | null>(() => state.value?.instances.find((x) => x.name === logName.value) ?? null)
+const nodeName = (x: HostedInstance) => {
+  const who = x.role === 'persona' ? 'Relay persona' : live.identities.find((i) => i.node_id === x.node_id)?.long_name ?? 'Identity'
+  const suffix = x.node_id ? ` ${x.node_id}` : ''
+  return `${who}${suffix}`
+}
 
 function load(s: HostedSettings) {
   state.value = s
@@ -101,10 +110,11 @@ async function save() {
         <span :class="runtimes.docker.ok ? 'text-ok' : 'text-ink-3'">Docker: {{ runtimes.docker.ok ? `${runtimes.docker.version}, image ${runtimes.docker.image_present ? 'downloaded' : 'not downloaded yet'}` : runtimes.docker.error }}</span>
       </p>
       <div class="mt-3 flex flex-wrap items-center gap-2">
-        <div class="seg" role="group" aria-label="How to run meshtasticd">
+        <fieldset class="seg">
+          <legend class="sr-only">How to run meshtasticd</legend>
           <button type="button" :aria-pressed="via === 'exec'" @click="via = 'exec'">Installed</button>
           <button type="button" :aria-pressed="via === 'docker'" :disabled="!!runtimes && !runtimes.docker.ok" @click="via = 'docker'">Docker</button>
-        </div>
+        </fieldset>
         <input v-if="via === 'exec'" id="hosted-bin" v-model="binary" class="input h-8 mono min-w-0 flex-1 text-xs" :placeholder="runtimes && !runtimes.meshtasticd.found ? 'not on the PATH: enter where it is' : 'meshtasticd (on PATH) or /usr/bin/meshtasticd'" spellcheck="false" aria-label="meshtasticd program" />
         <input v-else id="hosted-image" v-model="image" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />
       </div>
@@ -123,21 +133,27 @@ async function save() {
 
     <div v-if="state.instances.length" class="scroll-thin overflow-x-auto rounded-xl border border-line-soft">
       <table class="tbl text-xs">
-        <thead><tr><th>Node</th><th>Radio</th><th>meshtasticd</th><th>Port</th><th>State</th></tr></thead>
+        <thead><tr><th>Node</th><th>Radio</th><th>meshtasticd</th><th>Port</th><th>State</th><th><span class="sr-only">Log</span></th></tr></thead>
         <tbody>
           <tr v-for="x in state.instances" :key="x.name">
-            <td><span class="font-medium">{{ x.role === 'persona' ? 'Relay persona' : 'Identity' }}</span> <span class="mono text-ink-3">{{ x.node_id }}</span></td>
+            <td>
+              <span class="font-medium">{{ x.role === 'persona' ? 'Relay persona' : live.identities.find((i) => i.node_id === x.node_id)?.long_name ?? 'Identity' }}</span>
+              <span class="mono text-ink-3"> {{ x.node_id }}</span>
+            </td>
             <td>{{ radioName(x.radio) }}</td>
             <td :title="x.launcher">{{ x.firmware || '—' }} <span class="text-ink-3">· {{ x.launcher.startsWith('docker ') ? 'Docker' : 'installed' }}</span></td>
             <td class="mono">{{ x.port }}</td>
             <td>
               <span :class="['chip', x.connected ? 'bg-ok/14 text-ok' : x.running && !x.restarts ? 'bg-warn/15 text-warn' : 'bg-bad/12 text-bad']">{{ x.connected ? 'running' : x.running ? 'starting' : 'stopped' }}</span>
-              <span v-if="x.restarts" class="ml-1 text-ink-3">{{ x.restarts }} restarts</span>
+              <span v-if="x.restarts" class="ml-1 text-bad" :title="`Last: ${x.last_error ?? 'unknown'}`">{{ x.restarts }} {{ x.restarts === 1 ? 'stop' : 'stops' }}</span>
+              <span v-if="x.reboots" class="ml-1 text-ink-3" title="meshtasticd rebooted to apply settings RepeaterTastic gave it">{{ x.reboots }} {{ x.reboots === 1 ? 'reboot' : 'reboots' }}</span>
               <div v-if="x.last_error && !x.connected" class="mt-0.5 max-w-64 truncate text-2xs text-bad" :title="x.last_error">{{ x.last_error }}</div>
             </td>
+            <td><button type="button" class="btn btn-sm" @click="logName = x.name">Log</button></td>
           </tr>
         </tbody>
       </table>
     </div>
+    <MeshtasticdLogDrawer :instance="logFor" :title="logFor ? nodeName(logFor) : ''" @close="logName = null" />
   </div>
 </template>

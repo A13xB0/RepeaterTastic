@@ -14,10 +14,15 @@ export const stateLabel: Record<PluginState, string> = {
   unsupported: 'not for this system',
 }
 
+function runningTone(p: Plugin): 'ok' | 'warn' | 'bad' {
+  if (p.status?.state === 'error') return 'bad'
+  return p.status?.state === 'warning' ? 'warn' : 'ok'
+}
+
 export function stateTone(p: Plugin): 'ok' | 'warn' | 'bad' | 'muted' {
   switch (p.state) {
     case 'running':
-      return p.status?.state === 'error' ? 'bad' : p.status?.state === 'warning' ? 'warn' : 'ok'
+      return runningTone(p)
     case 'crashed':
     case 'unsupported':
       return 'bad'

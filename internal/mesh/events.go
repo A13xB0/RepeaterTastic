@@ -78,6 +78,7 @@ type PacketRecord struct {
 	Payload     map[string]any `json:"payload,omitempty"`
 	Raw         string         `json:"raw,omitempty"`
 	Transport   string         `json:"transport,omitempty"`
+	Radio       string         `json:"radio_id,omitempty"` // the radio that heard or sent it
 
 	// Mesh and Data travel on the bus only (plugins): the packet as heard or sent, and its
 	// decoded payload when one of this radio's channels or keys could read it. Never logged.
@@ -400,6 +401,17 @@ func (s *MessageStore) Save(path string) error {
 	return writeJSONAtomic(path, f)
 }
 
+// failUnacked marks outgoing messages still waiting for an acknowledgement as failed: the
+// restart lost their retries.
+func failUnacked(l []*Message) {
+	for _, m := range l {
+		if m.Direction == "out" && (m.Status == "queued" || m.Status == "sent") {
+			m.Status = "failed"
+			m.Error = "restarted before an acknowledgement arrived"
+		}
+	}
+}
+
 // Load restores messages saved by Save.
 func (s *MessageStore) Load(path string) error {
 	b, err := os.ReadFile(path)
@@ -420,12 +432,7 @@ func (s *MessageStore) Load(path string) error {
 		if err != nil {
 			continue
 		}
-		for _, m := range l {
-			if m.Direction == "out" && (m.Status == "queued" || m.Status == "sent") {
-				m.Status = "failed"
-				m.Error = "restarted before an acknowledgement arrived"
-			}
-		}
+		failUnacked(l)
 		s.per[uint32(id)] = l
 	}
 	for k, r := range f.Read {

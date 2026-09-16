@@ -29,6 +29,7 @@ func TestMain(m *testing.M) {
 		runEchoPlugin()
 		return
 	}
+	stopGrace, restartBackoff, pollInterval = 300*time.Millisecond, time.Millisecond, 20*time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -220,53 +221,15 @@ func TestManagedPluginEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	hub := sim.NewHub(0)
-	hostA, err := mesh.NewHost(mesh.Config{Region: "EU_868", Preset: pb.Config_LoRaConfig_LONG_FAST}, hub.Attach("A", 64), log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() { _ = hostA.Run(ctx) }()
-	node := &fakeNode{}
-	key, _ := mesh.NewIdentity(nil, "A relay", "")
-	relayA, err := mesh.NewRemoteIdentity(node, mesh.RemoteState{NodeNum: key.NodeNum,
-		User:     &pb.User{LongName: "A relay", PublicKey: key.PublicKey},
-		Channels: []*pb.Channel{{Index: 0, Role: pb.Channel_PRIMARY, Settings: &pb.ChannelSettings{Psk: []byte{1}}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	relayA.IsRelay = true
-	if err := hostA.AddIdentity(relayA); err != nil {
-		t.Fatal(err)
-	}
+	hostA, relayA, node := relayHost(t, ctx, log)
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(t.TempDir(), "plugins") // Unix socket paths must stay short
-	if len(dir) > 80 {
-		dir, _ = os.MkdirTemp("", "rtp")
-		defer os.RemoveAll(dir)
-	}
+	dir := shortPluginDir(t)
 	cfg := config.Default().Plugins
 	m, err := New(Options{Config: cfg, Dir: dir, Radios: []Radio{{ID: "main", Name: "Main", Host: hostA}}, Version: "test", Log: log})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := zipBundle(t, map[string]string{"plugin.yaml": echoManifest, "run.sh": "#!/bin/sh\nexec " + self + " -test.run=^$\n"},
-		map[string]os.FileMode{"run.sh": 0o755})
-	if _, err := m.Install(bytes.NewReader(b), int64(len(b)), "test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Enable("echo", []string{"packets.read", "messages.read", "messages.send"}); err == nil {
-		t.Fatal("enabled without its required setting")
-	}
-	if err := m.SetSettings("echo", map[string]any{"greeting": "from echo"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Enable("echo", []string{"packets.read", "messages.read", "messages.send"}); err != nil {
-		t.Fatal(err)
-	}
+	installEcho(t, m)
 	if err := m.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +257,74 @@ func TestManagedPluginEndToEnd(t *testing.T) {
 		return in.Status != nil && in.Status.Summary == "greeting hello again"
 	}, nil)
 
-	// Taking a permission away reconnects the running plugin with the new grants.
+	checkRegrantReconnects(t, m)
+	checkDisableAndRemove(t, m, dir)
+}
+
+// relayHost starts a simulated radio host with a relay persona backed by a fake meshtasticd.
+func relayHost(t *testing.T, ctx context.Context, log *slog.Logger) (*mesh.Host, *mesh.Identity, *fakeNode) {
+	t.Helper()
+	hub := sim.NewHub(0)
+	host, err := mesh.NewHost(mesh.Config{Region: "EU_868", Preset: pb.Config_LoRaConfig_LONG_FAST}, hub.Attach("A", 64), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = host.Run(ctx) }()
+	node := &fakeNode{}
+	key, _ := mesh.NewIdentity(nil, "A relay", "")
+	relay, err := mesh.NewRemoteIdentity(node, mesh.RemoteState{NodeNum: key.NodeNum,
+		User:     &pb.User{LongName: "A relay", PublicKey: key.PublicKey},
+		Channels: []*pb.Channel{{Index: 0, Role: pb.Channel_PRIMARY, Settings: &pb.ChannelSettings{Psk: []byte{1}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay.IsRelay = true
+	if err := host.AddIdentity(relay); err != nil {
+		t.Fatal(err)
+	}
+	return host, relay, node
+}
+
+// shortPluginDir is a plugins folder whose path is short enough for a Unix socket in it.
+func shortPluginDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "plugins")
+	if len(dir) <= 80 {
+		return dir
+	}
+	dir, _ = os.MkdirTemp("", "rtp")
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// installEcho installs the echo plugin, running this test binary, and enables it once its
+// required setting is filled in.
+func installEcho(t *testing.T, m *Manager) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := zipBundle(t, map[string]string{"plugin.yaml": echoManifest, "run.sh": "#!/bin/sh\nexec " + self + " -test.run=^$\n"},
+		map[string]os.FileMode{"run.sh": 0o755})
+	if _, err := m.Install(bytes.NewReader(b), int64(len(b)), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Enable("echo", []string{"packets.read", "messages.read", "messages.send"}); err == nil {
+		t.Fatal("enabled without its required setting")
+	}
+	if err := m.SetSettings("echo", map[string]any{"greeting": "from echo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Enable("echo", []string{"packets.read", "messages.read", "messages.send"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// checkRegrantReconnects checks taking a permission away reconnects the running plugin with the
+// new grants.
+func checkRegrantReconnects(t *testing.T, m *Manager) {
+	t.Helper()
 	if err := m.Enable("echo", []string{"messages.read", "messages.send"}); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +339,11 @@ func TestManagedPluginEndToEnd(t *testing.T) {
 	if slices.Contains(granted, "packets.read") {
 		t.Fatal("packets.read still granted")
 	}
+}
 
+// checkDisableAndRemove checks disabling stops the plugin and removing deletes its folder.
+func checkDisableAndRemove(t *testing.T, m *Manager, dir string) {
+	t.Helper()
 	if err := m.Disable("echo"); err != nil {
 		t.Fatal(err)
 	}

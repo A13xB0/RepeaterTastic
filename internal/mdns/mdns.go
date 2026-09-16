@@ -30,6 +30,14 @@ const (
 
 var group = &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353}
 
+// Seams for tests: how the socket is opened and how often announcements go out.
+var (
+	listenMulticast  = func() (*net.UDPConn, error) { return net.ListenMulticastUDP("udp4", nil, group) }
+	announceDelay    = 500 * time.Millisecond
+	announceRepeat   = time.Second
+	announceInterval = time.Minute
+)
+
 // Service is one advertised node.
 type Service struct {
 	Instance string // e.g. "Base Camp (!274d0520)"
@@ -68,7 +76,7 @@ func (r *Responder) SetServices(s []Service) {
 }
 
 func (r *Responder) Run(ctx context.Context) error {
-	conn, err := net.ListenMulticastUDP("udp4", nil, group)
+	conn, err := listenMulticast()
 	if err != nil {
 		return err
 	}
@@ -110,9 +118,9 @@ func (r *Responder) announcer(ctx context.Context, out *net.UDPConn) {
 			_, _ = out.WriteToUDP(resp, group)
 		}
 	}
-	t := time.NewTicker(time.Minute)
+	t := time.NewTicker(announceInterval)
 	defer t.Stop()
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(announceDelay)
 	announce()
 	for {
 		select {
@@ -120,7 +128,7 @@ func (r *Responder) announcer(ctx context.Context, out *net.UDPConn) {
 			return
 		case <-r.changed:
 			announce()
-			time.Sleep(time.Second)
+			time.Sleep(announceRepeat)
 			announce()
 		case <-t.C:
 			announce()
@@ -147,53 +155,76 @@ func (r *Responder) answer(qs []question, ip net.IP) []byte {
 	if len(svcs) == 0 {
 		return nil
 	}
-	var answers, extra []record
-	addService := func(s Service, withPTR bool) {
-		inst := escape(s.Instance) + "." + serviceType
-		if withPTR {
-			answers = append(answers, record{serviceType, typePTR, classIN, encodeName(inst)})
-		}
-		srv := make([]byte, 6)
-		binary.BigEndian.PutUint16(srv[4:], uint16(s.Port))
-		extra = append(extra, record{inst, typeSRV, classIN | flush, append(srv, encodeName(r.hostname)...)},
-			record{inst, typeTXT, classIN | flush, encodeTXT(s.TXT)})
-	}
+	set := answerSet{hostname: r.hostname}
 	for _, q := range qs {
-		name := strings.ToLower(q.name)
-		switch {
-		case name == metaQuery && (q.qtype == typePTR || q.qtype == typeANY):
-			answers = append(answers, record{metaQuery, typePTR, classIN, encodeName(serviceType)})
-		case name == serviceType && (q.qtype == typePTR || q.qtype == typeANY):
-			for _, s := range svcs {
-				addService(s, true)
-			}
-		case name == strings.ToLower(r.hostname) && (q.qtype == typeA || q.qtype == typeANY):
-			// handled by adding A below
-			answers = append(answers, record{r.hostname, typeA, classIN | flush, nil})
-		default:
-			for _, s := range svcs {
-				inst := strings.ToLower(escape(s.Instance) + "." + serviceType)
-				if name == inst {
-					addService(s, false)
-				}
-			}
-		}
+		set.addQuestion(q, svcs)
 	}
-	if len(answers) == 0 && len(extra) == 0 {
+	if len(set.answers) == 0 && len(set.extra) == 0 {
 		return nil
 	}
 	if ip4 := ip.To4(); ip4 != nil {
-		a := record{r.hostname, typeA, classIN | flush, []byte(ip4)}
-		for i := range answers {
-			if answers[i].rtype == typeA {
-				answers[i] = a
+		set.fillAddress(ip4)
+	}
+	return encodeMessage(set.answers, set.extra)
+}
+
+// answerSet collects the answer and additional records for one reply.
+type answerSet struct {
+	hostname       string
+	answers, extra []record
+}
+
+// wants reports whether q asks for records of type t.
+func wants(q question, t uint16) bool { return q.qtype == t || q.qtype == typeANY }
+
+// instanceName is the full service instance name for s.
+func instanceName(s Service) string { return escape(s.Instance) + "." + serviceType }
+
+// addQuestion adds the records that answer q.
+func (a *answerSet) addQuestion(q question, svcs []Service) {
+	name := strings.ToLower(q.name)
+	switch {
+	case name == metaQuery && wants(q, typePTR):
+		a.answers = append(a.answers, record{metaQuery, typePTR, classIN, encodeName(serviceType)})
+	case name == serviceType && wants(q, typePTR):
+		for _, s := range svcs {
+			a.addService(s, true)
+		}
+	case name == strings.ToLower(a.hostname) && wants(q, typeA):
+		// A placeholder: fillAddress supplies the address, and records without data are dropped.
+		a.answers = append(a.answers, record{a.hostname, typeA, classIN | flush, nil})
+	default:
+		for _, s := range svcs {
+			if name == strings.ToLower(instanceName(s)) {
+				a.addService(s, false)
 			}
 		}
-		if len(extra) > 0 {
-			extra = append(extra, a)
+	}
+}
+
+// addService adds s's SRV and TXT records, and its PTR record when withPTR is set.
+func (a *answerSet) addService(s Service, withPTR bool) {
+	inst := instanceName(s)
+	if withPTR {
+		a.answers = append(a.answers, record{serviceType, typePTR, classIN, encodeName(inst)})
+	}
+	srv := make([]byte, 6)
+	binary.BigEndian.PutUint16(srv[4:], uint16(s.Port))
+	a.extra = append(a.extra, record{inst, typeSRV, classIN | flush, append(srv, encodeName(a.hostname)...)},
+		record{inst, typeTXT, classIN | flush, encodeTXT(s.TXT)})
+}
+
+// fillAddress fills in the A placeholders and adds the address to the additional records.
+func (a *answerSet) fillAddress(ip4 net.IP) {
+	rec := record{a.hostname, typeA, classIN | flush, []byte(ip4)}
+	for i := range a.answers {
+		if a.answers[i].rtype == typeA {
+			a.answers[i] = rec
 		}
 	}
-	return encodeMessage(answers, extra)
+	if len(a.extra) > 0 {
+		a.extra = append(a.extra, rec)
+	}
 }
 
 // ------------------------------------------------------------------------------ DNS encoding
@@ -309,17 +340,12 @@ func readName(b []byte, off int) (string, int, bool) {
 		l := int(b[off])
 		switch {
 		case l == 0:
-			if end < 0 {
-				end = off + 1
-			}
-			return strings.Join(parts, ".") + ".", end, true
+			return strings.Join(parts, ".") + ".", endOr(end, off+1), true
 		case l&0xC0 == 0xC0:
 			if off+1 >= len(b) {
 				return "", 0, false
 			}
-			if end < 0 {
-				end = off + 2
-			}
+			end = endOr(end, off+2)
 			off = int(binary.BigEndian.Uint16(b[off:]) & 0x3FFF)
 			jumps++
 		default:
@@ -331,6 +357,14 @@ func readName(b []byte, off int) (string, int, bool) {
 		}
 	}
 	return "", 0, false
+}
+
+// endOr returns end, or v if end hasn't been set yet (the name's end is where the first pointer is).
+func endOr(end, v int) int {
+	if end < 0 {
+		return v
+	}
+	return end
 }
 
 // localIPv4For picks the interface address on the same subnet as peer (or the first usable one).

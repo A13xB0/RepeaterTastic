@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Stacked columns over time with a 2px surface gap between segments and per-column hover tooltip.
 import { computed, ref } from 'vue'
-import { niceMax, timeTick, useWidth } from './useWidth'
+import { niceMax, tickAnchor, timeTick, useWidth } from './useWidth'
 
 export interface BarSeries {
   name: string
@@ -60,7 +60,7 @@ const xTicks = computed(() => {
   const span = props.times[n.value - 1]! - props.times[0]!
   return Array.from({ length: count }, (_, k) => {
     const i = Math.round((k / (count - 1)) * (n.value - 1))
-    return { x: pad.l + band.value * i + band.value / 2, label: timeTick(props.times[i]!, span), anchor: k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle' }
+    return { x: pad.l + band.value * i + band.value / 2, label: timeTick(props.times[i]!, span), anchor: tickAnchor(k, count) }
   })
 })
 

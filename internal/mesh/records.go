@@ -65,6 +65,7 @@ func (h *Host) fillRecordFromDecoded(r *PacketRecord, dec decodeResult) {
 func (h *Host) publishPacket(r PacketRecord) {
 	mp, data, holders := r.Mesh, r.Data, r.Holders
 	r.Mesh, r.Data, r.Holders = nil, nil, nil
+	r.Radio = h.RadioID()
 	r = h.Packets.Add(r)
 	// Copies for plugins, only when some are listening: the pipeline keeps using the originals.
 	if h.PacketCopies.Load() {
@@ -88,45 +89,75 @@ func summarize(d *pb.Data) string {
 	case pb.PortNum_TEXT_MESSAGE_APP:
 		return string(d.Payload)
 	case pb.PortNum_NODEINFO_APP:
-		u := &pb.User{}
-		if proto.Unmarshal(d.Payload, u) == nil {
-			return fmt.Sprintf("%s (%s) %s", u.LongName, u.ShortName, u.HwModel)
-		}
+		return summarizeNodeInfo(d)
 	case pb.PortNum_POSITION_APP:
-		pos := &pb.Position{}
-		if proto.Unmarshal(d.Payload, pos) == nil && (pos.GetLatitudeI() != 0 || pos.GetLongitudeI() != 0) {
-			return fmt.Sprintf("%.5f, %.5f", float64(pos.GetLatitudeI())/1e7, float64(pos.GetLongitudeI())/1e7)
-		}
-		return "position request"
+		return summarizePosition(d)
 	case pb.PortNum_ROUTING_APP:
-		rt := &pb.Routing{}
-		if proto.Unmarshal(d.Payload, rt) == nil {
-			if rt.GetErrorReason() == pb.Routing_NONE {
-				return fmt.Sprintf("ACK for %08x", d.RequestId)
-			}
-			return fmt.Sprintf("NAK %s for %08x", rt.GetErrorReason(), d.RequestId)
-		}
+		return summarizeRouting(d)
 	case pb.PortNum_TELEMETRY_APP:
-		t := &pb.Telemetry{}
-		if proto.Unmarshal(d.Payload, t) == nil {
-			if m := t.GetDeviceMetrics(); m != nil {
-				return fmt.Sprintf("battery %d%% %.2fV ch %.1f%% air %.1f%%", m.GetBatteryLevel(), m.GetVoltage(),
-					m.GetChannelUtilization(), m.GetAirUtilTx())
-			}
-			if m := t.GetEnvironmentMetrics(); m != nil {
-				return fmt.Sprintf("%.1f°C %.0f%% %.0fhPa", m.GetTemperature(), m.GetRelativeHumidity(), m.GetBarometricPressure())
-			}
-		}
+		return summarizeTelemetry(d)
 	case pb.PortNum_TRACEROUTE_APP:
-		rd := &pb.RouteDiscovery{}
-		if proto.Unmarshal(d.Payload, rd) == nil {
-			if d.RequestId != 0 {
-				return fmt.Sprintf("traceroute reply, %d hops out, %d back", len(rd.Route), len(rd.RouteBack))
-			}
-			return fmt.Sprintf("traceroute, %d hops so far", len(rd.Route))
-		}
+		return summarizeTraceroute(d)
 	}
 	return ""
+}
+
+// summarizeNodeInfo names the node a NodeInfo describes.
+func summarizeNodeInfo(d *pb.Data) string {
+	u := &pb.User{}
+	if proto.Unmarshal(d.Payload, u) != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s (%s) %s", u.LongName, u.ShortName, u.HwModel)
+}
+
+// summarizePosition gives a position's coordinates; one without any is a request.
+func summarizePosition(d *pb.Data) string {
+	pos := &pb.Position{}
+	if proto.Unmarshal(d.Payload, pos) == nil && (pos.GetLatitudeI() != 0 || pos.GetLongitudeI() != 0) {
+		return fmt.Sprintf("%.5f, %.5f", float64(pos.GetLatitudeI())/1e7, float64(pos.GetLongitudeI())/1e7)
+	}
+	return "position request"
+}
+
+// summarizeRouting describes an ACK or NAK.
+func summarizeRouting(d *pb.Data) string {
+	rt := &pb.Routing{}
+	if proto.Unmarshal(d.Payload, rt) != nil {
+		return ""
+	}
+	if rt.GetErrorReason() == pb.Routing_NONE {
+		return fmt.Sprintf("ACK for %08x", d.RequestId)
+	}
+	return fmt.Sprintf("NAK %s for %08x", rt.GetErrorReason(), d.RequestId)
+}
+
+// summarizeTelemetry gives the headline device or environment readings.
+func summarizeTelemetry(d *pb.Data) string {
+	t := &pb.Telemetry{}
+	if proto.Unmarshal(d.Payload, t) != nil {
+		return ""
+	}
+	if m := t.GetDeviceMetrics(); m != nil {
+		return fmt.Sprintf("battery %d%% %.2fV ch %.1f%% air %.1f%%", m.GetBatteryLevel(), m.GetVoltage(),
+			m.GetChannelUtilization(), m.GetAirUtilTx())
+	}
+	if m := t.GetEnvironmentMetrics(); m != nil {
+		return fmt.Sprintf("%.1f°C %.0f%% %.0fhPa", m.GetTemperature(), m.GetRelativeHumidity(), m.GetBarometricPressure())
+	}
+	return ""
+}
+
+// summarizeTraceroute counts a traceroute's hops so far.
+func summarizeTraceroute(d *pb.Data) string {
+	rd := &pb.RouteDiscovery{}
+	if proto.Unmarshal(d.Payload, rd) != nil {
+		return ""
+	}
+	if d.RequestId != 0 {
+		return fmt.Sprintf("traceroute reply, %d hops out, %d back", len(rd.Route), len(rd.RouteBack))
+	}
+	return fmt.Sprintf("traceroute, %d hops so far", len(rd.Route))
 }
 
 var protoJSON = protojson.MarshalOptions{UseProtoNames: true, EmitUnpopulated: false}

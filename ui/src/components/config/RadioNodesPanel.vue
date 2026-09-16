@@ -34,10 +34,16 @@ const relay = computed(() => identities.value.find((i) => i.is_relay))
 const others = computed(() => identities.value.filter((i) => !i.is_relay))
 const relayInstance = computed(() => instances.value.find((x) => x.role === 'persona'))
 
+/** Instance state as shown in the table: running, starting (launched but not yet connected) or stopped. */
+function instanceState(x: HostedInstance): string {
+  if (x.connected) return 'running'
+  return x.running ? 'starting' : 'stopped'
+}
+
 function runsOn(i: Identity) {
   const x = byNode.value.get(i.node_id)
   if (!x) return { text: 'meshtasticd', state: 'not started' }
-  return { text: `meshtasticd ${x.firmware || ''}`.trim(), state: x.connected ? 'running' : x.running ? 'starting' : 'stopped' }
+  return { text: `meshtasticd ${x.firmware || ''}`.trim(), state: instanceState(x) }
 }
 </script>
 

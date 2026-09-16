@@ -30,9 +30,9 @@ async function restart() {
 </script>
 
 <template>
-  <div v-if="reasons.length" class="mb-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-warn/30 bg-warn/10 px-4 py-2.5 text-[13px]" role="status">
+  <output v-if="reasons.length" class="mb-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-warn/30 bg-warn/10 px-4 py-2.5 text-[13px]">
     <TriangleAlert class="size-4 shrink-0 text-warn" />
     <span class="min-w-0 flex-1">Restart to apply saved changes: <span class="font-medium">{{ reasons.join(', ') }}</span>.</span>
     <button type="button" class="btn btn-sm" :disabled="restarting" @click="restart"><RotateCcw :class="['size-3.5', restarting && 'animate-spin']" />{{ restarting ? 'Restarting…' : 'Restart now' }}</button>
-  </div>
+  </output>
 </template>

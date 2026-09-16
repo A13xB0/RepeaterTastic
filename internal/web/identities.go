@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -106,11 +107,7 @@ func (s *Server) identityParam(w http.ResponseWriter, r *http.Request) *mesh.Ide
 
 func (s *Server) listIdentities(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
-	radios := []*radioCtx{s.radioFor(r)}
-	if r.URL.Query().Get("radio") == "all" {
-		radios = s.radios
-	}
-	for _, rc := range radios {
+	for _, rc := range s.radiosFor(r) {
 		for _, id := range rc.host.Identities() {
 			out = append(out, s.identityJSON(id))
 		}
@@ -194,7 +191,7 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 	rc := s.radioFor(r)
 	if req.RadioID != "" {
 		if rc = s.radioByID(req.RadioID); rc == nil {
-			writeError(w, http.StatusBadRequest, "no radio "+req.RadioID)
+			writeError(w, http.StatusBadRequest, noRadio+req.RadioID)
 			return
 		}
 	}
@@ -208,19 +205,10 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var id *mesh.Identity
-	for attempt := 0; attempt < 500; attempt++ {
-		id, err = mesh.NewIdentity(priv, req.LongName, req.ShortName)
-		if err != nil {
-			if priv != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			continue
-		}
-		if priv != nil || host.DB.LastByteCollision(id.NodeNum) == 0 {
-			break
-		}
+	id, err := newIdentityFor(s.lastByteTaken, priv, req.LongName, req.ShortName)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	// One key, one radio: the same node on two radios would answer twice and split its chats.
 	if other := s.radioHolding(id.NodeNum); other != nil {
@@ -230,34 +218,16 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 	if req.APIPort == 0 {
 		req.APIPort = s.nextFreePort()
 	}
-	for _, orc := range s.radios { // one host, one port space, whatever the radio
-		for _, other := range orc.host.Identities() {
-			if other.APIPort == req.APIPort && (other.APIBind == req.APIBind || other.APIBind == "" || req.APIBind == "") {
-				writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s", req.APIPort, other.NodeID()))
-				return
-			}
-		}
+	if other, _ := s.portUser(req.APIPort, req.APIBind, nil); other != nil {
+		writeError(w, http.StatusConflict, fmt.Sprintf("port %d is already used by %s", req.APIPort, other.NodeID()))
+		return
 	}
 	id.APIPort, id.APIBind, id.ShareLimitPct = req.APIPort, req.APIBind, req.ShareLimit
-	if err := id.SetMaxHops(req.HopLimit); err != nil {
+	if err := setNewIdentityNode(id, req.HopLimit, req.Role); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Only the relay persona repeats, so a new identity says so unless asked otherwise.
-	if req.Role == "" {
-		req.Role = pb.Config_DeviceConfig_CLIENT_MUTE.String()
-	}
-	if req.Role != "" {
-		if err := id.SetRole(req.Role); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
 	rec := id.Record()
-	if !nodes.IdentityRoleAllowed(id.UserCopy().GetRole()) {
-		writeError(w, http.StatusBadRequest, hostedRoleError)
-		return
-	}
 	id, err = host.AddRecord(r.Context(), rec)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
@@ -265,6 +235,57 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	s.saveIdentities()
 	writeJSON(w, http.StatusCreated, s.identityJSON(id))
+}
+
+// newIdentityFor makes an identity from priv, or with a fresh key whose last byte isn't taken
+// (so it can live on any radio of the site), giving up on that after 500 tries.
+func newIdentityFor(taken func(uint32) bool, priv []byte, long, short string) (*mesh.Identity, error) {
+	var id *mesh.Identity
+	var err error
+	for attempt := 0; attempt < 500; attempt++ {
+		id, err = mesh.NewIdentity(priv, long, short)
+		if err != nil {
+			if priv != nil {
+				return nil, err
+			}
+			continue
+		}
+		if priv != nil || !taken(id.NodeNum) {
+			break
+		}
+	}
+	return id, nil
+}
+
+// setNewIdentityNode sets a new identity's hop limit and role, and checks meshtasticd can host it.
+func setNewIdentityNode(id *mesh.Identity, hopLimit uint32, role string) error {
+	if err := id.SetMaxHops(hopLimit); err != nil {
+		return err
+	}
+	// Only the relay persona repeats, so a new identity says so unless asked otherwise.
+	if role == "" {
+		role = pb.Config_DeviceConfig_CLIENT_MUTE.String()
+	}
+	if err := id.SetRole(role); err != nil {
+		return err
+	}
+	if !nodes.IdentityRoleAllowed(id.UserCopy().GetRole()) {
+		return errors.New(hostedRoleError)
+	}
+	return nil
+}
+
+// portUser is the identity (and its radio) already serving the client API on port at an address
+// that overlaps bind ("" is every address), other than except; nil if the port is free.
+func (s *Server) portUser(port int, bind string, except *mesh.Identity) (*mesh.Identity, *radioCtx) {
+	for _, orc := range s.radios { // one host, one port space, whatever the radio
+		for _, other := range orc.host.Identities() {
+			if other != except && other.APIPort == port && (other.APIBind == bind || other.APIBind == "" || bind == "") {
+				return other, orc
+			}
+		}
+	}
+	return nil, nil
 }
 
 // hostedRoleError explains the roles an identity on meshtasticd can have.
@@ -297,7 +318,7 @@ func (s *Server) moveIdentity(w http.ResponseWriter, r *http.Request) {
 	from, to := s.radioFor(r), s.radioByID(req.RadioID)
 	switch {
 	case to == nil:
-		writeError(w, http.StatusBadRequest, "no radio "+req.RadioID)
+		writeError(w, http.StatusBadRequest, noRadio+req.RadioID)
 		return
 	case to == from:
 		writeJSON(w, http.StatusOK, s.identityJSON(id))
@@ -358,92 +379,173 @@ func (s *Server) saveIdentities() {
 	}
 }
 
+// identityPatch is PATCH /identities/{id}: only the fields sent change.
+type identityPatch struct {
+	LongName  *string         `json:"long_name"`
+	ShortName *string         `json:"short_name"`
+	Enabled   *bool           `json:"enabled"`
+	APIPort   *int            `json:"api_port"`
+	APIBind   *string         `json:"api_bind"`
+	Role      *string         `json:"role"`
+	Share     *float64        `json:"share_limit_pct"`
+	HopLimit  *uint32         `json:"hop_limit"`
+	Position  json.RawMessage `json:"position"` // {"latitude","longitude","altitude"} or null to remove
+	PosSecs   *uint32         `json:"position_secs"`
+}
+
 func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 	id := s.identityParam(w, r)
 	if id == nil {
 		return
 	}
-	var req struct {
-		LongName  *string         `json:"long_name"`
-		ShortName *string         `json:"short_name"`
-		Enabled   *bool           `json:"enabled"`
-		APIPort   *int            `json:"api_port"`
-		APIBind   *string         `json:"api_bind"`
-		Role      *string         `json:"role"`
-		Share     *float64        `json:"share_limit_pct"`
-		HopLimit  *uint32         `json:"hop_limit"`
-		Position  json.RawMessage `json:"position"` // {"latitude","longitude","altitude"} or null to remove
-		PosSecs   *uint32         `json:"position_secs"`
-	}
+	var req identityPatch
 	if !readJSON(w, r, &req) {
 		return
 	}
 	// Check everything first, so a request is applied completely or not at all.
-	bad := func(code int, msg string) { writeError(w, code, msg) }
-	if req.Role != nil && !id.IsRelay {
-		v, ok := pb.Config_DeviceConfig_Role_value[strings.ToUpper(*req.Role)]
-		if !ok {
-			bad(http.StatusBadRequest, fmt.Sprintf("unknown role %q", *req.Role))
-			return
-		}
-		if id.Hosted() && !nodes.IdentityRoleAllowed(pb.Config_DeviceConfig_Role(v)) {
-			bad(http.StatusBadRequest, hostedRoleError)
-			return
-		}
-	}
-	var pos *mesh.IdentityPosition
-	if len(req.Position) > 0 && string(req.Position) != "null" {
-		pos = &mesh.IdentityPosition{}
-		if err := json.Unmarshal(req.Position, pos); err != nil {
-			bad(http.StatusBadRequest, "position: "+err.Error())
-			return
-		}
-		if pos.Latitude < -90 || pos.Latitude > 90 || pos.Longitude < -180 || pos.Longitude > 180 || (pos.Latitude == 0 && pos.Longitude == 0) {
-			bad(http.StatusBadRequest, "position out of range")
-			return
-		}
-	}
-	if req.PosSecs != nil && *req.PosSecs != 0 && *req.PosSecs < 1800 {
-		bad(http.StatusBadRequest, "position_secs must be 0 (the radio's) or at least 1800")
+	pos, bind, err := s.checkIdentityPatch(id, &req)
+	if err != nil {
+		writeStatusError(w, http.StatusBadRequest, err)
 		return
 	}
-	if req.HopLimit != nil && *req.HopLimit > wire.HopMax {
-		bad(http.StatusBadRequest, fmt.Sprintf("hop_limit must be 0-%d", wire.HopMax))
+	if err := s.applyIdentityPatch(r, id, &req, pos, bind); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	if req.Share != nil && (*req.Share < 0 || *req.Share > 100) {
-		bad(http.StatusBadRequest, "share_limit_pct must be between 0 and 100")
-		return
+	writeJSON(w, http.StatusOK, s.identityJSON(id))
+}
+
+// checkIdentityPatch validates a patch, returning the position and API address it sets.
+func (s *Server) checkIdentityPatch(id *mesh.Identity, req *identityPatch) (*mesh.IdentityPosition, *string, error) {
+	if err := checkPatchRole(id, req.Role); err != nil {
+		return nil, nil, err
 	}
-	var bind *string
-	if req.APIBind != nil {
-		b := strings.TrimSpace(*req.APIBind)
-		if b != "" && net.ParseIP(b) == nil {
-			bad(http.StatusBadRequest, "api_bind must be an IP address such as 127.0.0.1, or empty for every interface")
-			return
-		}
-		bind = &b
+	pos, err := patchPosition(req.Position)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkPatchLimits(req); err != nil {
+		return nil, nil, err
+	}
+	bind, err := patchBind(req.APIBind)
+	if err != nil {
+		return nil, nil, err
 	}
 	if req.APIPort != nil && !id.IsRelay {
-		if *req.APIPort < 1 || *req.APIPort > 65535 {
-			bad(http.StatusBadRequest, "api_port must be 1-65535")
-			return
-		}
-		want := id.APIBind
-		if bind != nil {
-			want = *bind
-		}
-		for _, orc := range s.radios { // one host, one port space, whatever the radio
-			for _, other := range orc.host.Identities() {
-				if other != id && other.APIPort == *req.APIPort && (other.APIBind == want || other.APIBind == "" || want == "") {
-					bad(http.StatusConflict, fmt.Sprintf("port %d is already used by %s on %s", *req.APIPort, other.NodeID(), orc.name))
-					return
-				}
-			}
+		if err := s.checkPatchPort(id, *req.APIPort, bind); err != nil {
+			return nil, nil, err
 		}
 	}
+	return pos, bind, nil
+}
 
-	// Apply.
+// checkPatchRole checks a new role exists and, for a hosted identity, is one meshtasticd allows.
+// The relay persona's role isn't changed here, so it isn't checked.
+func checkPatchRole(id *mesh.Identity, role *string) error {
+	if role == nil || id.IsRelay {
+		return nil
+	}
+	v, ok := pb.Config_DeviceConfig_Role_value[strings.ToUpper(*role)]
+	if !ok {
+		return fmt.Errorf("unknown role %q", *role)
+	}
+	if id.Hosted() && !nodes.IdentityRoleAllowed(pb.Config_DeviceConfig_Role(v)) {
+		return errors.New(hostedRoleError)
+	}
+	return nil
+}
+
+// patchPosition decodes a fixed position; nil means none was sent or it's being removed.
+func patchPosition(raw json.RawMessage) (*mesh.IdentityPosition, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	pos := &mesh.IdentityPosition{}
+	if err := json.Unmarshal(raw, pos); err != nil {
+		return nil, errors.New("position: " + err.Error())
+	}
+	if pos.Latitude < -90 || pos.Latitude > 90 || pos.Longitude < -180 || pos.Longitude > 180 || (pos.Latitude == 0 && pos.Longitude == 0) {
+		return nil, errors.New("position out of range")
+	}
+	return pos, nil
+}
+
+// checkPatchLimits checks the position interval, hop limit and airtime share.
+func checkPatchLimits(req *identityPatch) error {
+	if req.PosSecs != nil && *req.PosSecs != 0 && *req.PosSecs < 1800 {
+		return errors.New("position_secs must be 0 (the radio's) or at least 1800")
+	}
+	if req.HopLimit != nil && *req.HopLimit > wire.HopMax {
+		return fmt.Errorf("hop_limit must be 0-%d", wire.HopMax)
+	}
+	if req.Share != nil && (*req.Share < 0 || *req.Share > 100) {
+		return errors.New("share_limit_pct must be between 0 and 100")
+	}
+	return nil
+}
+
+// patchBind trims and checks a client API address; nil means it wasn't sent.
+func patchBind(v *string) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	b := strings.TrimSpace(*v)
+	if b != "" && net.ParseIP(b) == nil {
+		return nil, errors.New("api_bind must be an IP address such as 127.0.0.1, or empty for every interface")
+	}
+	return &b, nil
+}
+
+// checkPatchPort checks a client API port is valid and free at the address the identity will use.
+func (s *Server) checkPatchPort(id *mesh.Identity, port int, bind *string) error {
+	if port < 1 || port > 65535 {
+		return errors.New("api_port must be 1-65535")
+	}
+	want := id.APIBind
+	if bind != nil {
+		want = *bind
+	}
+	if other, orc := s.portUser(port, want, id); other != nil {
+		return errStatus(http.StatusConflict, fmt.Sprintf("port %d is already used by %s on %s", port, other.NodeID(), orc.name))
+	}
+	return nil
+}
+
+// applyIdentityPatch applies a checked patch, saves it and passes it on to the identity's node.
+// An error means the node didn't take it.
+func (s *Server) applyIdentityPatch(r *http.Request, id *mesh.Identity, req *identityPatch, pos *mesh.IdentityPosition, bind *string) error {
+	s.applyPatchNode(id, req, pos)
+	long, short := derefOr(req.LongName), derefOr(req.ShortName)
+	renamed := long != "" || short != ""
+	id.SetOwner(long, short)
+	if renamed && id.Remote() != nil {
+		if err := pushOwner(r.Context(), id); err != nil {
+			return err
+		}
+	}
+	nodeSettings := req.Role != nil || req.Enabled != nil || req.HopLimit != nil || len(req.Position) > 0 || req.PosSecs != nil
+	applyPatchSettings(id, req, bind)
+	host := s.hostFor(r)
+	host.DB.Update(id.NodeNum, func(e *mesh.NodeEntry) { e.User = id.UserCopy() })
+	host.ChannelsChanged()
+	host.Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
+	s.saveIdentities()
+	if ca, ok := id.Remote().(mesh.ConfigApplier); ok && nodeSettings && id.Hosted() {
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		err := ca.ApplyConfig(ctx, host.Config())
+		cancel()
+		if err != nil {
+			return errors.New("saved here, but meshtasticd didn't take the settings: " + err.Error())
+		}
+	}
+	if renamed && id.Remote() == nil { // a node announces its new name itself
+		host.RequestNodeInfo(id, wire.Broadcast)
+	}
+	return nil
+}
+
+// applyPatchNode sets the node fields of a patch: role, fixed position and its interval, hop limit.
+func (s *Server) applyPatchNode(id *mesh.Identity, req *identityPatch, pos *mesh.IdentityPosition) {
 	if req.Role != nil && !id.IsRelay {
 		_ = id.SetRole(*req.Role)
 	}
@@ -457,21 +559,11 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 	if req.HopLimit != nil {
 		_ = id.SetMaxHops(*req.HopLimit)
 	}
-	long, short := "", ""
-	if req.LongName != nil {
-		long = *req.LongName
-	}
-	if req.ShortName != nil {
-		short = *req.ShortName
-	}
-	id.SetOwner(long, short)
-	if (long != "" || short != "") && id.Remote() != nil {
-		if err := pushOwner(r.Context(), id); err != nil {
-			bad(http.StatusBadGateway, err.Error())
-			return
-		}
-	}
-	nodeSettings := req.Role != nil || req.Enabled != nil || req.HopLimit != nil || len(req.Position) > 0 || req.PosSecs != nil
+}
+
+// applyPatchSettings sets the host-side settings of a patch; the relay persona is always enabled
+// and has no client API port.
+func applyPatchSettings(id *mesh.Identity, req *identityPatch, bind *string) {
 	id.SetSettings(func(x *mesh.IdentitySettings) {
 		if req.Enabled != nil && !id.IsRelay {
 			x.Enabled = *req.Enabled
@@ -486,23 +578,14 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 			x.ShareLimitPct = *req.Share
 		}
 	})
-	s.hostFor(r).DB.Update(id.NodeNum, func(e *mesh.NodeEntry) { e.User = id.UserCopy() })
-	s.hostFor(r).ChannelsChanged()
-	s.hostFor(r).Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
-	s.saveIdentities()
-	if ca, ok := id.Remote().(mesh.ConfigApplier); ok && nodeSettings && id.Hosted() {
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-		err := ca.ApplyConfig(ctx, s.hostFor(r).Config())
-		cancel()
-		if err != nil {
-			bad(http.StatusBadGateway, "saved here, but meshtasticd didn't take the settings: "+err.Error())
-			return
-		}
+}
+
+// derefOr is *p, or "" for nil.
+func derefOr(p *string) string {
+	if p == nil {
+		return ""
 	}
-	if (long != "" || short != "") && id.Remote() == nil { // a node announces its new name itself
-		s.hostFor(r).RequestNodeInfo(id, wire.Broadcast)
-	}
-	writeJSON(w, http.StatusOK, s.identityJSON(id))
+	return *p
 }
 
 func (s *Server) deleteIdentity(w http.ResponseWriter, r *http.Request) {
@@ -536,4 +619,20 @@ func identityPositionJSON(id *mesh.Identity) any {
 		return p
 	}
 	return nil
+}
+
+// lastByteTaken reports whether a node number's last byte is already used by an identity or a
+// heard node on any radio of the site.
+func (s *Server) lastByteTaken(num uint32) bool {
+	for _, rc := range s.radios {
+		if rc.host.DB.LastByteCollision(num) != 0 {
+			return true
+		}
+		for _, id := range rc.host.Identities() {
+			if wire.LastByte(id.NodeNum) == wire.LastByte(num) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -37,6 +38,11 @@ type Node struct {
 	seed      *mesh.IdentityRecord
 	seedTries int // key pushes that didn't take, in a row
 	pushTries int // settings pushes that failed, in a row
+	// lastPush and samePushes catch a node that comes back without the settings it was given;
+	// stuck says which (see repeating).
+	lastPush   string
+	samePushes int
+	stuck      string
 	// extra adds settings a node needs for its part (a board's MQTT proxy), in the same edit.
 	extra func(mtclient.Snapshot) []*pb.AdminMessage
 	// hopsBehind is how far the node is from the air (1 behind a board): its hop limit is that much
@@ -45,6 +51,9 @@ type Node struct {
 
 	// rebootWait is how long a settings change waits for the node to reboot before re-reading it.
 	rebootWait time.Duration
+	// committed is when settings were last committed (Unix ms): meshtasticd reboots to apply
+	// some, so an exit soon after is expected.
+	committed atomic.Int64
 	// editMu keeps settings changes one at a time: each reads the node, edits it and waits for it
 	// to come back before the next one looks.
 	editMu sync.Mutex
@@ -199,33 +208,7 @@ func (n *Node) configured(ctx context.Context) {
 	h, cur, seed := n.host, n.id, n.seed
 	n.mu.Unlock()
 	if !n.seeded(snap) {
-		// A fresh node (or one whose key was changed): give it the saved identity first. It comes
-		// back under the saved node number. Nothing it sends goes on air meanwhile.
-		n.mu.Lock()
-		n.seedTries++
-		tries := n.seedTries
-		n.mu.Unlock()
-		if tries > maxSeedTries {
-			if tries == maxSeedTries+1 {
-				n.logf("meshtasticd: ERROR node at %s won't keep %s's key after %d tries; it stays off air until restarted", n.addr, cur.NodeID(), maxSeedTries)
-			}
-			return
-		}
-		n.logf("meshtasticd: node at %s gets %s's key", n.addr, cur.NodeID())
-		go func() {
-			err := n.ApplyConfig(ctx, h.Config())
-			if err == nil || ctx.Err() != nil {
-				return
-			}
-			n.logf("meshtasticd: node at %s didn't take %s's key: %v; trying again", n.addr, cur.NodeID(), err)
-			select { // a node just started may not answer yet: try again on a fresh connection
-			case <-ctx.Done():
-			case <-time.After(n.rebootWait):
-				if !n.OnAir() {
-					n.client.Reconnect()
-				}
-			}
-		}()
+		n.giveKey(ctx, h, cur)
 		return
 	}
 	n.mu.Lock()
@@ -234,50 +217,14 @@ func (n *Node) configured(ctx context.Context) {
 	st := remoteState(snap)
 	n.saveState(st)
 	if cur.NodeNum != st.NodeNum {
-		var next *mesh.Identity
-		var err error
-		if seed != nil {
-			next, err = mesh.NewHostedIdentity(n, st, *seed)
-		} else {
-			next, err = mesh.NewRemoteIdentity(n, st)
-		}
-		if err == nil {
-			err = h.SwapRemote(cur, next)
-		}
-		if err != nil {
-			n.logf("meshtasticd: node is now %s but the identity couldn't follow: %v", wire.NodeID(st.NodeNum), err)
+		next, ok := n.follow(h, cur, seed, st)
+		if !ok {
 			return
 		}
-		n.logf("meshtasticd: node %s replaces %s", next.NodeID(), cur.NodeID())
-		n.mu.Lock()
-		n.id, cur = next, next
-		n.mu.Unlock()
+		cur = next
 	}
 	// Pushing may wait for a reboot; the event loop keeps delivering meanwhile.
-	go func(id string) {
-		err := n.ApplyConfig(ctx, h.Config())
-		n.mu.Lock()
-		if err == nil {
-			n.pushTries = 0
-		} else {
-			n.pushTries++
-		}
-		tries := n.pushTries
-		n.mu.Unlock()
-		if err == nil || ctx.Err() != nil {
-			return
-		}
-		if tries > maxSeedTries {
-			n.logf("meshtasticd: ERROR node %s didn't take the host's settings after %d tries: %v", id, maxSeedTries, err)
-			return
-		}
-		n.logf("meshtasticd: node %s didn't take the host's settings: %v; trying again", id, err)
-		select { // on a fresh connection: the node may have moved to a new number
-		case <-ctx.Done():
-		case <-time.After(n.rebootWait):
-			n.client.Reconnect()
-		}
-	}(cur.NodeID())
+	go n.pushSettings(ctx, h, cur.NodeID())
 	h.SyncRemote(cur, st)
 	if cur.Hosted() {
 		if err := h.SaveIdentities(); err != nil {
@@ -286,6 +233,89 @@ func (n *Node) configured(ctx context.Context) {
 	}
 	n.logf("meshtasticd: node %s %q on %s, firmware %s, %s %s", cur.NodeID(), st.User.GetLongName(), n.addr,
 		snap.Metadata.GetFirmwareVersion(), snap.Config.GetLora().GetRegion(), snap.Config.GetLora().GetModemPreset())
+}
+
+// giveKey gives a fresh node (or one whose key was changed) the saved identity first. It comes
+// back under the saved node number. Nothing it sends goes on air meanwhile.
+func (n *Node) giveKey(ctx context.Context, h *mesh.Host, cur *mesh.Identity) {
+	n.mu.Lock()
+	n.seedTries++
+	tries := n.seedTries
+	n.mu.Unlock()
+	if tries > maxSeedTries {
+		if tries == maxSeedTries+1 {
+			n.logf("meshtasticd: ERROR node at %s won't keep %s's key after %d tries; it stays off air until restarted", n.addr, cur.NodeID(), maxSeedTries)
+		}
+		return
+	}
+	n.logf("meshtasticd: node at %s gets %s's key", n.addr, cur.NodeID())
+	go n.applySeed(ctx, h, cur)
+}
+
+// applySeed pushes the saved identity, reconnecting to try again if the node doesn't take it.
+func (n *Node) applySeed(ctx context.Context, h *mesh.Host, cur *mesh.Identity) {
+	err := n.ApplyConfig(ctx, h.Config())
+	if err == nil || ctx.Err() != nil {
+		return
+	}
+	n.logf("meshtasticd: node at %s didn't take %s's key: %v; trying again", n.addr, cur.NodeID(), err)
+	select { // a node just started may not answer yet: try again on a fresh connection
+	case <-ctx.Done():
+	case <-time.After(n.rebootWait):
+		if !n.OnAir() {
+			n.client.Reconnect()
+		}
+	}
+}
+
+// follow moves the node's identity to the node number it now reports. It returns the new
+// identity, or false (having logged why) when the identity couldn't follow.
+func (n *Node) follow(h *mesh.Host, cur *mesh.Identity, seed *mesh.IdentityRecord, st mesh.RemoteState) (*mesh.Identity, bool) {
+	var next *mesh.Identity
+	var err error
+	if seed != nil {
+		next, err = mesh.NewHostedIdentity(n, st, *seed)
+	} else {
+		next, err = mesh.NewRemoteIdentity(n, st)
+	}
+	if err == nil {
+		err = h.SwapRemote(cur, next)
+	}
+	if err != nil {
+		n.logf("meshtasticd: node is now %s but the identity couldn't follow: %v", wire.NodeID(st.NodeNum), err)
+		return nil, false
+	}
+	n.logf("meshtasticd: node %s replaces %s", next.NodeID(), cur.NodeID())
+	n.mu.Lock()
+	n.id = next
+	n.mu.Unlock()
+	return next, true
+}
+
+// pushSettings applies the host's settings to node id, reconnecting to try again on failure.
+func (n *Node) pushSettings(ctx context.Context, h *mesh.Host, id string) {
+	err := n.ApplyConfig(ctx, h.Config())
+	n.mu.Lock()
+	if err == nil {
+		n.pushTries = 0
+	} else {
+		n.pushTries++
+	}
+	tries := n.pushTries
+	n.mu.Unlock()
+	if err == nil || ctx.Err() != nil {
+		return
+	}
+	if tries > maxSeedTries {
+		n.logf("meshtasticd: ERROR node %s didn't take the host's settings after %d tries: %v", id, maxSeedTries, err)
+		return
+	}
+	n.logf("meshtasticd: node %s didn't take the host's settings: %v; trying again", id, err)
+	select { // on a fresh connection: the node may have moved to a new number
+	case <-ctx.Done():
+	case <-time.After(n.rebootWait):
+		n.client.Reconnect()
+	}
 }
 
 // ------------------------------------------------------------------------------ mesh.Remote
@@ -401,9 +431,14 @@ func (n *Node) SetOwner(long, short string) {
 	n.mu.Unlock()
 }
 
+// discardLogf is the logger for callers that don't want one.
+func discardLogf(string, ...any) {
+	// Logging is optional: the message is dropped on purpose.
+}
+
 func newNode(addr, stateDir string, c *mtclient.Client, logf func(string, ...any)) *Node {
 	if logf == nil {
-		logf = func(string, ...any) {}
+		logf = discardLogf
 	}
 	return &Node{addr: addr, stateDir: stateDir, client: c, logf: logf, rebootWait: 8 * time.Second}
 }

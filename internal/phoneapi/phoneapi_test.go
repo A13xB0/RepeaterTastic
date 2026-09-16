@@ -122,7 +122,30 @@ func TestStreamHandshakeAdminAndSend(t *testing.T) {
 	// Clients often print debug text before framing; the reader must skip it.
 	_, _ = c.Write([]byte("hello\n"))
 	writeToRadio(t, c, &pb.ToRadio{PayloadVariant: &pb.ToRadio_WantConfigId{WantConfigId: 1234}})
+	expectHandshake(t, c, id, 1234)
 
+	// Admin get_owner to ourselves: the node answers.
+	adm, _ := proto.Marshal(&pb.AdminMessage{PayloadVariant: &pb.AdminMessage_GetOwnerRequest{GetOwnerRequest: true}})
+	writeToRadio(t, c, &pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: &pb.MeshPacket{To: id.NodeNum, Id: 77,
+		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_ADMIN_APP, Payload: adm, WantResponse: true}}}}})
+	if owner := awaitOwner(t, c, 77); owner.LongName != "Base Camp" {
+		t.Fatalf("owner %v", owner)
+	}
+
+	// A broadcast text gets a QueueStatus for its id.
+	writeToRadio(t, c, &pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: &pb.MeshPacket{To: wire.Broadcast, Id: 4242,
+		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_TEXT_MESSAGE_APP, Payload: []byte("hi")}}}}})
+	for {
+		fr := readFromRadio(t, c)
+		if qs := fr.GetQueueStatus(); qs != nil && qs.MeshPacketId == 4242 {
+			break
+		}
+	}
+}
+
+// expectHandshake reads a full config handshake for id and checks it carried everything an app needs.
+func expectHandshake(t *testing.T, c net.Conn, id *mesh.Identity, nonce uint32) {
+	t.Helper()
 	first := readFromRadio(t, c)
 	if first.GetMyInfo().GetMyNodeNum() != id.NodeNum {
 		t.Fatalf("first frame should be my_info for %08x, got %v", id.NodeNum, first)
@@ -143,9 +166,9 @@ func TestStreamHandshakeAdminAndSend(t *testing.T) {
 		case fr.GetNodeInfo().GetNum() == id.NodeNum:
 			sawOwn = fr.GetNodeInfo().GetUser().GetPublicKey() != nil
 		}
-		if fr.GetConfigCompleteId() != 0 {
-			if fr.GetConfigCompleteId() != 1234 {
-				t.Fatalf("config_complete_id %d", fr.GetConfigCompleteId())
+		if done := fr.GetConfigCompleteId(); done != 0 {
+			if done != nonce {
+				t.Fatalf("config_complete_id %d", done)
 			}
 			break
 		}
@@ -153,34 +176,23 @@ func TestStreamHandshakeAdminAndSend(t *testing.T) {
 	if channels != 8 || configs < 8 || modules < 10 || !sawMeta || !sawOwn {
 		t.Fatalf("handshake incomplete: channels=%d configs=%d modules=%d meta=%v own=%v", channels, configs, modules, sawMeta, sawOwn)
 	}
+}
 
-	// Admin get_owner to ourselves: the node answers.
-	adm, _ := proto.Marshal(&pb.AdminMessage{PayloadVariant: &pb.AdminMessage_GetOwnerRequest{GetOwnerRequest: true}})
-	writeToRadio(t, c, &pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: &pb.MeshPacket{To: id.NodeNum, Id: 77,
-		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_ADMIN_APP, Payload: adm, WantResponse: true}}}}})
-	var owner *pb.User
-	for owner == nil {
-		fr := readFromRadio(t, c)
-		if p := fr.GetPacket(); p != nil && p.GetDecoded().GetPortnum() == pb.PortNum_ADMIN_APP && p.GetDecoded().RequestId == 77 {
-			resp := &pb.AdminMessage{}
-			_ = proto.Unmarshal(p.GetDecoded().Payload, resp)
-			owner = resp.GetGetOwnerResponse()
-			if len(resp.SessionPasskey) != 8 {
-				t.Fatal("admin response without session passkey")
-			}
-		}
-	}
-	if owner.LongName != "Base Camp" {
-		t.Fatalf("owner %v", owner)
-	}
-
-	// A broadcast text gets a QueueStatus for its id.
-	writeToRadio(t, c, &pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: &pb.MeshPacket{To: wire.Broadcast, Id: 4242,
-		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_TEXT_MESSAGE_APP, Payload: []byte("hi")}}}}})
+// awaitOwner reads frames until the admin get_owner response to request reqID arrives.
+func awaitOwner(t *testing.T, c net.Conn, reqID uint32) *pb.User {
+	t.Helper()
 	for {
-		fr := readFromRadio(t, c)
-		if qs := fr.GetQueueStatus(); qs != nil && qs.MeshPacketId == 4242 {
-			break
+		p := readFromRadio(t, c).GetPacket()
+		if p == nil || p.GetDecoded().GetPortnum() != pb.PortNum_ADMIN_APP || p.GetDecoded().RequestId != reqID {
+			continue
+		}
+		resp := &pb.AdminMessage{}
+		_ = proto.Unmarshal(p.GetDecoded().Payload, resp)
+		if len(resp.SessionPasskey) != 8 {
+			t.Fatal("admin response without session passkey")
+		}
+		if owner := resp.GetGetOwnerResponse(); owner != nil {
+			return owner
 		}
 	}
 }

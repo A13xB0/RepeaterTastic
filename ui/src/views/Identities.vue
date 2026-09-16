@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // Identities: the Meshtastic counterpart of openHop's Companions view.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Import, KeyRound, Layers, MessagesSquare, Pencil, Plus, RotateCcw, Trash } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Identity } from '@/api/types'
-import { live, refreshAllIdentities, removeIdentity, upsertIdentity } from '@/store/live'
+import { live, refreshIdentities, removeIdentity, upsertIdentity } from '@/store/live'
 import { muted } from '@/lib/relay'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Toggle from '@/components/ui/Toggle.vue'
@@ -25,7 +25,7 @@ const channelsFor = ref<string | null>(null)
 
 // Every radio's identities in one table, by radio.
 const severalRadios = computed(() => live.radios.length > 1)
-const source = computed(() => (severalRadios.value ? live.allIdentities : live.identities))
+const source = computed(() => live.identities)
 const radioOrder = computed(() => new Map(live.radios.map((r, i) => [r.id, i])))
 const list = computed(() =>
   [...source.value].sort(
@@ -37,12 +37,15 @@ const list = computed(() =>
 )
 let allTimer: number | undefined
 onMounted(() => {
-  refreshAllIdentities()
-  allTimer = window.setInterval(() => severalRadios.value && refreshAllIdentities(), 10_000)
+  // App client counts change without an event: poll them.
+  allTimer = window.setInterval(() => refreshIdentities().catch(() => {}), 10_000)
 })
-watch(severalRadios, (on) => on && refreshAllIdentities())
 onBeforeUnmount(() => clearInterval(allTimer))
-const budgetMs = computed(() => ((live.status?.airtime.duty_limit_pct ?? 10) / 100) * (live.status?.airtime.window_s ?? 3600) * 1000)
+// An identity's slice is of its own radio's duty budget.
+function budgetMsOf(i: Identity) {
+  const st = live.statuses[i.radio_id ?? 'main'] ?? live.status
+  return ((st?.airtime.duty_limit_pct ?? 10) / 100) * (st?.airtime.window_s ?? 3600) * 1000
+}
 const totals = computed(() => ({
   apps: source.value.reduce((s, i) => s + (i.api?.clients ?? 0), 0),
   outbox: source.value.reduce((s, i) => s + i.outbox, 0),
@@ -51,9 +54,9 @@ const totals = computed(() => ({
 
 type State = { label: string; cls: string; title: string }
 function stateOf(i: Identity): State {
-  const budgetPct = (i.airtime_ms_1h / budgetMs.value) * 100
+  const budgetPct = (i.airtime_ms_1h / budgetMsOf(i)) * 100
   if (i.is_relay) {
-    const role = live.radios.find((r) => r.id === i.radio_id)?.relay.role ?? live.status?.relay.role
+    const role = live.statuses[i.radio_id ?? 'main']?.relay.role
     if (role === 'off') return { label: 'Radio off', cls: 'bg-bad/12 text-bad', title: 'The radio is off: nothing is received or sent' }
     if (role === 'monitor') return { label: 'Listening', cls: 'bg-info/12 text-info', title: 'Monitor mode: the radio only listens' }
     return muted(role)
@@ -70,7 +73,7 @@ function stateOf(i: Identity): State {
 }
 
 function budgetBar(i: Identity) {
-  const pct = (i.airtime_ms_1h / budgetMs.value) * 100
+  const pct = (i.airtime_ms_1h / budgetMsOf(i)) * 100
   const limit = i.is_relay ? 100 : (i.share_limit_pct ?? 100)
   return { width: Math.min(100, pct), limit: Math.min(100, limit), over: !i.is_relay && pct > limit, pct }
 }

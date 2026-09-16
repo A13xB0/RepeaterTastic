@@ -26,6 +26,8 @@ type fakeChip struct {
 	pktSNR   int8
 	txSwitch bool
 	answer   bool // false = a chip that isn't there (all zeros)
+	status   byte
+	devErrs  uint16
 }
 
 func newFakeChip() *fakeChip {
@@ -65,6 +67,10 @@ func (c *fakeChip) Transfer(tx []byte) ([]byte, error) {
 		rx[2], rx[3], rx[4] = c.pktRSSI, byte(c.pktSNR), 0
 	case cmdGetRssiInst:
 		rx[2] = 220 // -110 dBm
+	case cmdGetStatus:
+		rx[1] = c.status
+	case cmdGetDeviceErrors:
+		rx[2], rx[3] = byte(c.devErrs>>8), byte(c.devErrs)
 	case cmdSetStandby, cmdSetRx, cmdSetTx:
 		c.mode = tx[0]
 	}

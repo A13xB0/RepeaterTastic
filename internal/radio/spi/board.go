@@ -108,191 +108,267 @@ func ParseBoard(data []byte) (Board, error) {
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return Board{}, err
 	}
-	var doc struct {
-		Meta map[string]yaml.Node
-		Lora map[string]yaml.Node
-	}
-	section := func(top *yaml.Node, name string) map[string]yaml.Node {
-		for i := 0; i+1 < len(top.Content); i += 2 {
-			if top.Content[i].Value != name || top.Content[i+1].Kind != yaml.MappingNode {
-				continue
-			}
-			m := map[string]yaml.Node{}
-			body := top.Content[i+1].Content
-			for j := 0; j+1 < len(body); j += 2 {
-				if _, seen := m[body[j].Value]; !seen {
-					m[body[j].Value] = *body[j+1]
-				}
-			}
-			return m
-		}
-		return nil
-	}
+	var d boardDoc
 	if len(root.Content) == 1 && root.Content[0].Kind == yaml.MappingNode {
-		doc.Meta = section(root.Content[0], "Meta")
-		doc.Lora = section(root.Content[0], "Lora")
+		d.meta = yamlSection(root.Content[0], "Meta")
+		d.lora = yamlSection(root.Content[0], "Lora")
 	}
-	if doc.Lora == nil {
+	if d.lora == nil {
 		return Board{}, errors.New("no Lora section")
 	}
 	b := Board{SPIDev: "spidev0.0", SPISpeed: 2_000_000}
-	if n, ok := doc.Meta["name"]; ok {
-		b.Name = n.Value
+	d.parseMeta(&b)
+	// Each step fills in part of b; the order is the order errors are reported in.
+	for _, step := range []func(*Board) error{
+		d.parseModule, d.parseBus, d.parsePins, d.parseRF, d.parsePower, d.parseTxGain, d.parseRFSwitch,
+	} {
+		if err := step(&b); err != nil {
+			return Board{}, err
+		}
 	}
-	if n, ok := doc.Meta["compatible"]; ok && n.Kind == yaml.SequenceNode {
-		for _, item := range n.Content {
-			if v := strings.TrimSpace(item.Value); v != "" {
-				b.Hosts = append(b.Hosts, v)
+	return b, nil
+}
+
+// boardDoc is a board file's Meta and Lora sections, and the Lora gpiochip that bare pin numbers
+// are on.
+type boardDoc struct {
+	meta, lora  map[string]yaml.Node
+	defaultChip int
+}
+
+// yamlSection is the mapping under name in top, keeping the first of any repeated key.
+func yamlSection(top *yaml.Node, name string) map[string]yaml.Node {
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		if top.Content[i].Value != name || top.Content[i+1].Kind != yaml.MappingNode {
+			continue
+		}
+		m := map[string]yaml.Node{}
+		body := top.Content[i+1].Content
+		for j := 0; j+1 < len(body); j += 2 {
+			if _, seen := m[body[j].Value]; !seen {
+				m[body[j].Value] = *body[j+1]
 			}
 		}
+		return m
 	}
-	str := func(key string) string {
-		n, ok := doc.Lora[key]
-		if !ok {
-			return ""
-		}
-		return strings.TrimSpace(n.Value)
-	}
-	integer := func(key string, def int) (int, error) {
-		v := str(key)
-		if v == "" {
-			return def, nil
-		}
-		n, err := strconv.ParseInt(v, 0, 32) // USB_PID: 0x5512
-		if err != nil {
-			return 0, fmt.Errorf("%s: %q isn't a number", key, v)
-		}
-		return int(n), nil
-	}
+	return nil
+}
 
-	b.Module = strings.ToLower(str("Module"))
+// parseMeta reads the board's name and host list.
+func (d *boardDoc) parseMeta(b *Board) {
+	if n, ok := d.meta["name"]; ok {
+		b.Name = n.Value
+	}
+	n, ok := d.meta["compatible"]
+	if !ok || n.Kind != yaml.SequenceNode {
+		return
+	}
+	for _, item := range n.Content {
+		if v := strings.TrimSpace(item.Value); v != "" {
+			b.Hosts = append(b.Hosts, v)
+		}
+	}
+}
+
+// str is a Lora value, trimmed; "" when it's missing.
+func (d *boardDoc) str(key string) string {
+	n, ok := d.lora[key]
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(n.Value)
+}
+
+// integer is a Lora number in any Go base, or def when it's missing.
+func (d *boardDoc) integer(key string, def int) (int, error) {
+	v := d.str(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 0, 32) // USB_PID: 0x5512
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q isn't a number", key, v)
+	}
+	return int(n), nil
+}
+
+// parseModule checks Lora.Module is a chip this driver supports.
+func (d *boardDoc) parseModule(b *Board) error {
+	b.Module = strings.ToLower(d.str("Module"))
 	switch b.Module {
 	case ModuleSX1262, ModuleSX1268, ModuleLLCC68, ModuleRF95, ModuleSX1280, ModuleLR1110, ModuleLR1120, ModuleLR1121:
+		return nil
 	case "", "auto":
-		return Board{}, errAutoModule
+		return errAutoModule
 	case "sim":
-		return Board{}, errors.New("Lora.Module sim is meshtasticd's simulated radio, not hardware")
+		return errors.New("Lora.Module sim is meshtasticd's simulated radio, not hardware")
 	default:
-		return Board{}, fmt.Errorf("Lora.Module %s isn't supported (sx1262, sx1268, llcc68, RF95, sx1280, lr1110, lr1120, lr1121)", b.Module)
+		return fmt.Errorf("Lora.Module %s isn't supported (sx1262, sx1268, llcc68, RF95, sx1280, lr1110, lr1120, lr1121)", b.Module)
 	}
+}
 
-	if v := str("spidev"); v == "ch341" {
-		vid, err := integer("USB_VID", 0x1A86)
+// parseBus reads the spidev (or CH341 adapter), the bus speed and the default gpiochip.
+func (d *boardDoc) parseBus(b *Board) error {
+	if v := d.str("spidev"); v == "ch341" {
+		usb, err := d.parseUSB()
 		if err != nil {
-			return Board{}, err
+			return err
 		}
-		pid, err := integer("USB_PID", 0x5512)
-		if err != nil {
-			return Board{}, err
-		}
-		b.USB = &USBID{VID: uint16(vid), PID: uint16(pid), Serial: str("USB_Serialnum")}
+		b.USB = usb
 		b.SPIDev = ""
 	} else if v != "" {
 		b.SPIDev = v
 	}
-	speed, err := integer("spiSpeed", int(b.SPISpeed))
+	speed, err := d.integer("spiSpeed", int(b.SPISpeed))
 	if err != nil {
-		return Board{}, err
+		return err
 	}
 	b.SPISpeed = uint32(speed)
-	defaultChip, err := integer("gpiochip", 0)
-	if err != nil {
-		return Board{}, err
-	}
+	d.defaultChip, err = d.integer("gpiochip", 0)
+	return err
+}
 
-	nodePin := func(key string, n yaml.Node) (Pin, error) {
-		switch n.Kind {
-		case yaml.ScalarNode:
-			if n.Value == "" || strings.EqualFold(n.Value, "RADIOLIB_NC") {
-				return Pin{}, nil
-			}
-			line, err := strconv.Atoi(n.Value)
-			if err != nil {
-				return Pin{}, fmt.Errorf("%s: %q isn't a pin number", key, n.Value)
-			}
-			if line < 0 {
-				return Pin{}, nil
-			}
-			return Pin{Chip: defaultChip, Line: line, Set: true}, nil
-		case yaml.MappingNode:
-			var m struct {
-				Pin      *int `yaml:"pin"`
-				GPIOChip *int `yaml:"gpiochip"`
-				Line     *int `yaml:"line"`
-			}
-			if err := n.Decode(&m); err != nil {
-				return Pin{}, fmt.Errorf("%s: %w", key, err)
-			}
-			p := Pin{Chip: defaultChip, Set: true}
-			switch {
-			case m.Line != nil:
-				p.Line = *m.Line
-			case m.Pin != nil:
-				p.Line = *m.Pin
-			default:
-				return Pin{}, fmt.Errorf("%s: needs line or pin", key)
-			}
-			if m.GPIOChip != nil {
-				p.Chip = *m.GPIOChip
-			}
-			return p, nil
-		}
-		return Pin{}, fmt.Errorf("%s: unexpected value", key)
+// parseUSB reads a CH341 adapter's IDs, defaulting to the stock 1a86:5512.
+func (d *boardDoc) parseUSB() (*USBID, error) {
+	vid, err := d.integer("USB_VID", 0x1A86)
+	if err != nil {
+		return nil, err
 	}
-	pin := func(key string) (Pin, error) {
-		n, ok := doc.Lora[key]
-		if !ok {
-			return Pin{}, nil
-		}
-		return nodePin(key, n)
+	pid, err := d.integer("USB_PID", 0x5512)
+	if err != nil {
+		return nil, err
 	}
+	return &USBID{VID: uint16(vid), PID: uint16(pid), Serial: d.str("USB_Serialnum")}, nil
+}
+
+// nodePin reads a pin written as a line number or as {pin, gpiochip, line}.
+func (d *boardDoc) nodePin(key string, n yaml.Node) (Pin, error) {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return d.scalarPin(key, n.Value)
+	case yaml.MappingNode:
+		return d.mappingPin(key, n)
+	}
+	return Pin{}, fmt.Errorf("%s: unexpected value", key)
+}
+
+// scalarPin reads a bare line number on the default chip; RADIOLIB_NC or a negative number is not
+// connected.
+func (d *boardDoc) scalarPin(key, v string) (Pin, error) {
+	if v == "" || strings.EqualFold(v, "RADIOLIB_NC") {
+		return Pin{}, nil
+	}
+	line, err := strconv.Atoi(v)
+	if err != nil {
+		return Pin{}, fmt.Errorf("%s: %q isn't a pin number", key, v)
+	}
+	if line < 0 {
+		return Pin{}, nil
+	}
+	return Pin{Chip: d.defaultChip, Line: line, Set: true}, nil
+}
+
+// mappingPin reads {pin, gpiochip, line}, where line wins over pin.
+func (d *boardDoc) mappingPin(key string, n yaml.Node) (Pin, error) {
+	var m struct {
+		Pin      *int `yaml:"pin"`
+		GPIOChip *int `yaml:"gpiochip"`
+		Line     *int `yaml:"line"`
+	}
+	if err := n.Decode(&m); err != nil {
+		return Pin{}, fmt.Errorf("%s: %w", key, err)
+	}
+	p := Pin{Chip: d.defaultChip, Set: true}
+	switch {
+	case m.Line != nil:
+		p.Line = *m.Line
+	case m.Pin != nil:
+		p.Line = *m.Pin
+	default:
+		return Pin{}, fmt.Errorf("%s: needs line or pin", key)
+	}
+	if m.GPIOChip != nil {
+		p.Chip = *m.GPIOChip
+	}
+	return p, nil
+}
+
+// pin is the Lora pin under key; not connected when it's missing.
+func (d *boardDoc) pin(key string) (Pin, error) {
+	n, ok := d.lora[key]
+	if !ok {
+		return Pin{}, nil
+	}
+	return d.nodePin(key, n)
+}
+
+// parsePins reads the control lines and the pins held high while the radio is open.
+func (d *boardDoc) parsePins(b *Board) error {
 	for _, f := range []struct {
 		key string
 		dst *Pin
 	}{{"CS", &b.CS}, {"IRQ", &b.IRQ}, {"Busy", &b.Busy}, {"Reset", &b.Reset}, {"TXen", &b.TXen}, {"RXen", &b.RXen}} {
-		if *f.dst, err = pin(f.key); err != nil {
-			return Board{}, err
+		var err error
+		if *f.dst, err = d.pin(f.key); err != nil {
+			return err
 		}
 	}
-	if p, err := pin("SX126X_ANT_SW"); err != nil {
-		return Board{}, err
+	if p, err := d.pin("SX126X_ANT_SW"); err != nil {
+		return err
 	} else if p.Set {
 		b.High = append(b.High, p)
 	}
-	if n, ok := doc.Lora["Enable_Pins"]; ok {
-		if n.Kind != yaml.SequenceNode {
-			return Board{}, errors.New("Enable_Pins: want a list of pins")
-		}
-		for _, item := range n.Content {
-			p, err := nodePin("Enable_Pins", *item)
-			if err != nil {
-				return Board{}, err
-			}
-			if p.Set {
-				b.High = append(b.High, p)
-			}
-		}
+	if err := d.parseEnablePins(b); err != nil {
+		return err
 	}
 	if b.USB != nil && !b.CS.Set {
 		b.CS = Pin{Line: 0, Set: true} // CH341 D0, as meshtasticd's Ch341Hal
 	}
+	return nil
+}
 
-	if v := str("DIO2_AS_RF_SWITCH"); v != "" {
+// parseEnablePins adds Enable_Pins to the pins held high.
+func (d *boardDoc) parseEnablePins(b *Board) error {
+	n, ok := d.lora["Enable_Pins"]
+	if !ok {
+		return nil
+	}
+	if n.Kind != yaml.SequenceNode {
+		return errors.New("Enable_Pins: want a list of pins")
+	}
+	for _, item := range n.Content {
+		p, err := d.nodePin("Enable_Pins", *item)
+		if err != nil {
+			return err
+		}
+		if p.Set {
+			b.High = append(b.High, p)
+		}
+	}
+	return nil
+}
+
+// parseRF reads the SX126x DIO2 RF switch and DIO3 TCXO settings.
+func (d *boardDoc) parseRF(b *Board) error {
+	if v := d.str("DIO2_AS_RF_SWITCH"); v != "" {
 		b.DIO2RF = v == "true"
 	}
-	switch v := str("DIO3_TCXO_VOLTAGE"); v {
+	switch v := d.str("DIO3_TCXO_VOLTAGE"); v {
 	case "", "false":
 	case "true":
 		b.TCXOVolt = 1.8 // meshtasticd's default for "true"
 	default:
 		f, err := strconv.ParseFloat(v, 64)
 		if err != nil {
-			return Board{}, fmt.Errorf("DIO3_TCXO_VOLTAGE: %q", v)
+			return fmt.Errorf("DIO3_TCXO_VOLTAGE: %q", v)
 		}
 		b.TCXOVolt = f
 	}
+	return nil
+}
 
-	// Power limits, with meshtasticd's defaults (PortduinoGlue.h).
+// parsePower reads the power limits, with meshtasticd's defaults (PortduinoGlue.h).
+func (d *boardDoc) parsePower(b *Board) error {
 	powerKey, powerDef := "SX126X_MAX_POWER", 22
 	switch b.Module {
 	case ModuleRF95:
@@ -302,52 +378,64 @@ func ParseBoard(data []byte) (Board, error) {
 	case ModuleLR1110, ModuleLR1120, ModuleLR1121:
 		powerKey, powerDef = "LR1110_MAX_POWER", 22
 	}
-	if b.MaxPower, err = integer(powerKey, powerDef); err != nil {
-		return Board{}, err
+	var err error
+	if b.MaxPower, err = d.integer(powerKey, powerDef); err != nil {
+		return err
 	}
-	if b.MaxPowerHF, err = integer("LR1120_MAX_POWER", 13); err != nil {
-		return Board{}, err
-	}
-	if n, ok := doc.Lora["TX_GAIN_LORA"]; ok {
-		switch n.Kind {
-		case yaml.SequenceNode:
-			if err := n.Decode(&b.TxGain); err != nil {
-				return Board{}, fmt.Errorf("TX_GAIN_LORA: %w", err)
-			}
-		case yaml.ScalarNode:
-			g, err := strconv.Atoi(n.Value)
-			if err != nil {
-				return Board{}, fmt.Errorf("TX_GAIN_LORA: %q", n.Value)
-			}
-			b.TxGain = []int{g}
-		}
-	}
+	b.MaxPowerHF, err = d.integer("LR1120_MAX_POWER", 13)
+	return err
+}
 
-	if n, ok := doc.Lora["rfswitch_table"]; ok {
-		var raw map[string][]string
-		if err := n.Decode(&raw); err != nil {
-			return Board{}, fmt.Errorf("rfswitch_table: %w", err)
-		}
-		t := &RFSwitchTable{Pins: raw["pins"], Modes: map[string][]bool{}}
-		if len(t.Pins) > 5 {
-			return Board{}, errors.New("rfswitch_table: at most 5 pins")
-		}
-		for _, p := range t.Pins {
-			if lrDIOIndex(p) < 0 {
-				return Board{}, fmt.Errorf("rfswitch_table: pin %q (want DIO5, DIO6, DIO7, DIO8 or DIO10)", p)
-			}
-		}
-		for mode, levels := range raw {
-			if mode == "pins" {
-				continue
-			}
-			for _, l := range levels {
-				t.Modes[mode] = append(t.Modes[mode], strings.EqualFold(l, "HIGH"))
-			}
-		}
-		b.RFSwitch = t
+// parseTxGain reads TX_GAIN_LORA, one gain or a list.
+func (d *boardDoc) parseTxGain(b *Board) error {
+	n, ok := d.lora["TX_GAIN_LORA"]
+	if !ok {
+		return nil
 	}
-	return b, nil
+	switch n.Kind {
+	case yaml.SequenceNode:
+		if err := n.Decode(&b.TxGain); err != nil {
+			return fmt.Errorf("TX_GAIN_LORA: %w", err)
+		}
+	case yaml.ScalarNode:
+		g, err := strconv.Atoi(n.Value)
+		if err != nil {
+			return fmt.Errorf("TX_GAIN_LORA: %q", n.Value)
+		}
+		b.TxGain = []int{g}
+	}
+	return nil
+}
+
+// parseRFSwitch reads an LR11x0 rfswitch_table.
+func (d *boardDoc) parseRFSwitch(b *Board) error {
+	n, ok := d.lora["rfswitch_table"]
+	if !ok {
+		return nil
+	}
+	var raw map[string][]string
+	if err := n.Decode(&raw); err != nil {
+		return fmt.Errorf("rfswitch_table: %w", err)
+	}
+	t := &RFSwitchTable{Pins: raw["pins"], Modes: map[string][]bool{}}
+	if len(t.Pins) > 5 {
+		return errors.New("rfswitch_table: at most 5 pins")
+	}
+	for _, p := range t.Pins {
+		if lrDIOIndex(p) < 0 {
+			return fmt.Errorf("rfswitch_table: pin %q (want DIO5, DIO6, DIO7, DIO8 or DIO10)", p)
+		}
+	}
+	for mode, levels := range raw {
+		if mode == "pins" {
+			continue
+		}
+		for _, l := range levels {
+			t.Modes[mode] = append(t.Modes[mode], strings.EqualFold(l, "HIGH"))
+		}
+	}
+	b.RFSwitch = t
+	return nil
 }
 
 // ChipPower is the chip setting for power dBm at the antenna, following meshtasticd's

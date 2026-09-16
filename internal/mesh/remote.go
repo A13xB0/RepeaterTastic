@@ -125,30 +125,33 @@ func (h *Host) SyncRemote(id *Identity, st RemoteState) {
 		if n.User != nil {
 			h.DB.SetUser(n.GetNum(), n.User)
 		}
-		h.DB.Update(n.GetNum(), func(e *NodeEntry) {
-			if n.Position != nil && (n.Position.GetLatitudeI() != 0 || n.Position.GetLongitudeI() != 0) {
-				e.Position = proto.Clone(n.Position).(*pb.Position)
-			}
-			if n.DeviceMetrics != nil {
-				e.Metrics = proto.Clone(n.DeviceMetrics).(*pb.DeviceMetrics)
-			}
-			if n.LastHeard != 0 {
-				if t := time.Unix(int64(n.LastHeard), 0); t.After(e.LastHeard) {
-					e.LastHeard = t
-				}
-			}
-			e.SNR = n.Snr
-			if n.HopsAway != nil {
-				e.HopsAway = int(n.GetHopsAway())
-			}
-			e.ViaMQTT = n.ViaMqtt
-			e.Favorite = n.IsFavorite
-			e.Ignored = n.IsIgnored
-			e.Channel = n.Channel
-		})
+		h.DB.Update(n.GetNum(), func(e *NodeEntry) { applyRemoteNode(e, n) })
 	}
 	h.ChannelsChanged()
 	h.Bus.Publish(Event{Type: "identity", Data: id.NodeID()})
+}
+
+// applyRemoteNode copies what a real node knows about another node into its DB entry.
+func applyRemoteNode(e *NodeEntry, n *pb.NodeInfo) {
+	if n.Position != nil && (n.Position.GetLatitudeI() != 0 || n.Position.GetLongitudeI() != 0) {
+		e.Position = proto.Clone(n.Position).(*pb.Position)
+	}
+	if n.DeviceMetrics != nil {
+		e.Metrics = proto.Clone(n.DeviceMetrics).(*pb.DeviceMetrics)
+	}
+	if n.LastHeard != 0 {
+		if t := time.Unix(int64(n.LastHeard), 0); t.After(e.LastHeard) {
+			e.LastHeard = t
+		}
+	}
+	e.SNR = n.Snr
+	if n.HopsAway != nil {
+		e.HopsAway = int(n.GetHopsAway())
+	}
+	e.ViaMQTT = n.ViaMqtt
+	e.Favorite = n.IsFavorite
+	e.Ignored = n.IsIgnored
+	e.Channel = n.Channel
 }
 
 // sendRemote hands a packet to the node an identity stands for.
@@ -194,25 +197,13 @@ func (h *Host) RemoteReceived(id *Identity, p *pb.MeshPacket) {
 		}
 		return
 	}
-	var target *Identity
-	if p.To == id.NodeNum {
-		target = id
-	}
-	dec := decodeResult{ok: true, data: d, pki: p.PkiEncrypted, target: target,
-		deliveries: []delivery{{id: id, index: int(p.Channel)}}}
+	dec := remoteDecoded(id, p)
 	h.sniffContent(p, dec, now)
 	if d.Portnum == pb.PortNum_ROUTING_APP && d.RequestId != 0 && p.To == id.NodeNum {
 		h.routingResult(id, d)
 	}
 	if h.remoteOnly() { // with an air bridge the host logs the frame itself
-		rec := h.baseRecord(p, nil, "rx", "delivered")
-		rec.Size = 0
-		h.fillRecordFromDecoded(&rec, dec)
-		h.remoteChannel(&rec, id, p)
-		if p.From == id.NodeNum {
-			rec.Direction, rec.Kind = "local", "local" // the node talking to its own client
-		}
-		h.publishPacket(rec)
+		h.logRemoteRx(id, p, dec)
 	}
 
 	switch d.Portnum {
@@ -222,19 +213,53 @@ func (h *Host) RemoteReceived(id *Identity, p *pb.MeshPacket) {
 		}
 	case pb.PortNum_TRACEROUTE_APP:
 		if d.RequestId != 0 && p.To == id.NodeNum {
-			rd := &pb.RouteDiscovery{}
-			if proto.Unmarshal(d.Payload, rd) == nil {
-				h.Bus.Publish(Event{Type: "traceroute", Data: TracerouteResult{Identity: id.NodeID(), Target: wire.NodeID(p.From),
-					Route: nodeIDs(rd.Route), SNRTowards: snrs(rd.SnrTowards), RouteBack: nodeIDs(rd.RouteBack),
-					SNRBack: snrs(rd.SnrBack)}})
-			}
+			h.remoteTracerouteReply(id, p.From, d)
 		}
 	}
+	deliverRemote(id, p, now)
+}
+
+// remoteDecoded is the decode result for a decoded packet a real node received.
+func remoteDecoded(id *Identity, p *pb.MeshPacket) decodeResult {
+	var target *Identity
+	if p.To == id.NodeNum {
+		target = id
+	}
+	return decodeResult{ok: true, data: p.GetDecoded(), pki: p.PkiEncrypted, target: target,
+		deliveries: []delivery{{id: id, index: int(p.Channel)}}}
+}
+
+// deliverRemote passes a packet a real node received on to the identity's clients, stamped
+// with now if the node didn't give a receive time.
+func deliverRemote(id *Identity, p *pb.MeshPacket, now time.Time) {
 	dp := clonePacket(p)
 	if dp.RxTime == nil {
 		dp.RxTime = u32p(uint32(now.Unix()))
 	}
 	id.deliverToClients(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Packet{Packet: dp}}, keepOffline(dp))
+}
+
+// logRemoteRx adds a packet a real node received to the packet log.
+func (h *Host) logRemoteRx(id *Identity, p *pb.MeshPacket, dec decodeResult) {
+	rec := h.baseRecord(p, nil, "rx", "delivered")
+	rec.Size = 0
+	h.fillRecordFromDecoded(&rec, dec)
+	h.remoteChannel(&rec, id, p)
+	if p.From == id.NodeNum {
+		rec.Direction, rec.Kind = "local", "local" // the node talking to its own client
+	}
+	h.publishPacket(rec)
+}
+
+// remoteTracerouteReply publishes the route in a traceroute reply a real node received.
+func (h *Host) remoteTracerouteReply(id *Identity, from uint32, d *pb.Data) {
+	rd := &pb.RouteDiscovery{}
+	if proto.Unmarshal(d.Payload, rd) != nil {
+		return
+	}
+	h.Bus.Publish(Event{Type: "traceroute", Data: TracerouteResult{Identity: id.NodeID(), Target: wire.NodeID(from),
+		Route: nodeIDs(rd.Route), SNRTowards: snrs(rd.SnrTowards), RouteBack: nodeIDs(rd.RouteBack),
+		SNRBack: snrs(rd.SnrBack)}})
 }
 
 // remoteChannel names the channel of a decoded packet by the identity's channel index.

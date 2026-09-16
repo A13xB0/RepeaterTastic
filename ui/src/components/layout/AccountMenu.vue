@@ -57,8 +57,14 @@ function openPassword() {
 
 async function changePassword() {
   error.value = ''
-  if (pw.value.next.length < 8) return (error.value = 'The new password needs at least 8 characters.')
-  if (pw.value.next !== pw.value.repeat) return (error.value = "The new passwords don't match.")
+  if (pw.value.next.length < 8) {
+    error.value = 'The new password needs at least 8 characters.'
+    return
+  }
+  if (pw.value.next !== pw.value.repeat) {
+    error.value = "The new passwords don't match."
+    return
+  }
   busy.value = true
   try {
     const r = await api.put<{ token: string }>('/auth/password', { current: pw.value.current, new: pw.value.next })

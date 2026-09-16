@@ -3,6 +3,7 @@
 package web
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -53,8 +54,15 @@ func (s *Server) mqttLinksJSON(rc *radioCtx) []any {
 }
 
 func (s *Server) links(w http.ResponseWriter, r *http.Request) {
-	rc := s.radioFor(r)
-	writeJSON(w, http.StatusOK, append([]any{s.udpLinkJSON(rc)}, s.mqttLinksJSON(rc)...))
+	out := []any{}
+	for _, rc := range s.radiosFor(r) {
+		for _, l := range append([]any{s.udpLinkJSON(rc)}, s.mqttLinksJSON(rc)...) {
+			m := l.(map[string]any)
+			m["radio_id"], m["radio_name"] = rc.id, rc.name
+			out = append(out, m)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {
@@ -71,43 +79,58 @@ func (s *Server) patchLink(w http.ResponseWriter, r *http.Request) {
 	}
 	rc := s.radioFor(r)
 	if req.Group != nil {
-		g := strings.TrimSpace(*req.Group)
-		if g != "" {
-			host, port, err := net.SplitHostPort(g)
-			ip := net.ParseIP(host)
-			if err != nil || ip == nil || !ip.IsMulticast() || port == "" {
-				writeError(w, http.StatusBadRequest, "group must be a multicast address and port, e.g. 239.0.0.69:4403")
-				return
-			}
+		g, err := udpGroup(*req.Group)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 		req.Group = &g
 	}
-	s.cfgMu.Lock()
-	set := func(u *config.UDPMulticast) {
+	s.setUDPLink(rc, func(u *config.UDPMulticast) {
 		if req.Enabled != nil {
 			u.Enabled = *req.Enabled
 		}
 		if req.Group != nil {
 			u.Group = *req.Group
 		}
-	}
-	if rc == s.radios[0] {
-		set(&s.cfg.Links.UDPMulticast)
-	} else {
-		for i := range s.cfg.Radios { // the radio's entry in the file, and its live view
-			if s.cfg.Radios[i].ID == rc.id {
-				set(&s.cfg.Radios[i].Links.UDPMulticast)
-			}
-		}
-		if rc.cfg != nil {
-			set(&rc.cfg.Links.UDPMulticast)
-		}
-	}
-	s.cfgMu.Unlock()
+	})
 	if err := s.saveIfPath(); err != nil {
 		s.log.Warn("saving config", "err", err)
 	}
 	out := s.udpLinkJSON(rc)
 	out["restart_required"] = len(s.restartReasons()) > 0
 	writeJSON(w, http.StatusOK, out)
+}
+
+// udpGroup trims and checks a multicast group; blank means the default.
+func udpGroup(v string) (string, error) {
+	g := strings.TrimSpace(v)
+	if g == "" {
+		return g, nil
+	}
+	host, port, err := net.SplitHostPort(g)
+	ip := net.ParseIP(host)
+	if err != nil || ip == nil || !ip.IsMulticast() || port == "" {
+		return "", errors.New("group must be a multicast address and port, e.g. 239.0.0.69:4403")
+	}
+	return g, nil
+}
+
+// setUDPLink edits a radio's UDP link settings: the main config's, or an extra radio's entry in
+// the file and its live view.
+func (s *Server) setUDPLink(rc *radioCtx, set func(*config.UDPMulticast)) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	if rc == s.radios[0] {
+		set(&s.cfg.Links.UDPMulticast)
+		return
+	}
+	for i := range s.cfg.Radios {
+		if s.cfg.Radios[i].ID == rc.id {
+			set(&s.cfg.Radios[i].Links.UDPMulticast)
+		}
+	}
+	if rc.cfg != nil {
+		set(&rc.cfg.Links.UDPMulticast)
+	}
 }

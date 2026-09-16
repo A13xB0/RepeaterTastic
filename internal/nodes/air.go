@@ -67,7 +67,7 @@ const (
 // NewLoRaAir puts an air on h's radio.
 func NewLoRaAir(h *mesh.Host, logf func(string, ...any)) *LoRaAir {
 	if logf == nil {
-		logf = func(string, ...any) {}
+		logf = discardLogf
 	}
 	a := &LoRaAir{h: h, logf: logf, nodes: map[uint32]*airNode{}, joined: map[*Node]context.CancelFunc{},
 		recent: newCipherCache(1024)}
@@ -113,27 +113,11 @@ func (a *LoRaAir) serve(ctx context.Context, node *Node) {
 	events, stop := c.Subscribe(1024)
 	defer stop()
 	n := &airNode{node: node}
-	register := func() {
-		num := c.Snapshot().NodeNum()
-		a.mu.Lock()
-		if n.num != 0 && n.num != num {
-			delete(a.nodes, n.num)
-		}
-		n.num = num
-		a.nodes[num] = n
-		a.mu.Unlock()
-	}
 	if c.Snapshot().Connected {
-		register()
+		a.register(n)
 		go a.introduce(ctx, n)
 	}
-	defer func() {
-		a.mu.Lock()
-		if a.nodes[n.num] == n {
-			delete(a.nodes, n.num)
-		}
-		a.mu.Unlock()
-	}()
+	defer a.unregister(n)
 	for {
 		select {
 		case <-ctx.Done():
@@ -142,23 +126,47 @@ func (a *LoRaAir) serve(ctx context.Context, node *Node) {
 			if !ok {
 				return
 			}
-			switch e.Kind {
-			case mtclient.Configured:
-				register()
-				go a.introduce(ctx, n)
-			case mtclient.Received:
-				p := e.FromRadio.GetPacket()
-				// Every SIMULATOR_APP packet a node hands its client is a transmission (SimRadio's
-				// startSend). A relay keeps the RSSI and SNR it was heard with, so those say nothing.
-				if p.GetDecoded().GetPortnum() == pb.PortNum_SIMULATOR_APP {
-					if !node.OnAir() {
-						continue // not yet the node it stands for
-					}
-					if err := a.transmit(n, p); err != nil {
-						a.logf("air: %s: frame not sent: %v", wire.NodeID(n.num), err)
-					}
-				}
-			}
+			a.handleEvent(ctx, n, e)
+		}
+	}
+}
+
+// register files n under the node number its client now reports, dropping any old number.
+func (a *LoRaAir) register(n *airNode) {
+	num := n.node.client.Snapshot().NodeNum()
+	a.mu.Lock()
+	if n.num != 0 && n.num != num {
+		delete(a.nodes, n.num)
+	}
+	n.num = num
+	a.nodes[num] = n
+	a.mu.Unlock()
+}
+
+// unregister removes n, unless its number has since been taken by another node.
+func (a *LoRaAir) unregister(n *airNode) {
+	a.mu.Lock()
+	if a.nodes[n.num] == n {
+		delete(a.nodes, n.num)
+	}
+	a.mu.Unlock()
+}
+
+// handleEvent acts on one client event of a joined node.
+func (a *LoRaAir) handleEvent(ctx context.Context, n *airNode, e mtclient.Event) {
+	switch e.Kind {
+	case mtclient.Configured:
+		a.register(n)
+		go a.introduce(ctx, n)
+	case mtclient.Received:
+		p := e.FromRadio.GetPacket()
+		// Every SIMULATOR_APP packet a node hands its client is a transmission (SimRadio's
+		// startSend). A relay keeps the RSSI and SNR it was heard with, so those say nothing.
+		if p.GetDecoded().GetPortnum() != pb.PortNum_SIMULATOR_APP || !n.node.OnAir() {
+			return // not a transmission, or not yet the node it stands for
+		}
+		if err := a.transmit(n, p); err != nil {
+			a.logf("air: %s: frame not sent: %v", wire.NodeID(n.num), err)
 		}
 	}
 }

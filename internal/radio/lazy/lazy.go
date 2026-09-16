@@ -48,59 +48,77 @@ func (r *Radio) loop() {
 		driver, device := r.info.Driver, r.info.Device
 		r.mu.Unlock()
 		inner, err := r.open(r.ctx, driver, device)
+		var again bool
 		if err == nil {
-			r.mu.Lock()
-			cfg := r.cfg
-			r.opened++
-			reopened := r.opened > 1
-			r.mu.Unlock()
-			if cfg != nil {
-				if err := inner.Configure(r.ctx, *cfg); err != nil {
-					r.logf("radio reopened but not configured: %v", err)
-				}
-			}
-			if reopened {
-				r.logf("radio open again")
-			}
-			r.mu.Lock()
-			r.inner, r.lastErr = inner, nil
-			r.mu.Unlock()
-			for f := range inner.Frames() {
-				select {
-				case r.frames <- f:
-				default:
-				}
-			}
-			// The radio closed. On shutdown that's the end; otherwise it was lost: open it again.
-			r.mu.Lock()
-			r.inner = nil
-			r.mu.Unlock()
-			if r.ctx.Err() != nil {
-				return
-			}
-			_ = inner.Close()
-			r.logf("radio lost; opening it again")
-			select {
-			case <-r.ctx.Done():
-				return
-			case <-time.After(time.Second):
-			}
-			continue
+			again = r.serve(inner)
+		} else {
+			again = r.waitRetry(err)
 		}
-		r.mu.Lock()
-		first := r.lastErr == nil
-		r.lastErr = err
-		r.mu.Unlock()
-		if first {
-			r.logf("radio not available yet, retrying every %s: %v", r.every, err)
-		}
-		select {
-		case <-r.ctx.Done():
+		if !again {
 			return
-		case <-r.wake:
-		case <-time.After(r.every):
 		}
 	}
+}
+
+// serve configures a newly opened radio and forwards its frames until it closes. It returns false
+// on shutdown, true when the radio was lost and should be opened again.
+func (r *Radio) serve(inner radio.Radio) bool {
+	r.mu.Lock()
+	cfg := r.cfg
+	r.opened++
+	reopened := r.opened > 1
+	r.mu.Unlock()
+	if cfg != nil {
+		if err := inner.Configure(r.ctx, *cfg); err != nil {
+			r.logf("radio reopened but not configured: %v", err)
+		}
+	}
+	if reopened {
+		r.logf("radio open again")
+	}
+	r.mu.Lock()
+	r.inner, r.lastErr = inner, nil
+	r.mu.Unlock()
+	for f := range inner.Frames() {
+		select {
+		case r.frames <- f:
+		default:
+		}
+	}
+	// The radio closed. On shutdown that's the end; otherwise it was lost: open it again.
+	r.mu.Lock()
+	r.inner = nil
+	r.mu.Unlock()
+	if r.ctx.Err() != nil {
+		return false
+	}
+	_ = inner.Close()
+	r.logf("radio lost; opening it again")
+	select {
+	case <-r.ctx.Done():
+		return false
+	case <-time.After(time.Second):
+	}
+	return true
+}
+
+// waitRetry records why the radio didn't open, logging only the first failure, and waits for the
+// next try. It returns false on shutdown.
+func (r *Radio) waitRetry(err error) bool {
+	r.mu.Lock()
+	first := r.lastErr == nil
+	r.lastErr = err
+	r.mu.Unlock()
+	if first {
+		r.logf("radio not available yet, retrying every %s: %v", r.every, err)
+	}
+	select {
+	case <-r.ctx.Done():
+		return false
+	case <-r.wake:
+	case <-time.After(r.every):
+	}
+	return true
 }
 
 // Retarget switches to another driver or device while the radio still isn't open, and tries it at

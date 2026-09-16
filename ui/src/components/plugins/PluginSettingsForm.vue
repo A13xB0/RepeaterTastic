@@ -44,19 +44,25 @@ function reset() {
 }
 watch(() => props.plugin.id, reset, { immediate: true })
 
-const dirty = computed(() => {
-  for (const s of props.plugin.settings) {
-    if (isList(s.type)) {
-      const saved = Array.isArray(props.plugin.values[s.key]) ? (props.plugin.values[s.key] as string[]) : []
-      const now = form.value[s.key] as string[]
-      if (saved.length !== now.length || saved.some((v) => !now.includes(v))) return true
-      continue
-    }
-    const saved = s.type === 'secret' ? (props.plugin.secrets_set.includes(s.key) ? MASK : '') : (props.plugin.values[s.key] ?? (s.type === 'bool' ? false : ''))
-    if (form.value[s.key] !== saved) return true
-  }
-  return false
-})
+/** Whether a list-type setting differs from its saved value (order-independent). */
+function listDirty(s: Plugin['settings'][number]): boolean {
+  const saved = Array.isArray(props.plugin.values[s.key]) ? (props.plugin.values[s.key] as string[]) : []
+  const now = form.value[s.key] as string[]
+  return saved.length !== now.length || saved.some((v) => !now.includes(v))
+}
+
+/** The saved value for a scalar setting, as it would appear in the form (secrets shown as the mask). */
+function savedValue(s: Plugin['settings'][number]): unknown {
+  if (s.type === 'secret') return props.plugin.secrets_set.includes(s.key) ? MASK : ''
+  return props.plugin.values[s.key] ?? (s.type === 'bool' ? false : '')
+}
+
+function settingDirty(s: Plugin['settings'][number]): boolean {
+  if (isList(s.type)) return listDirty(s)
+  return form.value[s.key] !== savedValue(s)
+}
+
+const dirty = computed(() => props.plugin.settings.some(settingDirty))
 
 async function save() {
   saving.value = true

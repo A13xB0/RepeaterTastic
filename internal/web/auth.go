@@ -17,10 +17,11 @@ import (
 	"time"
 )
 
-const (
-	pbkdf2Iterations = 210_000
-	tokenLifetime    = 7 * 24 * time.Hour
-)
+const tokenLifetime = 7 * 24 * time.Hour
+
+// pbkdf2Iterations is the password hash's work factor for new passwords (a variable so tests can
+// hash faster; saved passwords keep the count they were hashed with).
+var pbkdf2Iterations = 210_000
 
 type apiToken struct {
 	ID       string `json:"id"`

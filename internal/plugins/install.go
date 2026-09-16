@@ -48,51 +48,68 @@ func unpack(r io.ReaderAt, size int64, parent string) (string, *Manifest, error)
 	}
 	var total int64
 	for _, f := range zr.File {
-		name := strings.TrimPrefix(f.Name, prefix)
-		if name == "" || strings.HasSuffix(f.Name, "/") {
-			continue
-		}
-		if !localPath(name) {
-			return fail(fmt.Errorf("unsafe path in bundle: %q", f.Name))
-		}
-		mode := f.Mode()
-		if !mode.IsRegular() {
-			return fail(fmt.Errorf("%s is not a regular file (links and devices aren't allowed)", f.Name))
-		}
-		total += int64(f.UncompressedSize64)
-		if total > maxUnpackedBytes || f.UncompressedSize64 > maxUnpackedBytes {
-			return fail(fmt.Errorf("the bundle unpacks to more than %d MB", maxUnpackedBytes>>20))
-		}
-		dst := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		if err := unpackFile(f, prefix, dir, &total); err != nil {
 			return fail(err)
 		}
-		perm := os.FileMode(0o644)
-		if mode.Perm()&0o111 != 0 {
-			perm = 0o755
-		}
-		if err := extract(f, dst, perm); err != nil {
-			return fail(fmt.Errorf("%s: %w", f.Name, err))
-		}
 	}
+	m, err := loadUnpacked(dir)
+	if err != nil {
+		return fail(err)
+	}
+	return dir, m, nil
+}
+
+// unpackFile extracts one bundle entry into dir, adding its size to total.
+func unpackFile(f *zip.File, prefix, dir string, total *int64) error {
+	name := strings.TrimPrefix(f.Name, prefix)
+	if name == "" || strings.HasSuffix(f.Name, "/") {
+		return nil
+	}
+	if !localPath(name) {
+		return fmt.Errorf("unsafe path in bundle: %q", f.Name)
+	}
+	mode := f.Mode()
+	if !mode.IsRegular() {
+		return fmt.Errorf("%s is not a regular file (links and devices aren't allowed)", f.Name)
+	}
+	*total += int64(f.UncompressedSize64)
+	if *total > maxUnpackedBytes || f.UncompressedSize64 > maxUnpackedBytes {
+		return fmt.Errorf("the bundle unpacks to more than %d MB", maxUnpackedBytes>>20)
+	}
+	dst := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	perm := os.FileMode(0o644)
+	if mode.Perm()&0o111 != 0 {
+		perm = 0o755
+	}
+	if err := extract(f, dst, perm); err != nil {
+		return fmt.Errorf("%s: %w", f.Name, err)
+	}
+	return nil
+}
+
+// loadUnpacked reads and checks the manifest of an unpacked bundle.
+func loadUnpacked(dir string) (*Manifest, error) {
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFile))
 	if err != nil {
-		return fail(fmt.Errorf("the bundle has no %s", ManifestFile))
+		return nil, fmt.Errorf("the bundle has no %s", ManifestFile)
 	}
 	m, err := ParseManifest(b)
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	if err := m.checkFiles(dir); err != nil {
-		return fail(err)
+		return nil, err
 	}
 	if exe, err := m.ExecPath(); err == nil {
 		// Zips made on Windows lose the executable bit.
 		if err := os.Chmod(filepath.Join(dir, filepath.FromSlash(exe)), 0o755); err != nil {
-			return fail(err)
+			return nil, err
 		}
 	}
-	return dir, m, nil
+	return m, nil
 }
 
 // bundlePrefix is "folder/" when every entry sits in one top-level folder holding plugin.yaml.
@@ -142,7 +159,7 @@ func extract(f *zip.File, dst string, perm os.FileMode) error {
 
 // Download fetches a bundle from an http(s) URL into a temporary file under dir.
 func Download(ctx context.Context, url, dir string) (*os.File, error) {
-	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+	if !isHTTPURL(url) {
 		return nil, errors.New("the URL must start with https:// or http://")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -176,6 +193,11 @@ func Download(ctx context.Context, url, dir string) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+// isHTTPURL reports whether s is an http(s) URL rather than a file path.
+func isHTTPURL(s string) bool {
+	return strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://")
 }
 
 // bundleName is a readable name for a download or upload, for logs.

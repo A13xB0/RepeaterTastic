@@ -203,7 +203,14 @@ func TestSupervisorRestarts(t *testing.T) {
 	if st.Connected || st.LastError != "exit status 1" || st.Launcher != "fake" || st.Port != 45999 {
 		t.Fatalf("status %+v", st)
 	}
-	eventually(t, "log tail", func() bool { return len(h.Status().Log) >= 3 })
+	eventually(t, "log tail", func() bool { return len(h.Log()) >= 3 })
+	if stops := h.Status().Stops; len(stops) == 0 || stops[0].Reboot || stops[0].Reason != "exit status 1" {
+		t.Fatalf("stops %+v", stops)
+	}
+
+	// A stop right after a settings commit is the reboot that applies them.
+	h.committed.Store(time.Now().UnixMilli())
+	eventually(t, "a reboot", func() bool { return h.Status().Reboots >= 1 })
 	mu.Lock()
 	defer mu.Unlock()
 	errs := 0
@@ -297,5 +304,28 @@ func TestClientBaseRelayFavorites(t *testing.T) {
 	}
 	if fake.Config().Device.Role != pb.Config_DeviceConfig_CLIENT_BASE {
 		t.Fatalf("role %v", fake.Config().Device.Role)
+	}
+}
+
+func TestSettingsTheNodeKeepsDropping(t *testing.T) {
+	n := newNode("fake", "", nil, testLogf(t))
+	lora := []*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_SetConfig{SetConfig: &pb.Config{
+		PayloadVariant: &pb.Config_Lora{Lora: &pb.Config_LoRaConfig{TxPower: 0}}}}}}
+	for i := 1; i <= maxSamePushes; i++ {
+		if n.repeating(lora) {
+			t.Fatalf("push %d held back", i)
+		}
+	}
+	if !n.repeating(lora) || n.SettingsProblem() != "doesn't keep Lora config" {
+		t.Fatalf("a push the node never keeps went out again: %q", n.SettingsProblem())
+	}
+	// Different settings go out again, and a node that has them all is fine.
+	other := []*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_SetOwner{SetOwner: &pb.User{LongName: "x"}}}}
+	if n.repeating(other) || n.SettingsProblem() != "" {
+		t.Fatal("new settings held back")
+	}
+	n.settled()
+	if n.SettingsProblem() != "" {
+		t.Fatal("problem left after settling")
 	}
 }

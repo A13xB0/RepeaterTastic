@@ -70,9 +70,77 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 		msgs = append(msgs, n.keyMsg(s))
 	}
 	if len(msgs) == 0 {
+		n.settled()
+		return nil
+	}
+	if !in.fresh && n.repeating(msgs) {
 		return nil
 	}
 	return n.edit(ctx, msgs, in.fresh)
+}
+
+// maxSamePushes is how often the same settings are pushed, the node coming back without them each
+// time, before RepeaterTastic stops: every push reboots the node.
+const maxSamePushes = 3
+
+// repeating reports whether msgs are settings the node has already been given maxSamePushes times
+// in a row without keeping them. It warns once and holds them back until the settings change.
+func (n *Node) repeating(msgs []*pb.AdminMessage) bool {
+	var key []byte
+	for _, m := range msgs {
+		b, _ := proto.MarshalOptions{Deterministic: true}.Marshal(m)
+		key = append(key, b...)
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if string(key) != n.lastPush {
+		n.lastPush, n.samePushes, n.stuck = string(key), 1, ""
+		return false
+	}
+	n.samePushes++
+	if n.samePushes <= maxSamePushes {
+		return false
+	}
+	if n.stuck == "" {
+		var names []string
+		for _, m := range msgs {
+			names = append(names, settingName(m))
+		}
+		n.stuck = "doesn't keep " + strings.Join(names, ", ")
+		n.logf("meshtasticd: ERROR node at %s %s after %d tries; not pushing them again until they change", n.addr, n.stuck, maxSamePushes)
+	}
+	return true
+}
+
+// settled notes that the node has every setting it should.
+func (n *Node) settled() {
+	n.mu.Lock()
+	n.lastPush, n.samePushes, n.stuck = "", 0, ""
+	n.mu.Unlock()
+}
+
+// SettingsProblem says which settings the node keeps not taking ("" when there are none).
+func (n *Node) SettingsProblem() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.stuck
+}
+
+// settingName names an admin message's setting for a log line.
+func settingName(m *pb.AdminMessage) string {
+	switch v := m.PayloadVariant.(type) {
+	case *pb.AdminMessage_SetConfig:
+		return strings.TrimPrefix(fmt.Sprintf("%T", v.SetConfig.GetPayloadVariant()), "*pb.Config_") + " config"
+	case *pb.AdminMessage_SetModuleConfig:
+		return strings.TrimPrefix(fmt.Sprintf("%T", v.SetModuleConfig.GetPayloadVariant()), "*pb.ModuleConfig_") + " module config"
+	case *pb.AdminMessage_SetChannel:
+		return fmt.Sprintf("channel %d", v.SetChannel.GetIndex())
+	case *pb.AdminMessage_SetOwner:
+		return "names"
+	case *pb.AdminMessage_SetFixedPosition, *pb.AdminMessage_RemoveFixedPosition:
+		return "position"
+	}
+	return strings.TrimPrefix(fmt.Sprintf("%T", m.PayloadVariant), "*pb.AdminMessage_")
 }
 
 // settingsInput is what one ApplyConfig works from.
@@ -106,6 +174,10 @@ func (in settingsInput) lora() *pb.Config_LoRaConfig {
 	lora.OverrideFrequency = float32(cfg.OverrideFreqMHz)
 	lora.FrequencyOffset = float32(cfg.FreqOffsetMHz)
 	lora.TxPower = int32(cfg.TxPowerDBm)
+	if in.host != nil {
+		// 0 means the region's limit: meshtasticd stores the number it picked, so send that.
+		lora.TxPower = int32(in.host.RadioParams().TxPowerDBm)
+	}
 	if cfg.HopLimit != 0 {
 		lora.HopLimit = cfg.HopLimit
 	}
@@ -332,6 +404,7 @@ func (n *Node) firstRegion(ctx context.Context, lora *pb.Config_LoRaConfig) erro
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		n.logf("meshtasticd: node at %s: first region: %v (the answer is expected to go missing)", n.addr, err)
 	}
+	n.committed.Store(time.Now().UnixMilli())
 	time.Sleep(time.Second) // let it save
 	n.client.Reconnect()
 	return nil
@@ -344,42 +417,68 @@ func (n *Node) edit(ctx context.Context, msgs []*pb.AdminMessage, rekey bool) er
 	defer stop()
 	all := append([]*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_BeginEditSettings{BeginEditSettings: true}}}, msgs...)
 	all = append(all, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_CommitEditSettings{CommitEditSettings: true}})
-	for i, m := range all {
-		if _, err := n.client.Admin(ctx, m); err != nil {
-			if i == len(all)-1 && (rekey || !n.client.Snapshot().Connected) {
-				break // the commit's ack was lost to the reboot (or the new number) it caused
-			}
-			return fmt.Errorf("meshtasticd refused the settings: %w", err)
-		}
+	if err := n.sendEdits(ctx, all, rekey); err != nil {
+		return err
 	}
-	// Some changes reboot the node; the client reconnects by itself. Otherwise re-read the config.
+	if err := n.awaitRestart(ctx, events); err != nil {
+		return err
+	}
+	n.awaitConfigured(ctx, events)
+	return nil
+}
+
+// sendEdits sends the wrapped admin messages in order; all's last message is the commit.
+func (n *Node) sendEdits(ctx context.Context, all []*pb.AdminMessage, rekey bool) error {
+	for i, m := range all {
+		last := i == len(all)-1
+		if last {
+			n.committed.Store(time.Now().UnixMilli())
+		}
+		_, err := n.client.Admin(ctx, m)
+		if err == nil {
+			continue
+		}
+		if last && (rekey || !n.client.Snapshot().Connected) {
+			return nil // the commit's ack was lost to the reboot (or the new number) it caused
+		}
+		return fmt.Errorf("meshtasticd refused the settings: %w", err)
+	}
+	return nil
+}
+
+// awaitRestart waits for the node to drop the connection after an edit. Some changes reboot the
+// node and the client reconnects by itself; otherwise it reconnects to re-read the config.
+func (n *Node) awaitRestart(ctx context.Context, events <-chan mtclient.Event) error {
 	timer := time.NewTimer(n.rebootWait)
 	defer timer.Stop()
-wait:
 	for {
 		select {
 		case e := <-events:
 			if e.Kind == mtclient.Disconnected {
-				break wait
+				return nil
 			}
 		case <-timer.C:
 			n.client.Reconnect()
-			break wait
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	// Hand back once the node has answered again, so the next change reads fresh settings.
+}
+
+// awaitConfigured hands back once the node has answered again, so the next change reads fresh
+// settings. If it takes too long it comes back on its own; the next change waits for it.
+func (n *Node) awaitConfigured(ctx context.Context, events <-chan mtclient.Event) {
 	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
 		select {
 		case e := <-events:
 			if e.Kind == mtclient.Configured {
-				return nil
+				return
 			}
 		case <-wctx.Done():
-			return nil // it comes back on its own; the next change waits for it
+			return
 		}
 	}
 }

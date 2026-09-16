@@ -167,12 +167,14 @@ func TestSX127x(t *testing.T) {
 // ------------------------------------------------------------------------------------ SX1280
 
 type sx1280Model struct {
-	regs  map[uint16]byte
-	buf   [256]byte
-	irq   uint16
-	mode  byte
-	cmds  map[byte][]byte
-	rxLen byte
+	regs   map[uint16]byte
+	buf    [256]byte
+	irq    uint16
+	mode   byte
+	cmds   map[byte][]byte
+	rxLen  byte
+	status byte
+	pkt    [2]byte // GetPacketStatus RSSI and SNR bytes; zero = -75 dBm, SNR 5
 }
 
 func (m *sx1280Model) xfer(tx []byte) []byte {
@@ -201,6 +203,11 @@ func (m *sx1280Model) xfer(tx []byte) []byte {
 		rx[2], rx[3] = m.rxLen, 0
 	case s8CmdGetPacketStatus:
 		rx[2], rx[3] = 150, 20 // -75 dBm, SNR 5
+		if m.pkt != [2]byte{} {
+			rx[2], rx[3] = m.pkt[0], m.pkt[1]
+		}
+	case s8CmdGetStatus:
+		rx[0] = m.status
 	case s8CmdSetStandby, s8CmdSetRx, s8CmdSetTx:
 		m.mode = tx[0]
 	}
@@ -254,6 +261,8 @@ type lr1121Model struct {
 	buf     []byte
 	mode    uint16
 	rx      []byte
+	version []byte // GetVersion reply; nil = an LR1121
+	errs    []byte // GetErrors reply; nil = none
 }
 
 func (m *lr1121Model) xfer(tx []byte) []byte {
@@ -273,8 +282,14 @@ func (m *lr1121Model) xfer(tx []byte) []byte {
 	switch op {
 	case lrCmdGetVersion:
 		m.pending = []byte{0x22, lrDeviceLR1121, 0x01, 0x03}
+		if m.version != nil {
+			m.pending = m.version
+		}
 	case lrCmdGetErrors:
 		m.pending = []byte{0, 0}
+		if m.errs != nil {
+			m.pending = m.errs
+		}
 	case lrCmdClearIrq:
 		v := uint32(args[0])<<24 | uint32(args[1])<<16 | uint32(args[2])<<8 | uint32(args[3])
 		m.irq &^= v

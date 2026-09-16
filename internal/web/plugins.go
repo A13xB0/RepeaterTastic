@@ -185,55 +185,17 @@ func (s *Server) installPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var f *os.File
+	var ok bool
 	source := "upload"
 	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if ct == "application/json" {
-		var req struct {
-			URL string `json:"url"`
-		}
-		if !readJSON(w, r, &req) {
-			return
-		}
-		s.cfgMu.Lock()
-		allowed := s.cfg.Plugins.AllowURLInstall
-		s.cfgMu.Unlock()
-		if !allowed {
-			writeError(w, http.StatusForbidden, "installing from a URL is turned off (plugins.allow_url_install)")
-			return
-		}
-		var err error
-		if f, err = plugins.Download(r.Context(), strings.TrimSpace(req.URL), m.InboxDir()+"/.tmp"); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+		f, ok = s.downloadBundle(w, r, m)
 		source = "url"
 	} else {
-		r.Body = http.MaxBytesReader(w, r.Body, plugins.MaxBundleBytes+1<<20)
-		file, _, err := r.FormFile("bundle")
-		if err != nil {
-			var tooBig *http.MaxBytesError
-			if errors.As(err, &tooBig) {
-				writeError(w, http.StatusRequestEntityTooLarge, "the bundle is larger than 100 MB")
-				return
-			}
-			writeError(w, http.StatusBadRequest, "send the plugin bundle as a multipart form field named bundle (up to 100 MB)")
-			return
-		}
-		defer file.Close()
-		if err := os.MkdirAll(m.InboxDir()+"/.tmp", 0o755); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if f, err = os.CreateTemp(m.InboxDir()+"/.tmp", "upload-*.zip"); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if _, err := io.Copy(f, file); err != nil {
-			f.Close()
-			os.Remove(f.Name())
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+		f, ok = uploadedBundle(w, r, m)
+	}
+	if !ok {
+		return
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
@@ -253,6 +215,63 @@ func (s *Server) installPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, s.pluginJSON(in))
+}
+
+// downloadBundle fetches the bundle at the URL in a JSON body into the inbox, if URL installs are
+// allowed. It writes the error itself and reports false on failure.
+func (s *Server) downloadBundle(w http.ResponseWriter, r *http.Request, m *plugins.Manager) (*os.File, bool) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if !readJSON(w, r, &req) {
+		return nil, false
+	}
+	s.cfgMu.Lock()
+	allowed := s.cfg.Plugins.AllowURLInstall
+	s.cfgMu.Unlock()
+	if !allowed {
+		writeError(w, http.StatusForbidden, "installing from a URL is turned off (plugins.allow_url_install)")
+		return nil, false
+	}
+	f, err := plugins.Download(r.Context(), strings.TrimSpace(req.URL), m.InboxDir()+"/.tmp")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return f, true
+}
+
+// uploadedBundle copies the multipart "bundle" field into a file in the inbox. It writes the error
+// itself and reports false on failure.
+func uploadedBundle(w http.ResponseWriter, r *http.Request, m *plugins.Manager) (*os.File, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, plugins.MaxBundleBytes+1<<20)
+	file, _, err := r.FormFile("bundle")
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, "the bundle is larger than 100 MB")
+			return nil, false
+		}
+		writeError(w, http.StatusBadRequest, "send the plugin bundle as a multipart form field named bundle (up to 100 MB)")
+		return nil, false
+	}
+	defer file.Close()
+	if err := os.MkdirAll(m.InboxDir()+"/.tmp", 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	f, err := os.CreateTemp(m.InboxDir()+"/.tmp", "upload-*.zip")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	if _, err := io.Copy(f, file); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return f, true
 }
 
 func (s *Server) attachPlugin(w http.ResponseWriter, r *http.Request) {
@@ -428,30 +447,11 @@ func (s *Server) pluginAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts allow-popups; default-src 'self' data: blob:; "+
 		"script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; frame-ancestors 'self'")
-	w.Header().Set("Cache-Control", "no-cache")
-	var dir, name string
-	if file == "logo" {
-		p, err := m.LogoPath(id)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		dir, name = filepath.Dir(p), filepath.Base(p)
-	} else {
-		rest, ok := strings.CutPrefix(file, "panel/")
-		if !ok && file != "panel" {
-			http.NotFound(w, r)
-			return
-		}
-		root, index, err := m.PanelRoot(id)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		if rest == "" {
-			rest = index
-		}
-		dir, name = root, strings.TrimPrefix(path.Clean("/"+rest), "/")
+	w.Header().Set(cacheControl, "no-cache")
+	dir, name, ok := pluginAssetFile(m, id, file)
+	if !ok {
+		http.NotFound(w, r)
+		return
 	}
 	// An os.Root keeps the file inside the plugin's folder whatever links it holds, and works
 	// when the plugins folder itself sits behind a link.
@@ -466,4 +466,28 @@ func (s *Server) pluginAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFileFS(w, r, root.FS(), name)
+}
+
+// pluginAssetFile finds a plugin's logo or a panel file: the folder to serve from and the name
+// inside it. It reports false if there's no such file.
+func pluginAssetFile(m *plugins.Manager, id, file string) (dir, name string, ok bool) {
+	if file == "logo" {
+		p, err := m.LogoPath(id)
+		if err != nil {
+			return "", "", false
+		}
+		return filepath.Dir(p), filepath.Base(p), true
+	}
+	rest, ok := strings.CutPrefix(file, "panel/")
+	if !ok && file != "panel" {
+		return "", "", false
+	}
+	root, index, err := m.PanelRoot(id)
+	if err != nil {
+		return "", "", false
+	}
+	if rest == "" {
+		rest = index
+	}
+	return root, strings.TrimPrefix(path.Clean("/"+rest), "/"), true
 }

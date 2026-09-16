@@ -8,7 +8,7 @@ import Drawer from '@/components/ui/Drawer.vue'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, nodeByLastByte, nodeLabel, on } from '@/store/live'
+import { live, nodeByLastByte, nodeLabel, on, radioName } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
@@ -218,7 +218,9 @@ const nextHop = computed(() => (node.value?.next_hop ? nodeByLastByte(node.value
         <h3 class="eyebrow mb-2">Actions</h3>
         <label class="label" for="nd-from">Send from</label>
         <select id="nd-from" v-model="from" class="input">
-          <option v-for="s in senders" :key="s.node_id" :value="s.node_id">{{ s.long_name }} ({{ s.node_id }}){{ s.is_relay ? ' · relay persona' : '' }}</option>
+          <option v-for="s in senders" :key="s.node_id" :value="s.node_id">
+            {{ s.long_name }} ({{ s.node_id }}){{ s.is_relay ? ' · relay persona' : '' }}{{ live.radios.length > 1 ? ` · ${s.radio_name ?? radioName(s.radio_id ?? 'main')}` : '' }}
+          </option>
         </select>
         <div class="mt-3 flex flex-wrap gap-2">
           <button type="button" class="btn btn-sm" :disabled="pending || !from" @click="traceroute"><Spinner v-if="pending" /><RouteIcon v-else class="size-3.5" />Traceroute</button>

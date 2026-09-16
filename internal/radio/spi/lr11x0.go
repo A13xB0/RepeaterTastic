@@ -91,6 +91,38 @@ func (l *lr11x0) init() error {
 	if err := l.waitBusy(time.Second); err != nil {
 		return fmt.Errorf("after reset: %w (check the Busy and Reset pins)", err)
 	}
+	if err := l.checkVersion(); err != nil {
+		return err
+	}
+	if err := l.write(lrCmdSetStandby, 0x00); err != nil {
+		return err
+	}
+	if err := l.setTCXO(); err != nil {
+		return err
+	}
+	if err := l.calibrate(); err != nil {
+		return err
+	}
+	if err := l.write(lrCmdSetPacketType, 0x02); err != nil { // LoRa
+		return err
+	}
+	if err := l.write(lrCmdSetRegMode, 0x01); err != nil { // DC-DC, as meshtasticd
+		return err
+	}
+	if t := l.board.RFSwitch; t != nil {
+		if err := l.write(lrCmdSetDioAsRfSwitch, lrRFSwitchArgs(t)...); err != nil {
+			return err
+		}
+	}
+	if err := l.write(lrCmdSetRxBoosted, 0x01); err != nil {
+		return err
+	}
+	mask := uint32(lrIrqTxDone | lrIrqRxDone | lrIrqPreamble | lrIrqHeaderValid | lrIrqHeaderErr | lrIrqCrcErr | lrIrqTimeout)
+	return l.write(lrCmdSetDioIrqParams, append(be32(mask), 0, 0, 0, 0)...)
+}
+
+// checkVersion reads the chip's version and fails unless it's running LR11x0 transceiver firmware.
+func (l *lr11x0) checkVersion() error {
 	v, err := l.read(lrCmdGetVersion, 4)
 	if err != nil {
 		return err
@@ -102,23 +134,31 @@ func (l *lr11x0) init() error {
 		if v[1] != want {
 			l.log("lr11x0: board says %s but the chip reports device 0x%02x", l.board.Module, v[1])
 		}
+		return nil
 	case lrDeviceBoot:
 		return fmt.Errorf("the LR11x0 is in its bootloader (no transceiver firmware): flash it with meshtasticd or Semtech's updater first")
 	default:
 		return fmt.Errorf("the chip didn't answer as an LR11x0 (version %x): check spidev, CS and wiring", v)
 	}
-	if err := l.write(lrCmdSetStandby, 0x00); err != nil {
-		return err
+}
+
+// setTCXO powers the board's TCXO, if it has one, clearing an HF XOSC start error from before.
+func (l *lr11x0) setTCXO() error {
+	if l.board.TCXOVolt <= 0 {
+		return nil
 	}
-	if l.board.TCXOVolt > 0 {
-		if e, err := l.read(lrCmdGetErrors, 2); err == nil && e[1]&0x20 != 0 { // HF XOSC start
-			_ = l.write(lrCmdClearErrors)
-		}
-		// 5 ms start-up in 30.52 µs steps, as RadioLib's default.
-		if err := l.write(lrCmdSetTcxoMode, tcxoCode(l.board.TCXOVolt), 0x00, 0x00, 163); err != nil {
-			return fmt.Errorf("TCXO: %w", err)
-		}
+	if e, err := l.read(lrCmdGetErrors, 2); err == nil && e[1]&0x20 != 0 { // HF XOSC start
+		_ = l.write(lrCmdClearErrors)
 	}
+	// 5 ms start-up in 30.52 µs steps, as RadioLib's default.
+	if err := l.write(lrCmdSetTcxoMode, tcxoCode(l.board.TCXOVolt), 0x00, 0x00, 163); err != nil {
+		return fmt.Errorf("TCXO: %w", err)
+	}
+	return nil
+}
+
+// calibrate sets the fallback mode, clears and masks the IRQs, then calibrates every block.
+func (l *lr11x0) calibrate() error {
 	steps := []struct {
 		op   uint16
 		args []byte
@@ -137,22 +177,7 @@ func (l *lr11x0) init() error {
 	if err := l.waitBusy(time.Second); err != nil {
 		return fmt.Errorf("calibrate: %w", err)
 	}
-	if err := l.write(lrCmdSetPacketType, 0x02); err != nil { // LoRa
-		return err
-	}
-	if err := l.write(lrCmdSetRegMode, 0x01); err != nil { // DC-DC, as meshtasticd
-		return err
-	}
-	if t := l.board.RFSwitch; t != nil {
-		if err := l.write(lrCmdSetDioAsRfSwitch, lrRFSwitchArgs(t)...); err != nil {
-			return err
-		}
-	}
-	if err := l.write(lrCmdSetRxBoosted, 0x01); err != nil {
-		return err
-	}
-	mask := uint32(lrIrqTxDone | lrIrqRxDone | lrIrqPreamble | lrIrqHeaderValid | lrIrqHeaderErr | lrIrqCrcErr | lrIrqTimeout)
-	return l.write(lrCmdSetDioIrqParams, append(be32(mask), 0, 0, 0, 0)...)
+	return nil
 }
 
 // lrDIOIndex is an rfswitch_table pin's bit: DIO5 = 0 … DIO8 = 3, DIO10 = 4.
@@ -201,35 +226,12 @@ func (l *lr11x0) powerRange(freqHz uint32) (int, int) {
 
 func (l *lr11x0) configure(c radio.Config, power int) error {
 	high := c.FrequencyHz > 1_000_000_000
-	if l.board.Module == ModuleLR1110 && high {
-		return fmt.Errorf("%w: the LR1110 has no 2.4 GHz radio", radio.ErrUnsupported)
+	bw, err := l.bandwidth(c)
+	if err != nil {
+		return err
 	}
-	mhz := float64(c.FrequencyHz) / 1e6
-	if !(mhz >= 150 && mhz <= 960) && !(mhz >= 1900 && mhz <= 2200) && !(mhz >= 2400 && mhz <= 2500) {
-		return fmt.Errorf("%w: %.3f MHz is outside the LR11x0's bands", radio.ErrUnsupported, mhz)
-	}
-	bw, ok := map[uint32]byte{62_500: 0x03, 125_000: 0x04, 250_000: 0x05, 500_000: 0x06}[c.BandwidthHz]
-	if high {
-		bw, ok = map[uint32]byte{203_125: 0x0D, 406_250: 0x0E, 812_500: 0x0F}[c.BandwidthHz]
-	}
-	if !ok {
-		return fmt.Errorf("%w: bandwidth %d Hz on LR11x0 at %.3f MHz", radio.ErrUnsupported, c.BandwidthHz, mhz)
-	}
-	if diff := int64(c.FrequencyHz) - int64(l.calFreq); l.calFreq == 0 || diff >= 20_000_000 || diff <= -20_000_000 {
-		// Image rejection calibration over ±4 MHz, in 4 MHz steps (RadioLib calibrateImageRejection).
-		lo, hi := math.Floor((mhz-4-1)/4), math.Ceil((mhz+4+1)/4)
-		if hi > 255 { // 2.4 GHz: the chip calibrates itself; the command takes sub-GHz steps only
-			lo, hi = 0, 0
-		}
-		if hi > 0 {
-			if err := l.write(lrCmdCalibImage, byte(lo), byte(hi)); err != nil {
-				return err
-			}
-			if err := l.waitBusy(time.Second); err != nil {
-				return fmt.Errorf("image calibration: %w", err)
-			}
-		}
-		l.calFreq = c.FrequencyHz
+	if err := l.calibrateImage(c.FrequencyHz); err != nil {
+		return err
 	}
 	if err := l.write(lrCmdSetRfFrequency, be32(c.FrequencyHz)...); err != nil {
 		return err
@@ -248,7 +250,57 @@ func (l *lr11x0) configure(c radio.Config, power int) error {
 	if err := l.write(lrCmdSetLoRaSyncWord, c.SyncWord); err != nil {
 		return err
 	}
-	// PA: the HF PA at 2.4 GHz; the high-power PA (from VBAT) above 14 dBm; otherwise low power.
+	return l.setPA(high, power)
+}
+
+// bandwidth checks c's frequency is in one of this chip's bands and returns its bandwidth code.
+func (l *lr11x0) bandwidth(c radio.Config) (byte, error) {
+	high := c.FrequencyHz > 1_000_000_000
+	if l.board.Module == ModuleLR1110 && high {
+		return 0, fmt.Errorf("%w: the LR1110 has no 2.4 GHz radio", radio.ErrUnsupported)
+	}
+	mhz := float64(c.FrequencyHz) / 1e6
+	if !(mhz >= 150 && mhz <= 960) && !(mhz >= 1900 && mhz <= 2200) && !(mhz >= 2400 && mhz <= 2500) {
+		return 0, fmt.Errorf("%w: %.3f MHz is outside the LR11x0's bands", radio.ErrUnsupported, mhz)
+	}
+	bw, ok := map[uint32]byte{62_500: 0x03, 125_000: 0x04, 250_000: 0x05, 500_000: 0x06}[c.BandwidthHz]
+	if high {
+		bw, ok = map[uint32]byte{203_125: 0x0D, 406_250: 0x0E, 812_500: 0x0F}[c.BandwidthHz]
+	}
+	if !ok {
+		return 0, fmt.Errorf("%w: bandwidth %d Hz on LR11x0 at %.3f MHz", radio.ErrUnsupported, c.BandwidthHz, mhz)
+	}
+	return bw, nil
+}
+
+// calibrateImage recalibrates image rejection when the frequency has moved 20 MHz or more since
+// the last calibration.
+func (l *lr11x0) calibrateImage(freqHz uint32) error {
+	diff := int64(freqHz) - int64(l.calFreq)
+	if l.calFreq != 0 && diff < 20_000_000 && diff > -20_000_000 {
+		return nil
+	}
+	// Image rejection calibration over ±4 MHz, in 4 MHz steps (RadioLib calibrateImageRejection).
+	mhz := float64(freqHz) / 1e6
+	lo, hi := math.Floor((mhz-4-1)/4), math.Ceil((mhz+4+1)/4)
+	if hi > 255 { // 2.4 GHz: the chip calibrates itself; the command takes sub-GHz steps only
+		lo, hi = 0, 0
+	}
+	if hi > 0 {
+		if err := l.write(lrCmdCalibImage, byte(lo), byte(hi)); err != nil {
+			return err
+		}
+		if err := l.waitBusy(time.Second); err != nil {
+			return fmt.Errorf("image calibration: %w", err)
+		}
+	}
+	l.calFreq = freqHz
+	return nil
+}
+
+// setPA picks the HF PA at 2.4 GHz, the high-power PA (from VBAT) above 14 dBm, otherwise the
+// low-power PA, and sets the power.
+func (l *lr11x0) setPA(high bool, power int) error {
 	paSel, supply := byte(0x00), byte(0x00)
 	switch {
 	case high:

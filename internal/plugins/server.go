@@ -63,45 +63,29 @@ func (s *session) close(reason string) {
 
 type ctxKey struct{}
 
+// Permission keys the Plugin API checks.
+const (
+	permPacketsRead    = "packets.read"
+	permNodesRead      = "nodes.read"
+	permMessagesRead   = "messages.read"
+	permMessagesSend   = "messages.send"
+	permTracerouteSend = "traceroute.send"
+)
+
 // serve listens on the Unix socket (and TCP, if configured) and serves the Plugin API.
 func (m *Manager) serve() (*grpc.Server, error) {
-	auth := func(ctx context.Context) (context.Context, error) {
-		md, _ := metadata.FromIncomingContext(ctx)
-		var tok string
-		if v := md.Get("authorization"); len(v) > 0 {
-			tok = strings.TrimPrefix(v[0], "Bearer ")
-		}
-		if tok == "" {
-			return nil, status.Error(codes.Unauthenticated, "missing plugin token")
-		}
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		for _, p := range m.plugins {
-			if (p.rec.Attached && tokenMatches(hashToken(tok), p.rec.TokenHash)) || (!p.rec.Attached && tokenMatches(tok, p.token)) {
-				return context.WithValue(ctx, ctxKey{}, p), nil
-			}
-		}
-		return nil, status.Error(codes.Unauthenticated, "unknown plugin token")
-	}
-	// A bug in a handler must not take the daemon (and its radios) down with it.
-	recovered := func(err *error) {
-		if v := recover(); v != nil {
-			m.log.Error("plugin API handler panicked", "panic", v)
-			*err = status.Error(codes.Internal, "internal error")
-		}
-	}
 	srv := grpc.NewServer(
 		grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
-			defer recovered(&err)
-			ctx, err = auth(ctx)
+			defer m.recoverHandler(&err)
+			ctx, err = m.authenticate(ctx)
 			if err != nil {
 				return nil, err
 			}
 			return h(ctx, req)
 		}),
 		grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, h grpc.StreamHandler) (err error) {
-			defer recovered(&err)
-			ctx, err := auth(ss.Context())
+			defer m.recoverHandler(&err)
+			ctx, err := m.authenticate(ss.Context())
 			if err != nil {
 				return err
 			}
@@ -125,18 +109,64 @@ func (m *Manager) serve() (*grpc.Server, error) {
 	_ = os.Chmod(sock, 0o600)
 	go func() { _ = srv.Serve(ul) }()
 	if addr := m.opt.Config.Listen; addr != "" {
-		tl, err := net.Listen("tcp", addr)
-		if err != nil {
+		if err := m.serveTCP(srv, addr); err != nil {
 			srv.Stop()
-			return nil, fmt.Errorf("plugins.listen %s: %w", addr, err)
+			return nil, err
 		}
-		m.mu.Lock()
-		m.listening = tl.Addr().String()
-		m.mu.Unlock()
-		m.log.Info("attached plugins can connect", "addr", tl.Addr().String())
-		go func() { _ = srv.Serve(tl) }()
 	}
 	return srv, nil
+}
+
+// serveTCP listens on addr for attached plugins.
+func (m *Manager) serveTCP(srv *grpc.Server, addr string) error {
+	tl, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("plugins.listen %s: %w", addr, err)
+	}
+	m.mu.Lock()
+	m.listening = tl.Addr().String()
+	m.mu.Unlock()
+	m.log.Info("attached plugins can connect", "addr", tl.Addr().String())
+	go func() { _ = srv.Serve(tl) }()
+	return nil
+}
+
+// authenticate finds the plugin the request's bearer token belongs to and adds it to ctx.
+func (m *Manager) authenticate(ctx context.Context) (context.Context, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	var tok string
+	if v := md.Get("authorization"); len(v) > 0 {
+		tok = strings.TrimPrefix(v[0], "Bearer ")
+	}
+	if tok == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing plugin token")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.plugins {
+		if p.hasToken(tok) {
+			return context.WithValue(ctx, ctxKey{}, p), nil
+		}
+	}
+	return nil, status.Error(codes.Unauthenticated, "unknown plugin token")
+}
+
+// hasToken reports whether tok is the plugin's token: the saved one for an attached plugin, the
+// current process's for a managed one.
+func (p *plugin) hasToken(tok string) bool {
+	if p.rec.Attached {
+		return tokenMatches(hashToken(tok), p.rec.TokenHash)
+	}
+	return tokenMatches(tok, p.token)
+}
+
+// recoverHandler turns a handler panic into an error: a bug in a handler must not take the daemon
+// (and its radios) down with it. Defer it directly.
+func (m *Manager) recoverHandler(err *error) {
+	if v := recover(); v != nil {
+		m.log.Error("plugin API handler panicked", "panic", v)
+		*err = status.Error(codes.Internal, "internal error")
+	}
 }
 
 type authedStream struct {
@@ -177,66 +207,14 @@ func (h *hostServer) Session(stream pluginv1.PluginHost_SessionServer) error {
 		return err
 	}
 	hello := first.GetHello()
-	switch {
-	case hello == nil:
-		return status.Error(codes.InvalidArgument, "the first message must be Hello")
-	case hello.PluginId != p.id:
-		return status.Errorf(codes.PermissionDenied, "this token belongs to %s, not %s", p.id, hello.PluginId)
-	case hello.ApiVersion != APIVersion:
-		return status.Errorf(codes.FailedPrecondition, "plugin speaks API %d; this RepeaterTastic speaks %d", hello.ApiVersion, APIVersion)
+	if err := checkHello(p, hello); err != nil {
+		return err
 	}
-
-	m.mu.Lock()
-	if p.rec.Attached && hello.ManifestYaml != "" && hello.ManifestYaml != p.rec.ManifestYAML {
-		man, err := ParseManifest([]byte(hello.ManifestYaml))
-		if err == nil && man.ID != p.id {
-			err = fmt.Errorf("its manifest id is %s", man.ID)
-		}
-		if err != nil {
-			m.mu.Unlock()
-			return status.Errorf(codes.InvalidArgument, "manifest: %v", err)
-		}
-		p.rec.ManifestYAML, p.manifest = hello.ManifestYaml, man
-		_ = m.saveLocked()
+	sess, granted, settings, err := m.openSession(p, hello)
+	if err != nil {
+		return err
 	}
-	if st, detail := p.blocker(); st != "" && !(st == "waiting" && p.rec.Attached) {
-		p.state, p.detail = st, detail
-		m.mu.Unlock()
-		m.notify(p.id)
-		return status.Errorf(codes.FailedPrecondition, "the plugin can't run: %s", strings.TrimSpace(st+" "+detail))
-	}
-	tok := ""
-	if !p.rec.Attached {
-		tok = p.token
-	}
-	sess := &session{token: tok, out: make(chan *pluginv1.HostMessage, 2048), done: make(chan struct{})}
-	old := p.sess
-	p.sess, p.connected, p.status, p.panel = sess, time.Now(), nil, ""
-	p.state, p.detail = "running", ""
-	_, granted, settings := p.effective()
-	m.mu.Unlock()
-	if old != nil {
-		old.close("replaced by a new session")
-	}
-	p.logs.add("info", "host", fmt.Sprintf("connected (%s %s)", p.id, hello.PluginVersion))
-	m.notify(p.id)
-
-	defer func() {
-		sess.close("stream ended")
-		m.mu.Lock()
-		if p.sess == sess {
-			p.sess = nil
-			if p.state == "running" {
-				p.state, p.detail = "starting", "Disconnected; waiting for the plugin to connect again"
-				if p.rec.Attached {
-					p.state = "waiting"
-				}
-			}
-		}
-		m.mu.Unlock()
-		p.logs.add("info", "host", "disconnected")
-		m.notify(p.id)
-	}()
+	defer m.endSession(p, sess)
 
 	welcome := &pluginv1.Welcome{ApiVersion: APIVersion, HostVersion: m.opt.Version, Permissions: granted,
 		SettingsJson: jsonString(settings), Radios: m.radiosProto()}
@@ -254,6 +232,92 @@ func (h *hostServer) Session(stream pluginv1.PluginHost_SessionServer) error {
 	}
 	recvErr := make(chan error, 1)
 	go func() { recvErr <- h.receive(stream, p) }()
+	return forward(stream, sess, recvErr)
+}
+
+// checkHello checks the plugin's Hello names this plugin and speaks our API.
+func checkHello(p *plugin, hello *pluginv1.Hello) error {
+	switch {
+	case hello == nil:
+		return status.Error(codes.InvalidArgument, "the first message must be Hello")
+	case hello.PluginId != p.id:
+		return status.Errorf(codes.PermissionDenied, "this token belongs to %s, not %s", p.id, hello.PluginId)
+	case hello.ApiVersion != APIVersion:
+		return status.Errorf(codes.FailedPrecondition, "plugin speaks API %d; this RepeaterTastic speaks %d", hello.ApiVersion, APIVersion)
+	}
+	return nil
+}
+
+// openSession makes a new session the plugin's current one, replacing any old one, once the
+// plugin is allowed to run. It returns the grants and settings the session starts with.
+func (m *Manager) openSession(p *plugin, hello *pluginv1.Hello) (sess *session, granted []string, settings map[string]any, err error) {
+	m.mu.Lock()
+	if err := m.updateManifestLocked(p, hello.ManifestYaml); err != nil {
+		m.mu.Unlock()
+		return nil, nil, nil, err
+	}
+	if st, detail := p.blocker(); st != "" && (st != "waiting" || !p.rec.Attached) {
+		p.state, p.detail = st, detail
+		m.mu.Unlock()
+		m.notify(p.id)
+		return nil, nil, nil, status.Errorf(codes.FailedPrecondition, "the plugin can't run: %s", strings.TrimSpace(st+" "+detail))
+	}
+	tok := ""
+	if !p.rec.Attached {
+		tok = p.token
+	}
+	sess = &session{token: tok, out: make(chan *pluginv1.HostMessage, 2048), done: make(chan struct{})}
+	old := p.sess
+	p.sess, p.connected, p.status, p.panel = sess, time.Now(), nil, ""
+	p.state, p.detail = "running", ""
+	_, granted, settings = p.effective()
+	m.mu.Unlock()
+	if old != nil {
+		old.close("replaced by a new session")
+	}
+	p.logs.add("info", "host", fmt.Sprintf("connected (%s %s)", p.id, hello.PluginVersion))
+	m.notify(p.id)
+	return sess, granted, settings, nil
+}
+
+// updateManifestLocked saves the manifest an attached plugin sent, if it changed.
+func (m *Manager) updateManifestLocked(p *plugin, manifestYAML string) error {
+	if !p.rec.Attached || manifestYAML == "" || manifestYAML == p.rec.ManifestYAML {
+		return nil
+	}
+	man, err := ParseManifest([]byte(manifestYAML))
+	if err == nil && man.ID != p.id {
+		err = fmt.Errorf("its manifest id is %s", man.ID)
+	}
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "manifest: %v", err)
+	}
+	p.rec.ManifestYAML, p.manifest = manifestYAML, man
+	_ = m.saveLocked()
+	return nil
+}
+
+// endSession closes sess and, if it's still the plugin's current one, shows the plugin as waiting
+// to reconnect.
+func (m *Manager) endSession(p *plugin, sess *session) {
+	sess.close("stream ended")
+	m.mu.Lock()
+	if p.sess == sess {
+		p.sess = nil
+		if p.state == "running" {
+			p.state, p.detail = "starting", "Disconnected; waiting for the plugin to connect again"
+			if p.rec.Attached {
+				p.state = "waiting"
+			}
+		}
+	}
+	m.mu.Unlock()
+	p.logs.add("info", "host", "disconnected")
+	m.notify(p.id)
+}
+
+// forward sends the session's messages to the plugin until the stream or the session ends.
+func forward(stream pluginv1.PluginHost_SessionServer, sess *session, recvErr <-chan error) error {
 	for {
 		select {
 		case msg := <-sess.out:
@@ -261,13 +325,7 @@ func (h *hostServer) Session(stream pluginv1.PluginHost_SessionServer) error {
 				return err
 			}
 			if msg.GetStop() != nil {
-				// Give the plugin a moment to close the stream itself.
-				select {
-				case err := <-recvErr:
-					return ignoreEOF(err)
-				case <-time.After(stopGrace):
-					return status.Error(codes.Unavailable, "stopped")
-				}
+				return awaitClose(recvErr)
 			}
 		case err := <-recvErr:
 			return ignoreEOF(err)
@@ -275,6 +333,16 @@ func (h *hostServer) Session(stream pluginv1.PluginHost_SessionServer) error {
 			reason, _ := sess.reason.Load().(string)
 			return status.Error(codes.Unavailable, reason)
 		}
+	}
+}
+
+// awaitClose gives a plugin that was asked to stop a moment to close the stream itself.
+func awaitClose(recvErr <-chan error) error {
+	select {
+	case err := <-recvErr:
+		return ignoreEOF(err)
+	case <-time.After(stopGrace):
+		return status.Error(codes.Unavailable, "stopped")
 	}
 }
 
@@ -342,7 +410,7 @@ func (m *Manager) tracesFor(p *plugin, r Radio, identity string) bool {
 
 func (m *Manager) pump(ctx context.Context, sess *session, p *plugin, r Radio, granted []string) {
 	has := func(perm string) bool { return slices.Contains(granted, perm) }
-	if !has("packets.read") && !has("nodes.read") && !has("messages.read") && !has("traceroute.send") {
+	if !has(permPacketsRead) && !has(permNodesRead) && !has(permMessagesRead) && !has(permTracerouteSend) {
 		return
 	}
 	events, unsubscribe := r.Host.Bus.Subscribe(512)
@@ -357,38 +425,63 @@ func (m *Manager) pump(ctx context.Context, sess *session, p *plugin, r Radio, g
 			if !ok {
 				return
 			}
-			var msg *pluginv1.HostMessage
-			switch e.Type {
-			case "packet":
-				if rec, ok := e.Data.(mesh.PacketRecord); ok && has("packets.read") {
-					msg = packetEvent(r, rec)
-				}
-			case "node":
-				if id, ok := e.Data.(string); ok && has("nodes.read") {
-					if num, err := wire.ParseNodeID(id); err == nil {
-						if n, ok := r.Host.DB.Get(num); ok {
-							msg = &pluginv1.HostMessage{Msg: &pluginv1.HostMessage_Node{Node: &pluginv1.NodeEvent{Node: nodeProto(r.ID, n)}}}
-						}
-					}
-				}
-			case "message":
-				if me, ok := e.Data.(mesh.MessageEvent); ok && has("messages.read") {
-					msg = textEvent(r, me)
-				}
-			case "traceroute":
-				if tr, ok := e.Data.(mesh.TracerouteResult); ok && (has("traceroute.send") || has("nodes.read")) {
-					if m.tracesFor(p, r, tr.Identity) {
-						msg = &pluginv1.HostMessage{Msg: &pluginv1.HostMessage_Traceroute{Traceroute: &pluginv1.TracerouteEvent{
-							RadioId: r.ID, IdentityNodeId: tr.Identity, TargetNodeId: tr.Target, Route: tr.Route,
-							SnrTowards: tr.SNRTowards, RouteBack: tr.RouteBack, SnrBack: tr.SNRBack}}}
-					}
-				}
-			}
-			if msg != nil {
+			if msg := m.eventMessage(p, r, e, has); msg != nil {
 				sess.send(msg)
 			}
 		}
 	}
+}
+
+// eventMessage is the message for a bus event, or nil when the plugin may not see it.
+func (m *Manager) eventMessage(p *plugin, r Radio, e mesh.Event, has func(string) bool) *pluginv1.HostMessage {
+	switch e.Type {
+	case "packet":
+		if rec, ok := e.Data.(mesh.PacketRecord); ok && has(permPacketsRead) {
+			return packetEvent(r, rec)
+		}
+	case "node":
+		if id, ok := e.Data.(string); ok && has(permNodesRead) {
+			return nodeEvent(r, id)
+		}
+	case "message":
+		if me, ok := e.Data.(mesh.MessageEvent); ok && has(permMessagesRead) {
+			return textEvent(r, me)
+		}
+	case "traceroute":
+		if tr, ok := e.Data.(mesh.TracerouteResult); ok && canSeeTraceroutes(has) {
+			return m.tracerouteEvent(p, r, tr)
+		}
+	}
+	return nil
+}
+
+// canSeeTraceroutes reports whether a plugin with these grants may see traceroute results.
+func canSeeTraceroutes(has func(string) bool) bool {
+	return has(permTracerouteSend) || has(permNodesRead)
+}
+
+// nodeEvent is the message for a node database change, or nil if the node isn't there.
+func nodeEvent(r Radio, id string) *pluginv1.HostMessage {
+	num, err := wire.ParseNodeID(id)
+	if err != nil {
+		return nil
+	}
+	n, ok := r.Host.DB.Get(num)
+	if !ok {
+		return nil
+	}
+	return &pluginv1.HostMessage{Msg: &pluginv1.HostMessage_Node{Node: &pluginv1.NodeEvent{Node: nodeProto(r.ID, n)}}}
+}
+
+// tracerouteEvent is the message for a traceroute result, or nil if it's not from an identity the
+// plugin sends from.
+func (m *Manager) tracerouteEvent(p *plugin, r Radio, tr mesh.TracerouteResult) *pluginv1.HostMessage {
+	if !m.tracesFor(p, r, tr.Identity) {
+		return nil
+	}
+	return &pluginv1.HostMessage{Msg: &pluginv1.HostMessage_Traceroute{Traceroute: &pluginv1.TracerouteEvent{
+		RadioId: r.ID, IdentityNodeId: tr.Identity, TargetNodeId: tr.Target, Route: tr.Route,
+		SnrTowards: tr.SNRTowards, RouteBack: tr.RouteBack, SnrBack: tr.SNRBack}}}
 }
 
 func (h *hostServer) ListRadios(ctx context.Context, _ *pluginv1.ListRadiosRequest) (*pluginv1.ListRadiosResponse, error) {
@@ -399,7 +492,7 @@ func (h *hostServer) ListRadios(ctx context.Context, _ *pluginv1.ListRadiosReque
 }
 
 func (h *hostServer) ListNodes(ctx context.Context, req *pluginv1.ListNodesRequest) (*pluginv1.ListNodesResponse, error) {
-	if _, err := h.granted(ctx, "nodes.read"); err != nil {
+	if _, err := h.granted(ctx, permNodesRead); err != nil {
 		return nil, err
 	}
 	out := &pluginv1.ListNodesResponse{}
@@ -415,7 +508,7 @@ func (h *hostServer) ListNodes(ctx context.Context, req *pluginv1.ListNodesReque
 }
 
 func (h *hostServer) SendText(ctx context.Context, req *pluginv1.SendTextRequest) (*pluginv1.SendResponse, error) {
-	p, err := h.granted(ctx, "messages.send")
+	p, err := h.granted(ctx, permMessagesSend)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +526,7 @@ func (h *hostServer) SendText(ctx context.Context, req *pluginv1.SendTextRequest
 		return nil, status.Error(codes.InvalidArgument, "text must be 1-200 bytes")
 	}
 	if !r.Host.Transmits() {
-		return nil, status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
+		return nil, notTransmitting(r)
 	}
 	if ok, wait := p.msgBudget.take(); !ok {
 		return nil, budgetError("messages", p.msgBudget.rate(), wait)
@@ -442,7 +535,7 @@ func (h *hostServer) SendText(ctx context.Context, req *pluginv1.SendTextRequest
 	pid, err := r.Host.SendText(relay, to, int(req.Channel), req.Text, req.WantAck)
 	if errors.Is(err, mesh.ErrNotTransmitting) {
 		p.msgBudget.refund()
-		return nil, status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
+		return nil, notTransmitting(r)
 	}
 	if err != nil {
 		if pid == 0 {
@@ -455,7 +548,7 @@ func (h *hostServer) SendText(ctx context.Context, req *pluginv1.SendTextRequest
 }
 
 func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteRequest) (*pluginv1.SendResponse, error) {
-	p, err := h.granted(ctx, "traceroute.send")
+	p, err := h.granted(ctx, permTracerouteSend)
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +585,7 @@ func (h *hostServer) Traceroute(ctx context.Context, req *pluginv1.TracerouteReq
 		from = r.Host.Identity(num)
 	}
 	if !r.Host.Transmits() {
-		return nil, status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
+		return nil, notTransmitting(r)
 	}
 	if ok, wait := p.trBudget.take(); !ok {
 		return nil, budgetError("traceroutes", p.trBudget.rate(), wait)
@@ -512,18 +605,7 @@ func chosenIdentities(schema []Setting, settings map[string]any, host *mesh.Host
 		if s.Type != "identities" {
 			continue
 		}
-		var ids []string
-		switch v := settings[s.Key].(type) {
-		case []string:
-			ids = v
-		case []any:
-			for _, x := range v {
-				if str, ok := x.(string); ok {
-					ids = append(ids, str)
-				}
-			}
-		}
-		for _, str := range ids {
+		for _, str := range settingNames(settings[s.Key]) {
 			num, err := wire.ParseNodeID(str)
 			if err != nil {
 				continue
@@ -534,6 +616,29 @@ func chosenIdentities(schema []Setting, settings map[string]any, host *mesh.Host
 		}
 	}
 	return out
+}
+
+// settingNames is a list setting's value as names, whether it was saved as []string or read back
+// from JSON as []any.
+func settingNames(v any) []string {
+	switch v := v.(type) {
+	case []string:
+		return v
+	case []any:
+		var names []string
+		for _, x := range v {
+			if str, ok := x.(string); ok {
+				names = append(names, str)
+			}
+		}
+		return names
+	}
+	return nil
+}
+
+// notTransmitting is the error for a send on a radio that's in monitor mode or off.
+func notTransmitting(r *Radio) error {
+	return status.Errorf(codes.FailedPrecondition, "%s isn't transmitting (monitor or off)", r.ID)
 }
 
 func budgetError(what string, perHour int, wait time.Duration) error {

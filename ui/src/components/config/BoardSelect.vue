@@ -9,7 +9,13 @@ const device = defineModel<string>({ required: true })
 
 const CUSTOM = '__custom__'
 const known = (v: string) => props.boards.some((b) => b.id === v)
-const choice = ref(!device.value ? 'auto' : known(device.value) ? device.value : CUSTOM)
+
+/** The initial select value for a device: auto if unset, the board id if known, else the custom slot. */
+function initialChoice(v: string): string {
+  if (!v) return 'auto'
+  return known(v) ? v : CUSTOM
+}
+const choice = ref(initialChoice(device.value))
 const custom = ref(choice.value === CUSTOM ? device.value : '')
 
 watch(device, (v) => {
@@ -34,7 +40,10 @@ const groups = computed(() => {
     const host = b.source === 'built-in' ? b.host || 'Other' : 'On this machine (/etc/meshtasticd)'
     byHost.set(host, [...(byHost.get(host) ?? []), b])
   }
-  const rank = (h: string) => (h.startsWith('On this') ? -1 : order.indexOf(h) === -1 ? order.length : order.indexOf(h))
+  const rank = (h: string) => {
+    if (h.startsWith('On this')) return -1
+    return order.includes(h) ? order.indexOf(h) : order.length
+  }
   return [...byHost.entries()]
     .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
     .map(([label, boards]) => ({ label, boards: [...boards].sort((x, y) => x.name.localeCompare(y.name)) }))

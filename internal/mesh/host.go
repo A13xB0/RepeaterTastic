@@ -129,6 +129,12 @@ func (h *Host) Transmits() bool {
 	return r != RoleMonitor && r != RoleOff
 }
 
+// State files in the host's state dir.
+const (
+	nodeDBFile   = "nodedb.json"
+	messagesFile = "messages.json"
+)
+
 const (
 	numReliableRetx         = 3
 	numReliableUnicastRetry = 5
@@ -522,26 +528,34 @@ func (h *Host) channelGroups(hash uint8) []*chanGroup {
 	h.chanMu.Lock()
 	defer h.chanMu.Unlock()
 	if h.chanCache == nil {
-		h.chanCache = map[uint8][]*chanGroup{}
-		display := h.presetDisplay()
-		for _, id := range h.Identities() {
-			for _, rc := range id.resolvedChannels(display) {
-				var g *chanGroup
-				for _, x := range h.chanCache[rc.hash] {
-					if string(x.key) == string(rc.key) && x.aead == rc.aead && x.name == rc.name {
-						g = x
-						break
-					}
-				}
-				if g == nil {
-					g = &chanGroup{hash: rc.hash, key: rc.key, aead: rc.aead, name: rc.name}
-					h.chanCache[rc.hash] = append(h.chanCache[rc.hash], g)
-				}
-				g.members = append(g.members, chanMember{id: id, index: rc.index})
-			}
-		}
+		h.buildChanCache()
 	}
 	return h.chanCache[hash]
+}
+
+// buildChanCache groups every identity's channels by hash and key. Called with h.chanMu held.
+func (h *Host) buildChanCache() {
+	h.chanCache = map[uint8][]*chanGroup{}
+	display := h.presetDisplay()
+	for _, id := range h.Identities() {
+		for _, rc := range id.resolvedChannels(display) {
+			g := h.cachedChanGroup(rc)
+			g.members = append(g.members, chanMember{id: id, index: rc.index})
+		}
+	}
+}
+
+// cachedChanGroup finds the cached group matching rc, adding one if there is none. Called with
+// h.chanMu held.
+func (h *Host) cachedChanGroup(rc resolvedChannel) *chanGroup {
+	for _, x := range h.chanCache[rc.hash] {
+		if string(x.key) == string(rc.key) && x.aead == rc.aead && x.name == rc.name {
+			return x
+		}
+	}
+	g := &chanGroup{hash: rc.hash, key: rc.key, aead: rc.aead, name: rc.name}
+	h.chanCache[rc.hash] = append(h.chanCache[rc.hash], g)
+	return g
 }
 
 // ----------------------------------------------------------------------------------------- run
@@ -552,10 +566,10 @@ func (h *Host) Run(ctx context.Context) error {
 		return errors.New("no relay persona configured")
 	}
 	if h.stateDir != "" {
-		if err := h.DB.Load(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
+		if err := h.DB.Load(filepath.Join(h.stateDir, nodeDBFile)); err != nil {
 			h.log.Warn("node DB not loaded", "err", err)
 		}
-		if err := h.Messages.Load(filepath.Join(h.stateDir, "messages.json")); err != nil {
+		if err := h.Messages.Load(filepath.Join(h.stateDir, messagesFile)); err != nil {
 			h.log.Warn("messages not loaded", "err", err)
 		}
 		for _, id := range h.Identities() { // re-assert local entries over stale saved ones
@@ -570,8 +584,8 @@ func (h *Host) Run(ctx context.Context) error {
 	go func() { defer wg.Done(); h.timerLoop(ctx) }()
 	wg.Wait()
 	if h.stateDir != "" {
-		_ = h.DB.Save(filepath.Join(h.stateDir, "nodedb.json"))
-		_ = h.Messages.Save(filepath.Join(h.stateDir, "messages.json"))
+		_ = h.DB.Save(filepath.Join(h.stateDir, nodeDBFile))
+		_ = h.Messages.Save(filepath.Join(h.stateDir, messagesFile))
 	}
 	return ctx.Err()
 }
@@ -635,28 +649,34 @@ func (h *Host) rxLoop(ctx context.Context) {
 	}
 }
 
+// timerLoop refreshes the identities' positions and saves the node DB and chats once a minute.
 func (h *Host) timerLoop(ctx context.Context) {
-	tick := time.NewTicker(250 * time.Millisecond)
+	tick := time.NewTicker(timerInterval)
 	defer tick.Stop()
-	lastSave := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-tick.C:
-			if now.Sub(lastSave) > time.Minute {
-				h.RecordOwnPositions()
-			}
-			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
-				lastSave = now
-				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
-					h.log.Warn("saving node DB", "err", err)
-				}
-				if err := h.Messages.Save(filepath.Join(h.stateDir, "messages.json")); err != nil {
-					h.log.Warn("saving messages", "err", err)
-				}
-			}
+		case <-tick.C:
+			h.RecordOwnPositions()
+			h.saveState()
 		}
+	}
+}
+
+// timerInterval is how often timerLoop runs.
+var timerInterval = time.Minute
+
+// saveState writes the node DB and chats to the state dir, if there is one.
+func (h *Host) saveState() {
+	if h.stateDir == "" {
+		return
+	}
+	if err := h.DB.Save(filepath.Join(h.stateDir, nodeDBFile)); err != nil {
+		h.log.Warn("saving node DB", "err", err)
+	}
+	if err := h.Messages.Save(filepath.Join(h.stateDir, messagesFile)); err != nil {
+		h.log.Warn("saving messages", "err", err)
 	}
 }
 
@@ -677,106 +697,146 @@ func (h *Host) txLoop(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		now := time.Now()
-		rp := h.RadioParams()
-		if limit := h.dutyLimit(); limit < 100 && h.Air.TxPercent(now) >= limit {
-			h.Counters.DroppedDuty.Add(1)
-			if !it.relay {
-				if o := h.Identity(it.origin); o != nil {
-					h.failMessage(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
-				}
-			}
-			h.log.Warn("duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
-			continue
+		if !h.transmitNext(ctx, it) {
+			return
 		}
-		if !h.Transmits() {
-			// Monitor or off: nothing goes on air. Local senders hear why.
-			if !it.relay {
-				if o := h.Identity(it.origin); o != nil && it.plain.GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP {
-					h.failMessage(o, it.pkt.Id, pb.Routing_NO_INTERFACE)
-				}
-			}
-			continue
-		}
-		if busy, err := h.radio.ChannelBusy(ctx); err == nil && busy && it.attempts < 12 {
-			it.attempts++
-			it.due = now.Add(time.Duration(phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())+rp.SlotTimeMs()) * time.Millisecond)
-			h.txq.Enqueue(it)
-			continue
-		}
-		frame, err := wire.EncodeFrame(it.pkt)
-		if err != nil {
-			h.log.Error("encoding frame", "err", err)
-			continue
-		}
-		release := func() {}
-		if g := h.txGate(); g != nil {
-			rel, gerr := g.Acquire(ctx, h)
-			if errors.Is(gerr, ErrSiteDutyCycle) {
-				h.Counters.DroppedDuty.Add(1)
-				if !it.relay {
-					if o := h.Identity(it.origin); o != nil {
-						h.failMessage(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
-					}
-				}
-				h.log.Warn("site duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
-				continue
-			}
-			if gerr != nil {
-				return // context cancelled while waiting for another radio
-			}
-			release = rel
-		}
-		if !h.Transmits() {
-			// Switched to monitor or off while waiting for the site's turn to transmit.
-			release()
-			continue
-		}
-		sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
-		err = h.radio.Send(sctx, frame)
-		cancel()
-		release()
-		if err != nil {
-			h.Counters.TxFailed.Add(1)
-			h.log.Warn("transmit failed", "id", it.pkt.Id, "err", err)
-			continue
-		}
-		ms := rp.AirtimeMs(len(frame))
-		h.Air.AddTx(time.Now(), ms, it.origin)
-		for _, t := range h.airTaps() {
-			t.Transmitted(frame, it.pkt, it.origin)
-		}
-		h.Counters.Tx.Add(1)
-		kind := "ours"
-		if it.relay {
-			kind = "relayed"
-			h.Counters.Relayed.Add(1)
-		}
-		rec := h.baseRecord(it.pkt, frame, "tx", kind)
-		rec.AirtimeMs = ms
-		if it.plain != nil {
-			rec.Port, rec.PKI, rec.Data = it.plain.Portnum.String(), it.pkt.PkiEncrypted, it.plain
-			rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
-		} else if dec := h.decode(it.pkt); dec.ok {
-			h.fillRecordFromDecoded(&rec, dec) // a relayed packet on a channel we hold
-		}
-		if o := h.Identity(it.origin); o != nil {
-			rec.DecodedBy = o.NodeID()
-			if m, ok := h.Messages.SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
-				h.publishMessage(o, m)
-			}
-		}
-		h.publishPacket(rec)
-		h.linkMu.RLock()
-		for _, l := range h.links {
-			if pl, ok := l.(PlainLink); ok {
-				pl.SendPacketPlain(it.pkt, it.plain)
-			} else {
-				l.SendPacket(it.pkt)
-			}
-		}
-		h.linkMu.RUnlock()
 	}
+}
+
+// transmitNext puts one queued packet on air, or drops or defers it. It reports false when
+// ctx ended while waiting for the site's turn to transmit.
+func (h *Host) transmitNext(ctx context.Context, it *txItem) bool {
+	now := time.Now()
+	rp := h.RadioParams()
+	if limit := h.dutyLimit(); limit < 100 && h.Air.TxPercent(now) >= limit {
+		h.dropForDuty(it, "duty cycle limit reached, dropping packet")
+		return true
+	}
+	if !h.Transmits() {
+		h.refuseOffAir(it)
+		return true
+	}
+	if h.deferIfBusy(ctx, it, now, rp) {
+		return true
+	}
+	frame, err := wire.EncodeFrame(it.pkt)
+	if err != nil {
+		h.log.Error("encoding frame", "err", err)
+		return true
+	}
+	release, gerr := h.acquireSiteTurn(ctx)
+	if errors.Is(gerr, ErrSiteDutyCycle) {
+		h.dropForDuty(it, "site duty cycle limit reached, dropping packet")
+		return true
+	}
+	if gerr != nil {
+		return false // context cancelled while waiting for another radio
+	}
+	if !h.Transmits() {
+		// Switched to monitor or off while waiting for the site's turn to transmit.
+		release()
+		return true
+	}
+	sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
+	err = h.radio.Send(sctx, frame)
+	cancel()
+	release()
+	if err != nil {
+		h.Counters.TxFailed.Add(1)
+		h.log.Warn("transmit failed", "id", it.pkt.Id, "err", err)
+		return true
+	}
+	h.transmitted(it, frame, rp.AirtimeMs(len(frame)))
+	return true
+}
+
+// dropForDuty drops a packet over a duty cycle limit, failing it for a local sender.
+func (h *Host) dropForDuty(it *txItem, msg string) {
+	h.Counters.DroppedDuty.Add(1)
+	if !it.relay {
+		if o := h.Identity(it.origin); o != nil {
+			h.failMessage(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
+		}
+	}
+	h.log.Warn(msg, "id", it.pkt.Id, "relay", it.relay)
+}
+
+// refuseOffAir drops a packet in monitor or off mode: nothing goes on air. Local senders of
+// text hear why.
+func (h *Host) refuseOffAir(it *txItem) {
+	if it.relay {
+		return
+	}
+	if o := h.Identity(it.origin); o != nil && it.plain.GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP {
+		h.failMessage(o, it.pkt.Id, pb.Routing_NO_INTERFACE)
+	}
+}
+
+// deferIfBusy requeues the packet for later when the channel is busy, up to 12 times.
+func (h *Host) deferIfBusy(ctx context.Context, it *txItem, now time.Time, rp phy.RadioParams) bool {
+	busy, err := h.radio.ChannelBusy(ctx)
+	if err != nil || !busy || it.attempts >= 12 {
+		return false
+	}
+	it.attempts++
+	it.due = now.Add(time.Duration(phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())+rp.SlotTimeMs()) * time.Millisecond)
+	h.txq.Enqueue(it)
+	return true
+}
+
+// acquireSiteTurn waits for the site's turn to transmit when radios share a gate.
+func (h *Host) acquireSiteTurn(ctx context.Context) (release func(), err error) {
+	g := h.txGate()
+	if g == nil {
+		return func() {
+			// A lone radio has no turn to give back.
+		}, nil
+	}
+	return g.Acquire(ctx, h)
+}
+
+// transmitted accounts for a packet that went on air and passes it to taps, the packet log,
+// its sender and the links.
+func (h *Host) transmitted(it *txItem, frame []byte, ms float64) {
+	h.Air.AddTx(time.Now(), ms, it.origin)
+	for _, t := range h.airTaps() {
+		t.Transmitted(frame, it.pkt, it.origin)
+	}
+	h.Counters.Tx.Add(1)
+	kind := "ours"
+	if it.relay {
+		kind = "relayed"
+		h.Counters.Relayed.Add(1)
+	}
+	rec := h.baseRecord(it.pkt, frame, "tx", kind)
+	rec.AirtimeMs = ms
+	if it.plain != nil {
+		rec.Port, rec.PKI, rec.Data = it.plain.Portnum.String(), it.pkt.PkiEncrypted, it.plain
+		rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
+	} else if dec := h.decode(it.pkt); dec.ok {
+		h.fillRecordFromDecoded(&rec, dec) // a relayed packet on a channel we hold
+	}
+	if o := h.Identity(it.origin); o != nil {
+		rec.DecodedBy = o.NodeID()
+		if m, ok := h.Messages.SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
+			h.publishMessage(o, m)
+		}
+	}
+	h.publishPacket(rec)
+	h.sendToLinks(it)
+}
+
+// sendToLinks passes a transmitted packet to every link, with its payload where wanted.
+func (h *Host) sendToLinks(it *txItem) {
+	h.linkMu.RLock()
+	for _, l := range h.links {
+		if pl, ok := l.(PlainLink); ok {
+			pl.SendPacketPlain(it.pkt, it.plain)
+		} else {
+			l.SendPacket(it.pkt)
+		}
+	}
+	h.linkMu.RUnlock()
 }
 
 // MessageEvent is published when a chat message is added or changes status.

@@ -38,13 +38,13 @@ async function reveal() {
 <template>
   <Modal :open="!!identity" :title="`Keys · ${identity?.long_name ?? ''}`" :subtitle="identity?.node_id" @close="emit('close')">
     <div v-if="identity">
-      <label class="label">Public key</label>
+      <span class="label">Public key</span>
       <div class="flex items-center gap-1 rounded-xl border border-line-soft bg-raised px-3 py-2">
         <span class="mono min-w-0 flex-1 break-all">{{ identity.public_key }}</span>
         <CopyButton :text="identity.public_key" label="Public key" />
       </div>
 
-      <label class="label mt-4">Private key</label>
+      <span class="label mt-4">Private key</span>
       <div v-if="!keys" class="rounded-xl border border-warn/30 bg-warn/8 p-4">
         <div class="flex gap-3">
           <ShieldAlert class="size-5 shrink-0 text-warn" />

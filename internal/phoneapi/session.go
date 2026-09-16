@@ -128,38 +128,51 @@ func (s *Session) startConfig(nonce uint32) {
 	// firmware does: the app treats any my_info as the start of a new handshake, so re-sending
 	// it here made the app ignore this stage's config_complete and give up after 12 s.
 	if nonce != nonceOnlyNodes {
-		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_MyInfo{MyInfo: s.myInfo()}})
-		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_DeviceuiConfig{DeviceuiConfig: &pb.DeviceUIConfig{}}})
-		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: s.ownNodeInfo()}})
-	}
-	if nonce != nonceOnlyNodes {
-		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Metadata{Metadata: s.metadata()}})
-		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_RegionPresets{RegionPresets: regionPresetMap()}})
-		for i := 0; i < mesh.MaxChannels; i++ {
-			s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Channel{Channel: s.channel(i)}})
-		}
-		for _, c := range s.allConfigs() {
-			s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Config{Config: c}})
-		}
-		for _, m := range allModuleConfigs() {
-			s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_ModuleConfig{ModuleConfig: m}})
-		}
+		s.emitConfig()
 	}
 	if nonce != nonceOnlyConfig {
-		for _, e := range s.host.DB.Snapshot() {
-			if e.Num == s.id.NodeNum || (e.User == nil && e.LastHeard.IsZero()) {
-				continue
-			}
-			ni := e.NodeInfo()
-			if e.Local {
-				h := uint32(0)
-				ni.HopsAway = &h
-			}
-			s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: ni}})
-		}
+		s.emitNodes()
 	}
 	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_ConfigCompleteId{ConfigCompleteId: nonce}})
+	s.finishConfig()
+}
 
+// emitConfig sends the handshake's own-node and configuration stage, in the firmware's order.
+func (s *Session) emitConfig() {
+	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_MyInfo{MyInfo: s.myInfo()}})
+	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_DeviceuiConfig{DeviceuiConfig: &pb.DeviceUIConfig{}}})
+	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: s.ownNodeInfo()}})
+	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Metadata{Metadata: s.metadata()}})
+	s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_RegionPresets{RegionPresets: regionPresetMap()}})
+	for i := 0; i < mesh.MaxChannels; i++ {
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Channel{Channel: s.channel(i)}})
+	}
+	for _, c := range s.allConfigs() {
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Config{Config: c}})
+	}
+	for _, m := range allModuleConfigs() {
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_ModuleConfig{ModuleConfig: m}})
+	}
+}
+
+// emitNodes sends the other nodes the client should know about; local ones show as zero hops.
+func (s *Session) emitNodes() {
+	for _, e := range s.host.DB.Snapshot() {
+		if e.Num == s.id.NodeNum || (e.User == nil && e.LastHeard.IsZero()) {
+			continue
+		}
+		ni := e.NodeInfo()
+		if e.Local {
+			h := uint32(0)
+			ni.HopsAway = &h
+		}
+		s.emit(&pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: ni}})
+	}
+}
+
+// finishConfig marks the handshake done, attaches the session on its first handshake and
+// releases the live traffic queued meanwhile.
+func (s *Session) finishConfig() {
 	s.mu.Lock()
 	s.configDone = true
 	pending := s.pendingLive
@@ -342,33 +355,11 @@ func (s *Session) handlePacket(p *pb.MeshPacket) {
 	}
 	now := time.Now()
 	s.mu.Lock()
-	if p.Id != 0 {
-		if t, ok := s.recentIDs[p.Id]; ok && now.Sub(t) < 10*time.Minute {
-			s.mu.Unlock()
-			return
-		}
-		s.recentIDs[p.Id] = now
-		if len(s.recentIDs) > 512 {
-			for k, v := range s.recentIDs {
-				if now.Sub(v) > 10*time.Minute {
-					delete(s.recentIDs, k)
-				}
-			}
-		}
+	if p.Id != 0 && s.seenRecently(p.Id, now) {
+		s.mu.Unlock()
+		return
 	}
-	rateLimited := false
-	switch d.Portnum {
-	case pb.PortNum_TEXT_MESSAGE_APP:
-		rateLimited = now.Sub(s.lastText) < 2*time.Second && !s.lastText.IsZero()
-		if !rateLimited {
-			s.lastText = now
-		}
-	case pb.PortNum_TRACEROUTE_APP:
-		rateLimited = now.Sub(s.lastTrace) < 30*time.Second && !s.lastTrace.IsZero()
-		if !rateLimited {
-			s.lastTrace = now
-		}
-	}
+	rateLimited := s.rateLimited(d.Portnum, now)
 	s.mu.Unlock()
 
 	if p.Id == 0 {
@@ -379,7 +370,47 @@ func (s *Session) handlePacket(p *pb.MeshPacket) {
 		s.routingToClient(p.Id, pb.Routing_RATE_LIMIT_EXCEEDED)
 		return
 	}
+	s.forward(p)
+}
 
+// seenRecently reports a packet id the client already sent in the last ten minutes, so a repeat
+// isn't sent twice, and otherwise records it. The caller holds s.mu.
+func (s *Session) seenRecently(id uint32, now time.Time) bool {
+	if t, ok := s.recentIDs[id]; ok && now.Sub(t) < 10*time.Minute {
+		return true
+	}
+	s.recentIDs[id] = now
+	if len(s.recentIDs) > 512 {
+		for k, v := range s.recentIDs {
+			if now.Sub(v) > 10*time.Minute {
+				delete(s.recentIDs, k)
+			}
+		}
+	}
+	return false
+}
+
+// rateLimited applies the firmware's per-client limits on texts and traceroutes, recording the
+// send when it's allowed. The caller holds s.mu.
+func (s *Session) rateLimited(port pb.PortNum, now time.Time) bool {
+	limited := false
+	switch port {
+	case pb.PortNum_TEXT_MESSAGE_APP:
+		limited = now.Sub(s.lastText) < 2*time.Second && !s.lastText.IsZero()
+		if !limited {
+			s.lastText = now
+		}
+	case pb.PortNum_TRACEROUTE_APP:
+		limited = now.Sub(s.lastTrace) < 30*time.Second && !s.lastTrace.IsZero()
+		if !limited {
+			s.lastTrace = now
+		}
+	}
+	return limited
+}
+
+// forward sends a client's packet from the identity.
+func (s *Session) forward(p *pb.MeshPacket) {
 	if p.To == s.id.NodeNum {
 		// The node answers its own admin messages and requests; the replies come back to every
 		// client of the identity with this packet's id.

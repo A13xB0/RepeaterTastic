@@ -421,10 +421,11 @@ async function finish() {
                 </label>
                 <BoardMqttNotice v-if="usingNode" compact class="mt-2.5 ml-7" />
                 <div v-if="usingNode" class="mt-2.5 flex flex-wrap items-center gap-2 pl-7">
-                  <div class="seg" role="group" aria-label="How the board is connected">
+                  <fieldset class="seg">
+                    <legend class="sr-only">How the board is connected</legend>
                     <button type="button" :aria-pressed="nodeVia === 'usb'" @click="nodeVia = 'usb'">USB</button>
                     <button type="button" :aria-pressed="nodeVia === 'net'" @click="nodeVia = 'net'">Network</button>
-                  </div>
+                  </fieldset>
                   <input v-if="nodeVia === 'usb'" id="setup-node-serial" v-model="nodePort" class="input h-8 mono min-w-0 flex-1 text-xs" list="setup-node-ports" placeholder="/dev/ttyACM0" spellcheck="false" aria-label="Board serial port" />
                   <input v-else id="setup-node-host" v-model="nodeHost" class="input h-8 mono min-w-0 flex-1 text-xs" placeholder="192.168.1.20 or meshtastic.local:4403" spellcheck="false" aria-label="Board address" />
                   <datalist id="setup-node-ports"><option v-for="p in ports" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
@@ -509,10 +510,11 @@ async function finish() {
               </div>
               <div class="mt-3 space-y-3 pl-7">
                 <div class="flex flex-wrap items-center gap-2">
-                  <div class="seg" role="group" aria-label="How to run meshtasticd">
+                  <fieldset class="seg">
+                    <legend class="sr-only">How to run meshtasticd</legend>
                     <button type="button" :aria-pressed="hostedVia === 'exec'" @click="hostedVia = 'exec'">Installed</button>
                     <button type="button" :aria-pressed="hostedVia === 'docker'" :disabled="!!runtimes && !canDocker" :title="runtimes && !canDocker ? runtimes.docker.error : ''" @click="hostedVia = 'docker'">Docker</button>
-                  </div>
+                  </fieldset>
                   <input v-if="hostedVia === 'exec'" id="setup-hosted-bin" v-model="hostedBinary" class="input h-8 mono min-w-0 flex-1 text-xs" :placeholder="canInstalled || !runtimes ? 'meshtasticd (on PATH) or /usr/bin/meshtasticd' : 'where it is, e.g. /opt/meshtasticd/bin/meshtasticd'" spellcheck="false" aria-label="meshtasticd program" />
                   <input v-else id="setup-hosted-image" v-model="hostedImage" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />
                   <button type="button" class="btn btn-sm" :disabled="checkingHosted" @click="checkHosted"><Spinner v-if="checkingHosted" />Check</button>

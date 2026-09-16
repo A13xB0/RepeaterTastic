@@ -25,10 +25,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     </Transition>
     <Transition name="pop">
       <div v-if="open" class="pointer-events-none fixed inset-0 z-[301] flex items-end justify-center p-0 sm:items-center sm:p-6">
-        <div
-          role="dialog"
+        <dialog
+          open
           aria-modal="true"
-          :class="['pointer-events-auto flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-surface-solid shadow-2xl sm:rounded-2xl', widths[size]]"
+          :class="['static pointer-events-auto flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-surface-solid shadow-2xl sm:rounded-2xl', widths[size]]"
         >
           <header v-if="title" class="flex items-start justify-between gap-3 border-b border-line-soft px-5 py-4">
             <div class="min-w-0">
@@ -43,7 +43,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <footer v-if="$slots.footer" class="flex flex-wrap items-center justify-end gap-2 border-t border-line-soft bg-raised/60 px-5 py-3">
             <slot name="footer" />
           </footer>
-        </div>
+        </dialog>
       </div>
     </Transition>
   </Teleport>

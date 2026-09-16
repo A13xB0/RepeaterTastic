@@ -149,6 +149,27 @@ func (m *Manager) reload() error {
 	if fi, err := os.Stat(m.statePath()); err == nil {
 		m.stMod = fi.ModTime()
 	}
+	seen := m.loadFoldersLocked()
+	m.loadRecordsLocked(seen)
+	var gone []*plugin
+	for id, p := range m.plugins {
+		if !seen[id] {
+			gone = append(gone, p)
+			delete(m.plugins, id)
+		}
+	}
+	m.pinEntriesLocked()
+	err = m.saveLocked()
+	m.mu.Unlock()
+	for _, p := range gone {
+		m.stopPlugin(p, "removed")
+	}
+	m.reconcile()
+	return err
+}
+
+// loadFoldersLocked loads every valid installed folder and returns the plugin IDs it found.
+func (m *Manager) loadFoldersLocked() map[string]bool {
 	seen := map[string]bool{}
 	entries, _ := os.ReadDir(m.installedDir())
 	for _, e := range entries {
@@ -160,13 +181,7 @@ func (m *Manager) reload() error {
 		if err != nil {
 			continue
 		}
-		man, err := ParseManifest(b)
-		if err == nil && man.ID != e.Name() {
-			err = fmt.Errorf("its folder is %s but plugin.yaml says id %s", e.Name(), man.ID)
-		}
-		if err == nil {
-			err = man.checkFiles(dir)
-		}
+		man, err := checkInstalled(dir, e.Name(), b)
 		if err != nil {
 			m.log.Warn("ignoring installed plugin", "folder", e.Name(), "err", err)
 			continue
@@ -181,29 +196,54 @@ func (m *Manager) reload() error {
 		p := m.pluginLocked(man.ID)
 		p.rec, p.manifest, p.dir = rec, man, dir
 	}
+	return seen
+}
+
+// checkInstalled parses and checks the manifest b from the installed folder dir, named name.
+func checkInstalled(dir, name string, b []byte) (*Manifest, error) {
+	man, err := ParseManifest(b)
+	if err != nil {
+		return nil, err
+	}
+	if man.ID != name {
+		return nil, fmt.Errorf("its folder is %s but plugin.yaml says id %s", name, man.ID)
+	}
+	if err := man.checkFiles(dir); err != nil {
+		return nil, err
+	}
+	return man, nil
+}
+
+// loadRecordsLocked loads the attached plugins into seen and forgets installed plugins whose
+// folder has gone.
+func (m *Manager) loadRecordsLocked(seen map[string]bool) {
 	for id, rec := range m.st.Plugins {
-		if rec.Attached {
+		switch {
+		case rec.Attached:
 			seen[id] = true
 			p := m.pluginLocked(id)
 			p.rec, p.dir = rec, ""
-			p.manifest = nil
-			if rec.ManifestYAML != "" {
-				if man, err := ParseManifest([]byte(rec.ManifestYAML)); err == nil && man.ID == id {
-					p.manifest = man
-				}
-			}
-		} else if !seen[id] {
+			p.manifest = attachedManifest(id, rec)
+		case !seen[id]:
 			m.log.Warn("plugin folder is gone; forgetting the plugin", "plugin", id)
 			delete(m.st.Plugins, id)
 		}
 	}
-	var gone []*plugin
-	for id, p := range m.plugins {
-		if !seen[id] {
-			gone = append(gone, p)
-			delete(m.plugins, id)
-		}
+}
+
+// attachedManifest is the manifest an attached plugin last sent, if it's valid and for this id.
+func attachedManifest(id string, rec *record) *Manifest {
+	if rec.ManifestYAML == "" {
+		return nil
 	}
+	if man, err := ParseManifest([]byte(rec.ManifestYAML)); err == nil && man.ID == id {
+		return man
+	}
+	return nil
+}
+
+// pinEntriesLocked marks the plugins that the config file's plugins.entries set.
+func (m *Manager) pinEntriesLocked() {
 	for i := range m.opt.Config.Entries {
 		e := &m.opt.Config.Entries[i]
 		if p := m.plugins[e.ID]; p != nil {
@@ -212,16 +252,6 @@ func (m *Manager) reload() error {
 			m.log.Warn("plugins.entries names a plugin that isn't installed", "plugin", e.ID)
 		}
 	}
-	err = saveState(m.statePath(), m.st)
-	if fi, serr := os.Stat(m.statePath()); serr == nil {
-		m.stMod = fi.ModTime()
-	}
-	m.mu.Unlock()
-	for _, p := range gone {
-		m.stopPlugin(p, "removed")
-	}
-	m.reconcile()
-	return err
 }
 
 func (m *Manager) pluginLocked(id string) *plugin {
@@ -243,6 +273,9 @@ func (m *Manager) saveLocked() error {
 	return err
 }
 
+// waitingDetail is the detail shown while a plugin hasn't connected yet.
+const waitingDetail = "Waiting for the plugin to connect"
+
 // effective returns the switch, grants and settings in force: the config file's when pinned.
 func (p *plugin) effective() (enabled bool, granted []string, settings map[string]any) {
 	var schema []Setting
@@ -262,7 +295,7 @@ func (p *plugin) blocker() (state, detail string) {
 	case !enabled:
 		return "disabled", ""
 	case p.manifest == nil:
-		return "waiting", "Waiting for the plugin to connect"
+		return "waiting", waitingDetail
 	}
 	var missing []string
 	for _, perm := range p.manifest.Permissions {
@@ -277,7 +310,7 @@ func (p *plugin) blocker() (state, detail string) {
 		return "needs_settings", "Fill in " + strings.Join(miss, ", ")
 	}
 	if p.rec.Attached {
-		return "waiting", "Waiting for the plugin to connect"
+		return "waiting", waitingDetail
 	}
 	if _, err := p.manifest.ExecPath(); err != nil {
 		return "unsupported", "The plugin has no program to run"
@@ -290,10 +323,9 @@ func (m *Manager) reconcile() {
 	m.mu.Lock()
 	if m.ctx == nil {
 		for _, p := range m.plugins {
-			if st, d := p.blocker(); st != "" {
-				p.state, p.detail = st, d
-			} else {
-				p.state, p.detail = "stopped", ""
+			p.state, p.detail = p.blocker()
+			if p.state == "" {
+				p.state = "stopped"
 			}
 		}
 		m.mu.Unlock()
@@ -301,21 +333,12 @@ func (m *Manager) reconcile() {
 	}
 	var start, stop []*plugin
 	for _, p := range m.plugins {
-		if p.busy > 0 {
-			continue // installing, restarting or removing: that operation reconciles when done
-		}
-		st, detail := p.blocker()
-		if st == "" && p.run == nil && p.state != "crashed" && !p.rec.Attached && !m.closing {
+		wantStart, wantStop := m.planLocked(p)
+		if wantStart {
 			start = append(start, p)
 		}
-		if st != "" {
-			// A connected attached plugin shows "waiting" as its blocker; that isn't a reason to stop it.
-			if p.run != nil || (p.sess != nil && p.rec.Attached && st != "waiting") {
-				stop = append(stop, p)
-			}
-			if st != "waiting" || p.sess == nil {
-				p.state, p.detail = st, detail
-			}
+		if wantStop {
+			stop = append(stop, p)
 		}
 	}
 	ctx := m.ctx
@@ -326,6 +349,24 @@ func (m *Manager) reconcile() {
 	for _, p := range start {
 		m.startPlugin(ctx, p)
 	}
+}
+
+// planLocked updates p's shown state from its blocker and says whether reconcile should start or
+// stop it.
+func (m *Manager) planLocked(p *plugin) (start, stop bool) {
+	if p.busy > 0 {
+		return false, false // installing, restarting or removing: that operation reconciles when done
+	}
+	st, detail := p.blocker()
+	if st == "" {
+		return p.run == nil && p.state != "crashed" && !p.rec.Attached && !m.closing, false
+	}
+	// A connected attached plugin shows "waiting" as its blocker; that isn't a reason to stop it.
+	stop = p.run != nil || (p.sess != nil && p.rec.Attached && st != "waiting")
+	if st != "waiting" || p.sess == nil {
+		p.state, p.detail = st, detail
+	}
+	return false, stop
 }
 
 // Run serves the Plugin API and supervises plugins until ctx ends.
@@ -374,41 +415,57 @@ func (m *Manager) Wait() {
 	}
 }
 
+// pollInterval is how often the inbox and state.json are checked (a variable for tests).
+var pollInterval = 3 * time.Second
+
 func (m *Manager) loop(ctx context.Context, srv interface{ Stop() }) {
 	defer close(m.done)
-	tick := time.NewTicker(3 * time.Second)
+	tick := time.NewTicker(pollInterval)
 	defer tick.Stop()
 	inbox := map[string]int64{}
 	for {
 		select {
 		case <-ctx.Done():
-			m.mu.Lock()
-			m.closing = true
-			all := slices.Collect(maps.Values(m.plugins))
-			m.mu.Unlock()
-			var wg sync.WaitGroup
-			for _, p := range all {
-				wg.Go(func() { m.stopPlugin(p, "RepeaterTastic is stopping") })
-			}
-			wg.Wait()
+			m.stopAll()
 			srv.Stop()
 			return
 		case <-tick.C:
 			m.scanInbox(inbox)
-			if fi, err := os.Stat(m.statePath()); err == nil {
-				m.mu.Lock()
-				changed := !fi.ModTime().Equal(m.stMod)
-				m.mu.Unlock()
-				if changed {
-					m.log.Info("plugin state changed on disk; reloading")
-					if err := m.reload(); err != nil {
-						m.log.Error("reloading plugin state", "err", err)
-					}
-					m.notify("")
-				}
-			}
+			m.checkStateFile()
 		}
 	}
+}
+
+// stopAll stops every plugin, in parallel, and starts nothing new.
+func (m *Manager) stopAll() {
+	m.mu.Lock()
+	m.closing = true
+	all := slices.Collect(maps.Values(m.plugins))
+	m.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, p := range all {
+		wg.Go(func() { m.stopPlugin(p, "RepeaterTastic is stopping") })
+	}
+	wg.Wait()
+}
+
+// checkStateFile reloads when state.json has changed on disk (the CLI wrote it).
+func (m *Manager) checkStateFile() {
+	fi, err := os.Stat(m.statePath())
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	changed := !fi.ModTime().Equal(m.stMod)
+	m.mu.Unlock()
+	if !changed {
+		return
+	}
+	m.log.Info("plugin state changed on disk; reloading")
+	if err := m.reload(); err != nil {
+		m.log.Error("reloading plugin state", "err", err)
+	}
+	m.notify("")
 }
 
 // scanInbox installs bundles dropped into <dir>/inbox once their size has stopped changing.
@@ -457,26 +514,10 @@ func (m *Manager) Install(r io.ReaderAt, size int64, source string) (*Manifest, 
 		return nil, err
 	}
 	defer os.RemoveAll(staging)
-	m.mu.Lock()
-	if rec := m.st.Plugins[man.ID]; rec != nil && rec.Attached {
-		m.mu.Unlock()
-		return nil, fmt.Errorf("%w: %s is an attached plugin; remove it first", ErrConflict, man.ID)
+	p, release, err := m.holdForUpgrade(man.ID)
+	if err != nil {
+		return nil, err
 	}
-	p := m.plugins[man.ID]
-	release := func() {}
-	if p != nil {
-		p.busy++ // keep reconcile from starting the old version while it's replaced
-		held := p
-		var once sync.Once
-		release = func() {
-			once.Do(func() {
-				m.mu.Lock()
-				held.busy--
-				m.mu.Unlock()
-			})
-		}
-	}
-	m.mu.Unlock()
 	defer release()
 	if p != nil {
 		m.stopPlugin(p, "upgrading")
@@ -496,28 +537,7 @@ func (m *Manager) Install(r io.ReaderAt, size int64, source string) (*Manifest, 
 	}
 
 	m.mu.Lock()
-	rec := m.st.Plugins[man.ID]
-	upgrade := rec != nil
-	if rec == nil {
-		rec = &record{InstalledAt: time.Now(), Source: source}
-		m.st.Plugins[man.ID] = rec
-	}
-	rec.Granted = slices.DeleteFunc(rec.Granted, func(g string) bool { return !slices.Contains(man.Permissions, g) })
-	for k := range rec.Settings {
-		if !slices.ContainsFunc(man.Settings, func(s Setting) bool { return s.Key == k }) {
-			delete(rec.Settings, k)
-		}
-	}
-	p = m.pluginLocked(man.ID)
-	p.rec, p.manifest, p.dir = rec, man, final
-	if p.state == "crashed" {
-		p.state = "stopped"
-	}
-	for i := range m.opt.Config.Entries {
-		if m.opt.Config.Entries[i].ID == man.ID {
-			p.pinned = &m.opt.Config.Entries[i]
-		}
-	}
+	p, upgrade := m.recordInstallLocked(man, final, source)
 	err = m.saveLocked()
 	m.mu.Unlock()
 	release()
@@ -532,6 +552,59 @@ func (m *Manager) Install(r io.ReaderAt, size int64, source string) (*Manifest, 
 	return man, err
 }
 
+// holdForUpgrade marks an installed plugin busy, so reconcile doesn't start the old version while
+// it's replaced; release (safe to call twice) undoes that. p is nil for a new plugin.
+func (m *Manager) holdForUpgrade(id string) (p *plugin, release func(), err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rec := m.st.Plugins[id]; rec != nil && rec.Attached {
+		return nil, nil, fmt.Errorf("%w: %s is an attached plugin; remove it first", ErrConflict, id)
+	}
+	p = m.plugins[id]
+	if p == nil {
+		return nil, func() {
+			// A new plugin: nothing is held.
+		}, nil
+	}
+	p.busy++
+	var once sync.Once
+	return p, func() {
+		once.Do(func() {
+			m.mu.Lock()
+			p.busy--
+			m.mu.Unlock()
+		})
+	}, nil
+}
+
+// recordInstallLocked points the plugin at its newly installed folder, keeping its record but
+// dropping grants and settings the new manifest no longer has. upgrade is false for a new plugin.
+func (m *Manager) recordInstallLocked(man *Manifest, dir, source string) (p *plugin, upgrade bool) {
+	rec := m.st.Plugins[man.ID]
+	upgrade = rec != nil
+	if rec == nil {
+		rec = &record{InstalledAt: time.Now(), Source: source}
+		m.st.Plugins[man.ID] = rec
+	}
+	rec.Granted = slices.DeleteFunc(rec.Granted, func(g string) bool { return !slices.Contains(man.Permissions, g) })
+	for k := range rec.Settings {
+		if !slices.ContainsFunc(man.Settings, func(s Setting) bool { return s.Key == k }) {
+			delete(rec.Settings, k)
+		}
+	}
+	p = m.pluginLocked(man.ID)
+	p.rec, p.manifest, p.dir = rec, man, dir
+	if p.state == "crashed" {
+		p.state = "stopped"
+	}
+	for i := range m.opt.Config.Entries {
+		if m.opt.Config.Entries[i].ID == man.ID {
+			p.pinned = &m.opt.Config.Entries[i]
+		}
+	}
+	return p, upgrade
+}
+
 // Enable turns a plugin on with the permissions the operator granted.
 func (m *Manager) Enable(id string, granted []string) error {
 	m.mu.Lock()
@@ -544,24 +617,9 @@ func (m *Manager) Enable(id string, granted []string) error {
 		m.mu.Unlock()
 		return ErrPinned
 	}
-	if p.manifest != nil {
-		for _, g := range granted {
-			if !slices.Contains(p.manifest.Permissions, g) {
-				m.mu.Unlock()
-				return fmt.Errorf("the plugin doesn't ask for %s", g)
-			}
-		}
-		if miss := missingSettings(p.manifest.Settings, resolveSettings(p.manifest.Settings, p.rec.Settings, false)); len(miss) > 0 {
-			m.mu.Unlock()
-			return fmt.Errorf("fill in %s first", strings.Join(miss, ", "))
-		}
-	} else {
-		for _, g := range granted {
-			if _, ok := Permissions[g]; !ok {
-				m.mu.Unlock()
-				return fmt.Errorf("unknown permission %s", g)
-			}
-		}
+	if err := p.checkEnable(granted); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	before := slices.Clone(p.rec.Granted)
 	wasOn := p.rec.Enabled
@@ -579,18 +637,46 @@ func (m *Manager) Enable(id string, granted []string) error {
 	m.mu.Unlock()
 	p.logs.add("info", "host", "enabled with "+permList(granted))
 	if regrant {
-		p.logs.add("info", "host", "permissions changed; reconnecting the plugin")
-		if p.rec.Attached {
-			if sess != nil {
-				sess.close("permissions changed")
-			}
-		} else {
-			m.stopPlugin(p, "permissions changed")
-		}
+		m.reconnect(p, sess)
 	}
 	m.reconcile()
 	m.notify(id)
 	return err
+}
+
+// checkEnable checks the plugin can be enabled with these grants: it asks for them (or, before an
+// attached plugin has described itself, they exist) and its required settings are filled in.
+func (p *plugin) checkEnable(granted []string) error {
+	if p.manifest == nil {
+		for _, g := range granted {
+			if _, ok := Permissions[g]; !ok {
+				return fmt.Errorf("unknown permission %s", g)
+			}
+		}
+		return nil
+	}
+	for _, g := range granted {
+		if !slices.Contains(p.manifest.Permissions, g) {
+			return fmt.Errorf("the plugin doesn't ask for %s", g)
+		}
+	}
+	if miss := missingSettings(p.manifest.Settings, resolveSettings(p.manifest.Settings, p.rec.Settings, false)); len(miss) > 0 {
+		return fmt.Errorf("fill in %s first", strings.Join(miss, ", "))
+	}
+	return nil
+}
+
+// reconnect makes a running plugin connect again, stopping a managed one (reconcile restarts it)
+// and dropping an attached one's session.
+func (m *Manager) reconnect(p *plugin, sess *session) {
+	p.logs.add("info", "host", "permissions changed; reconnecting the plugin")
+	if !p.rec.Attached {
+		m.stopPlugin(p, "permissions changed")
+		return
+	}
+	if sess != nil {
+		sess.close("permissions changed")
+	}
 }
 
 // Disable stops a plugin and keeps it off.
@@ -728,7 +814,7 @@ func (m *Manager) Attach(id, name string, granted []string) (string, error) {
 		Name: strings.TrimSpace(name), TokenHash: hashToken(tok)}
 	m.st.Plugins[id] = rec
 	p := m.pluginLocked(id)
-	p.rec, p.state, p.detail = rec, "waiting", "Waiting for the plugin to connect"
+	p.rec, p.state, p.detail = rec, "waiting", waitingDetail
 	if err := m.saveLocked(); err != nil {
 		return "", err
 	}

@@ -23,7 +23,8 @@ const look = computed(() => {
 })
 const title = computed(() => {
   const h = props.health
-  const head = `meshtasticd${h.version ? ` ${h.version}` : ''} · ${h.up}/${h.nodes} nodes running`
+  const version = h.version ? ` ${h.version}` : ''
+  const head = `meshtasticd${version} · ${h.up}/${h.nodes} nodes running`
   return [head, ...h.problems].join('\n')
 })
 </script>

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/base64"
+	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -15,20 +16,29 @@ import (
 type fakeRemote struct {
 	mu     sync.Mutex
 	admins int
+	// fail, when set, is what admin messages and config pushes return.
+	fail error
 }
 
 func (f *fakeRemote) SendPacket(*pb.MeshPacket) (uint32, error) { return 1, nil }
 func (f *fakeRemote) Admin(context.Context, *pb.AdminMessage) (*pb.AdminMessage, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.admins++
-	f.mu.Unlock()
-	return nil, nil
+	return nil, f.fail
 }
 func (f *fakeRemote) ApplyConfig(context.Context, mesh.Config) error {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.admins++
-	f.mu.Unlock()
-	return nil
+	return f.fail
+}
+
+// adminCount is how many admin messages and config pushes the node has had.
+func (f *fakeRemote) adminCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.admins
 }
 
 // fakeHoster hosts every identity on a node that takes everything.
@@ -67,20 +77,23 @@ func TestHostedIdentities(t *testing.T) {
 	if code, res, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Rep", "role": "CLIENT"}); code != 400 {
 		t.Fatalf("a repeating role on meshtasticd accepted: %d %v", code, res)
 	}
-	// A key whose last byte is free on the other radio too, so the moves below can't clash.
-	_, _, mfIDs := call(t, srv, "GET", "/api/v1/identities?radio=mf", tok, nil)
-	taken := map[uint8]bool{}
-	for _, x := range mfIDs {
-		taken[uint8(x.(map[string]any)["last_byte"].(float64))] = true
+	node := createHostedIdentity(t, srv, tok)
+	checkHostedPatch(t, srv, tok, node, hs)
+	checkHostedMoveAndDelete(t, srv, tok, node, hs)
+
+	// Choosing a meshtasticd checks it can run first.
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/hosted", tok, map[string]any{"meshtasticd": "/nonexistent/meshtasticd"}); code != 400 {
+		t.Fatalf("a meshtasticd that can't run accepted: %d", code)
 	}
-	var key string
-	for {
-		id, _ := mesh.NewIdentity(nil, "Desk", "DESK")
-		if !taken[wire.LastByte(id.NodeNum)] {
-			key = base64.StdEncoding.EncodeToString(id.PrivateKey)
-			break
-		}
+	if _, h, _ := call(t, srv, "GET", "/api/v1/hosted", tok, nil); h["meshtasticd"] != "" {
+		t.Fatalf("hosted = %v", h)
 	}
+}
+
+// createHostedIdentity imports an identity onto the main radio's meshtasticd and returns its node id.
+func createHostedIdentity(t *testing.T, srv *httptest.Server, tok string) string {
+	t.Helper()
+	key := freeLastByteKey(t, srv, tok)
 	code, a, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk", "short_name": "DESK", "private_key": key})
 	if code != 201 || a["hosted"] != true || a["real_node"] != true || a["role"] != "CLIENT_MUTE" {
 		t.Fatalf("create %d %v", code, a)
@@ -89,6 +102,28 @@ func TestHostedIdentities(t *testing.T) {
 	if code, k, _ := call(t, srv, "GET", "/api/v1/identities/"+node+"/key", tok, nil); code != 200 || k["private_key"] == "" {
 		t.Fatalf("key of a hosted identity %d %v", code, k)
 	}
+	return node
+}
+
+// freeLastByteKey is a key whose last byte is free on every radio, so moves can't clash.
+func freeLastByteKey(t *testing.T, srv *httptest.Server, tok string) string {
+	t.Helper()
+	_, _, mfIDs := call(t, srv, "GET", "/api/v1/identities?radio=all", tok, nil)
+	taken := map[uint8]bool{}
+	for _, x := range mfIDs {
+		taken[uint8(x.(map[string]any)["last_byte"].(float64))] = true
+	}
+	for {
+		id, _ := mesh.NewIdentity(nil, "Desk", "DESK")
+		if !taken[wire.LastByte(id.NodeNum)] {
+			return base64.StdEncoding.EncodeToString(id.PrivateKey)
+		}
+	}
+}
+
+// checkHostedPatch checks a hosted identity refuses a repeating role and pushes settings to its node.
+func checkHostedPatch(t *testing.T, srv *httptest.Server, tok, node string, hs *fakeHoster) {
+	t.Helper()
 	if code, _, _ := call(t, srv, "PATCH", "/api/v1/identities/"+node, tok, map[string]any{"role": "ROUTER"}); code != 400 {
 		t.Fatalf("repeating role accepted on patch: %d", code)
 	}
@@ -98,7 +133,12 @@ func TestHostedIdentities(t *testing.T) {
 	if hs.remote.admins == 0 {
 		t.Fatal("settings not pushed to the node")
 	}
+}
 
+// checkHostedMoveAndDelete moves a hosted identity to the mf radio and back, then deletes it,
+// checking its node is stopped each time it leaves a radio.
+func checkHostedMoveAndDelete(t *testing.T, srv *httptest.Server, tok, node string, hs *fakeHoster) {
+	t.Helper()
 	// Moving it to another radio runs it on that radio's meshtasticd, with the same number.
 	code, m, _ := call(t, srv, "POST", "/api/v1/identities/"+node+"/move", tok, map[string]any{"radio_id": "mf"})
 	if code != 200 || m["node_id"] != node || m["hosted"] != true || m["hop_limit"] != float64(2) {
@@ -116,14 +156,6 @@ func TestHostedIdentities(t *testing.T) {
 	}
 	if len(hs.unhosted) != 2 {
 		t.Fatalf("the node wasn't stopped on delete: %v", hs.unhosted)
-	}
-
-	// Choosing a meshtasticd checks it can run first.
-	if code, _, _ := call(t, srv, "PUT", "/api/v1/hosted", tok, map[string]any{"meshtasticd": "/nonexistent/meshtasticd"}); code != 400 {
-		t.Fatalf("a meshtasticd that can't run accepted: %d", code)
-	}
-	if _, h, _ := call(t, srv, "GET", "/api/v1/hosted", tok, nil); h["meshtasticd"] != "" {
-		t.Fatalf("hosted = %v", h)
 	}
 }
 

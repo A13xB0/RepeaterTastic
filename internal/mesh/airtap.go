@@ -64,7 +64,7 @@ func (h *Host) QueueHosted(p *pb.MeshPacket, plain *pb.Data, origin uint32) erro
 func (h *Host) LogInternal(p *pb.MeshPacket, plain *pb.Data) {
 	rec := PacketRecord{Direction: "local", Kind: "local", ID: p.Id, From: wire.NodeID(p.From), To: wire.NodeID(p.To),
 		HopLimit: p.HopLimit, HopStart: p.HopStart, WantAck: p.WantAck, DecodedBy: wire.NodeID(p.To),
-		PKI: plain == nil, Transport: "internal", Port: "PKI (direct message)"}
+		PKI: plain == nil, Transport: "internal", Port: "PKI (direct message)", Radio: h.RadioID()}
 	if plain != nil {
 		rec.Port, rec.Summary = plain.GetPortnum().String(), summarize(plain)
 	}

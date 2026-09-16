@@ -4,6 +4,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -72,7 +73,7 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 func probeKISS(ctx context.Context, device string, res map[string]any) map[string]any {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	m, err := kiss.Open(ctx, kiss.Options{Device: device, HandshakeTimeout: 5 * time.Second, Logf: func(string, ...any) {}})
+	m, err := kiss.Open(ctx, kiss.Options{Device: device, HandshakeTimeout: 5 * time.Second, Logf: discardLogf})
 	if err != nil {
 		res["error"] = "no modem answered on " + device + ": " + err.Error()
 		return res
@@ -85,6 +86,11 @@ func probeKISS(ctx context.Context, device string, res map[string]any) map[strin
 		res["error"] = "stock MeshCore KISS firmware can't use Meshtastic's sync word: flash the RepeaterTastic build"
 	}
 	return res
+}
+
+// discardLogf drops a probe's driver logging.
+func discardLogf(string, ...any) {
+	// A probe reports its outcome in the response; the driver's chatter would only fill the log.
 }
 
 // detect finds out what is on a serial port: a KISS modem, or a board running Meshtastic firmware.
@@ -169,7 +175,7 @@ func (s *Server) probeSPI(w http.ResponseWriter, r *http.Request, device string)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	rad, err := spi.Open(ctx, b, func(string, ...any) {})
+	rad, err := spi.Open(ctx, b, discardLogf)
 	if err != nil {
 		res["error"] = "the board didn't answer (" + src + "): " + err.Error()
 		writeJSON(w, http.StatusOK, res)
@@ -260,32 +266,38 @@ func (s *Server) probeBoard(w http.ResponseWriter, r *http.Request, device strin
 		writeError(w, http.StatusBadRequest, "device must be the board's serial port or its address (host or host:port)")
 		return
 	}
-	if mtclient.IsSerial(device) {
-		if !serialPath(device) {
-			writeError(w, http.StatusBadRequest, "device must be a serial port such as /dev/ttyACM0 or /dev/serial/by-id/…")
-			return
-		}
-	} else {
-		addr, err := mtclient.TCPAddress(device)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Before a password exists anyone can call this: keep it to this machine and the LAN.
-		if s.auth.SetupNeeded() && !lanAddr(r.Context(), addr) {
-			writeError(w, http.StatusBadRequest, "until a password is set, a board's address must be on this machine or the local network")
-			return
-		}
+	if err := s.checkBoardDevice(r.Context(), device); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	s.boardProbe(r.Context(), device, res, 15*time.Second)
 	writeJSON(w, http.StatusOK, res)
+}
+
+// checkBoardDevice checks a board's serial port or network address may be probed.
+func (s *Server) checkBoardDevice(ctx context.Context, device string) error {
+	if mtclient.IsSerial(device) {
+		if !serialPath(device) {
+			return errors.New("device must be a serial port such as /dev/ttyACM0 or /dev/serial/by-id/…")
+		}
+		return nil
+	}
+	addr, err := mtclient.TCPAddress(device)
+	if err != nil {
+		return err
+	}
+	// Before a password exists anyone can call this: keep it to this machine and the LAN.
+	if s.auth.SetupNeeded() && !lanAddr(ctx, addr) {
+		return errors.New("until a password is set, a board's address must be on this machine or the local network")
+	}
+	return nil
 }
 
 // boardProbe connects to a board, reads its settings into res and disconnects.
 func (s *Server) boardProbe(ctx context.Context, device string, res map[string]any, wait time.Duration) {
 	ctx, cancel := context.WithTimeout(ctx, wait+5*time.Second)
 	defer cancel()
-	c := mtclient.New(mtclient.Options{Address: device, ConfigTimeout: wait, Logf: func(string, ...any) {}})
+	c := mtclient.New(mtclient.Options{Address: device, ConfigTimeout: wait, Logf: discardLogf})
 	if err := c.Start(ctx); err != nil {
 		res["error"] = err.Error()
 		return
@@ -360,23 +372,26 @@ func (s *Server) getSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"needed": s.auth.SetupNeeded()})
 }
 
+// setupRequest is the setup wizard's POST /setup.
+type setupRequest struct {
+	Password  string `json:"password"`
+	Region    string `json:"region"`
+	Preset    string `json:"preset"`
+	Driver    string `json:"driver"` // kiss or spi; empty keeps the config's driver
+	Device    string `json:"device"`
+	RelayRole string `json:"relay_role"`
+	// PrimaryChannel names the primary channel ("" = the preset's name), which picks the slot.
+	PrimaryChannel *string `json:"primary_channel"`
+	// Hosted says which meshtasticd runs the nodes; nil keeps the config's.
+	Hosted *config.Hosted `json:"hosted"`
+}
+
 func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	if !s.auth.SetupNeeded() {
 		writeError(w, http.StatusConflict, "setup has already been completed; sign in instead")
 		return
 	}
-	var req struct {
-		Password  string `json:"password"`
-		Region    string `json:"region"`
-		Preset    string `json:"preset"`
-		Driver    string `json:"driver"` // kiss or spi; empty keeps the config's driver
-		Device    string `json:"device"`
-		RelayRole string `json:"relay_role"`
-		// PrimaryChannel names the primary channel ("" = the preset's name), which picks the slot.
-		PrimaryChannel *string `json:"primary_channel"`
-		// Hosted says which meshtasticd runs the nodes; nil keeps the config's.
-		Hosted *config.Hosted `json:"hosted"`
-	}
+	var req setupRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -385,63 +400,11 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
-	s.cfgMu.Lock()
-	next := *s.cfg
-	if req.Region != "" {
-		next.Mesh.Region = strings.ToUpper(req.Region)
-	}
-	if req.Preset != "" {
-		next.Mesh.Preset = strings.ToUpper(req.Preset)
-	}
-	if req.RelayRole != "" {
-		next.Relay.Role = mesh.NormalizeRelayRole(req.RelayRole)
-	}
-	if req.PrimaryChannel != nil {
-		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
-	}
-	if req.Hosted != nil {
-		h := *req.Hosted
-		h.Meshtasticd, h.DockerImage = strings.TrimSpace(h.Meshtasticd), strings.TrimSpace(h.DockerImage)
-		if h.DockerImage != "" && !nodes.OfficialImage(h.DockerImage) {
-			s.cfgMu.Unlock()
-			writeError(w, http.StatusBadRequest, "setup only takes meshtastic/meshtasticd images; choose another under Configuration once signed in")
-			return
-		}
-		next.Hosted = h
-	}
-	req.Device = strings.TrimSpace(req.Device)
-	switch req.Driver {
-	case "kiss", "spi", nodes.BoardDriver:
-		if req.Driver != "kiss" && req.Device == "" {
-			// Don't let a serial port left in the config pass as a board.
-			s.cfgMu.Unlock()
-			if req.Driver == "spi" {
-				writeError(w, http.StatusBadRequest, "driver spi needs a device: a board from GET /boards, or auto")
-			} else {
-				writeError(w, http.StatusBadRequest, "driver meshtastic needs a device: the board's serial port or its address")
-			}
-			return
-		}
-		next.Radio.Driver = req.Driver
-		if req.Device != "" {
-			next.Radio.Device = req.Device
-		}
-	case "":
-		// An older wizard only picks serial ports: don't write one over an SPI radio's board.
-		if req.Device != "" && next.Radio.Driver == "kiss" {
-			next.Radio.Device = req.Device
-		}
-	default:
-		s.cfgMu.Unlock()
-		writeError(w, http.StatusBadRequest, "driver must be kiss, spi or meshtastic")
-		return
-	}
-	if err := next.Validate(); err != nil {
-		s.cfgMu.Unlock()
+	next, err := s.setupConfig(&req)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.cfgMu.Unlock()
 	// The radio settings first: if they can't be applied, no password is set and setup can be
 	// run again.
 	if err := s.applyConfig(r, &next); err != nil {
@@ -455,6 +418,75 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	tok, exp := s.auth.IssueJWT()
 	// A modem that hasn't opened yet switches to the chosen port at once (see followUnopenedDevices).
 	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expires": exp.UnixMilli(), "restart_required": len(s.restartReasons()) > 0})
+}
+
+// setupConfig is the current config with the wizard's choices, validated.
+func (s *Server) setupConfig(req *setupRequest) (config.Config, error) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	next := *s.cfg
+	if err := applySetupChoices(&next, req); err != nil {
+		return next, err
+	}
+	req.Device = strings.TrimSpace(req.Device)
+	if err := applySetupRadio(&next, req.Driver, req.Device); err != nil {
+		return next, err
+	}
+	return next, next.Validate()
+}
+
+// applySetupChoices copies the wizard's region, preset, relay role, primary channel and
+// meshtasticd; blank ones keep the config's.
+func applySetupChoices(next *config.Config, req *setupRequest) error {
+	if req.Region != "" {
+		next.Mesh.Region = strings.ToUpper(req.Region)
+	}
+	if req.Preset != "" {
+		next.Mesh.Preset = strings.ToUpper(req.Preset)
+	}
+	if req.RelayRole != "" {
+		next.Relay.Role = mesh.NormalizeRelayRole(req.RelayRole)
+	}
+	if req.PrimaryChannel != nil {
+		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
+	}
+	if req.Hosted == nil {
+		return nil
+	}
+	h := *req.Hosted
+	h.Meshtasticd, h.DockerImage = strings.TrimSpace(h.Meshtasticd), strings.TrimSpace(h.DockerImage)
+	if h.DockerImage != "" && !nodes.OfficialImage(h.DockerImage) {
+		return errors.New("setup only takes meshtastic/meshtasticd images; choose another under Configuration once signed in")
+	}
+	next.Hosted = h
+	return nil
+}
+
+// applySetupRadio sets the radio's driver and device from the wizard.
+func applySetupRadio(next *config.Config, driver, device string) error {
+	switch driver {
+	case "kiss", "spi", nodes.BoardDriver:
+	case "":
+		// An older wizard only picks serial ports: don't write one over an SPI radio's board.
+		if device != "" && next.Radio.Driver == "kiss" {
+			next.Radio.Device = device
+		}
+		return nil
+	default:
+		return errors.New("driver must be kiss, spi or meshtastic")
+	}
+	// Don't let a serial port left in the config pass as a board.
+	switch {
+	case driver == "spi" && device == "":
+		return errors.New("driver spi needs a device: a board from GET /boards, or auto")
+	case driver == nodes.BoardDriver && device == "":
+		return errors.New("driver meshtastic needs a device: the board's serial port or its address")
+	}
+	next.Radio.Driver = driver
+	if device != "" {
+		next.Radio.Device = device
+	}
+	return nil
 }
 
 func (s *Server) serialPorts(w http.ResponseWriter, r *http.Request) {

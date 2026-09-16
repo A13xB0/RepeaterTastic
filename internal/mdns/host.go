@@ -2,4 +2,5 @@ package mdns
 
 import "os"
 
-func osHostname() (string, error) { return os.Hostname() }
+// osHostname is a variable so tests can supply a hostname.
+var osHostname = os.Hostname

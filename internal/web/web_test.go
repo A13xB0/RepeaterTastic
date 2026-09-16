@@ -77,6 +77,20 @@ func call(t *testing.T, srv *httptest.Server, method, path, token string, body a
 
 func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
 	srv := testWeb(t)
+	tok := checkSetupAndLogin(t, srv)
+	code, st, _ := call(t, srv, "GET", "/api/v1/status", tok, nil)
+	if code != 200 || st["phy"].(map[string]any)["frequency_mhz"].(float64) != 869.525 {
+		t.Fatalf("status %d %v", code, st)
+	}
+	aID, bID := checkCreateIdentities(t, srv, tok)
+	checkDirectMessage(t, srv, tok, aID, bID)
+	checkChannels(t, srv, tok, aID)
+	checkAPITokenAndSPA(t, srv, tok)
+}
+
+// checkSetupAndLogin runs first-time setup, checks a wrong password is refused and signs in.
+func checkSetupAndLogin(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
 	if code, obj, _ := call(t, srv, "GET", "/api/v1/setup", "", nil); code != 200 || obj["needed"] != true {
 		t.Fatalf("setup needed: %d %v", code, obj)
 	}
@@ -95,12 +109,12 @@ func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
 	if tok == "" {
 		t.Fatal("no token")
 	}
+	return tok
+}
 
-	code, st, _ := call(t, srv, "GET", "/api/v1/status", tok, nil)
-	if code != 200 || st["phy"].(map[string]any)["frequency_mhz"].(float64) != 869.525 {
-		t.Fatalf("status %d %v", code, st)
-	}
-
+// checkCreateIdentities previews a key, creates two identities and lists them with the relay.
+func checkCreateIdentities(t *testing.T, srv *httptest.Server, tok string) (string, string) {
+	t.Helper()
 	code, pv, _ := call(t, srv, "POST", "/api/v1/identities/preview-key", tok, map[string]any{})
 	if code != 200 || !strings.HasPrefix(pv["node_id"].(string), "!") {
 		t.Fatalf("preview %d %v", code, pv)
@@ -116,8 +130,12 @@ func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
 	if code, _, list := call(t, srv, "GET", "/api/v1/identities", tok, nil); code != 200 || len(list) != 3 {
 		t.Fatalf("list %d %d", code, len(list))
 	}
+	return a["node_id"].(string), b["node_id"].(string)
+}
 
-	aID, bID := a["node_id"].(string), b["node_id"].(string)
+// checkDirectMessage sends a DM from one identity to another and checks it's queued.
+func checkDirectMessage(t *testing.T, srv *httptest.Server, tok, aID, bID string) {
+	t.Helper()
 	code, m, _ := call(t, srv, "POST", "/api/v1/identities/"+aID+"/messages", tok, map[string]any{"to": bID, "text": "hello ops"})
 	if code != 202 {
 		t.Fatalf("send %d %v", code, m)
@@ -127,7 +145,12 @@ func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].(map[string]any)["text"] != "hello ops" || msgs[0].(map[string]any)["status"] != "queued" {
 		t.Fatalf("DM not queued: %v", msgs)
 	}
+}
 
+// checkChannels checks the channel URL, that the shared primary can't be renamed and that a
+// secondary channel can be added.
+func checkChannels(t *testing.T, srv *httptest.Server, tok, aID string) {
+	t.Helper()
 	code, u, _ := call(t, srv, "GET", "/api/v1/identities/"+aID+"/channels/url", tok, nil)
 	if code != 200 || !strings.HasPrefix(u["url"].(string), "https://meshtastic.org/e/#") {
 		t.Fatalf("channel url %d %v", code, u)
@@ -140,6 +163,11 @@ func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
 		map[string]any{"name": "Ops", "psk": "AQ==", "role": "SECONDARY"}); code != 200 {
 		t.Fatalf("secondary channel %d", code)
 	}
+}
+
+// checkAPITokenAndSPA checks an API token works and GUI routes fall back to the app page.
+func checkAPITokenAndSPA(t *testing.T, srv *httptest.Server, tok string) {
+	t.Helper()
 	code, tk, _ := call(t, srv, "POST", "/api/v1/tokens", tok, map[string]any{"name": "Home Assistant"})
 	if code != 201 {
 		t.Fatalf("token %d", code)

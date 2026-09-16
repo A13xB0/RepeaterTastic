@@ -86,16 +86,7 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 		RelayOwner: func() (string, string) { return "RT Relay", "RTR" }})
 	h.SetHoster(x)
 
-	used := map[uint8]bool{}
-	newID := func(long, short string) *mesh.Identity { // distinct last bytes, as a host needs
-		for {
-			id, _ := mesh.NewIdentity(nil, long, short)
-			if b := wire.LastByte(id.NodeNum); !used[b] {
-				used[b] = true
-				return id
-			}
-		}
-	}
+	newID := distinctIdentities()
 	relay := newID("Old relay", "OLD")
 	relay.IsRelay = true
 	desk := newID("Desk", "DESK")
@@ -103,11 +94,7 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 	_ = desk.SetMaxHops(2)
 	_ = desk.SetFixedPosition(&mesh.IdentityPosition{Latitude: 55.9, Longitude: -3.1, Altitude: 12})
 	desk.Channels[1] = &pb.Channel{Index: 1, Role: pb.Channel_SECONDARY, Settings: &pb.ChannelSettings{Name: "Ops", Psk: []byte("0123456789abcdef")}}
-	for _, id := range []*mesh.Identity{relay, desk} {
-		if _, err := h.AddRecord(ctx, id.Record()); err != nil {
-			t.Fatal(err)
-		}
-	}
+	addRecords(ctx, t, h, relay, desk)
 
 	// Everyone keeps their number, straight away.
 	if h.Relay() == nil || h.Relay().NodeNum != relay.NodeNum || !h.Relay().Hosted() {
@@ -123,19 +110,8 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 		persona, node = l.node(base), l.node(base+1)
 		return persona != nil && node != nil
 	})
-	eventually(t, "persona seeded", func() bool {
-		c := persona.Config()
-		return persona.Num() == relay.NodeNum && persona.Owner().GetLongName() == "RT Relay" &&
-			c.Device.Role == pb.Config_DeviceConfig_ROUTER && persona.Modules().Telemetry.GetDeviceUpdateInterval() == 3600
-	})
-	eventually(t, "identity seeded", func() bool {
-		c := node.Config()
-		chs := node.Channels()
-		return node.Num() == desk.NodeNum && node.Owner().GetLongName() == "Desk" &&
-			c.Device.Role == pb.Config_DeviceConfig_TRACKER && c.Device.RebroadcastMode == pb.Config_DeviceConfig_NONE &&
-			c.Lora.HopLimit == 2 && len(chs) > 1 && chs[1].GetSettings().GetName() == "Ops" &&
-			node.Position().GetLatitudeI() == 559000000 && !node.Modules().Telemetry.GetDeviceTelemetryEnabled()
-	})
+	eventually(t, "persona seeded", func() bool { return personaSeeded(persona, relay.NodeNum) })
+	eventually(t, "identity seeded", func() bool { return deskSeeded(node, desk.NodeNum) })
 	eventually(t, "identity mirrored", func() bool {
 		id := h.Identity(desk.NodeNum)
 		return id != nil && id.ChannelCopy(1).GetSettings().GetName() == "Ops" && len(x.Nodes()) == 2
@@ -148,15 +124,7 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 	if err := h.SaveIdentities(); err != nil {
 		t.Fatal(err)
 	}
-	recs, err := mesh.LoadIdentityRecords(state)
-	if err != nil || len(recs) != 2 {
-		t.Fatalf("saved %d identities: %v", len(recs), err)
-	}
-	for _, r := range recs {
-		if r.NodeNum() != relay.NodeNum && r.NodeNum() != desk.NodeNum {
-			t.Fatalf("saved %q under another key", r.LongName)
-		}
-	}
+	checkSavedRecords(t, state, relay.NodeNum, desk.NodeNum)
 
 	// A disabled identity's node stops transmitting.
 	id := h.Identity(desk.NodeNum)
@@ -174,10 +142,71 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 	if len(x.Nodes()) != 1 {
 		t.Fatalf("nodes after removal = %+v", x.Nodes())
 	}
+	checkInstanceGone(t, dir, base+1)
+}
+
+// distinctIdentities makes identities with distinct last bytes, as a host needs.
+func distinctIdentities() func(long, short string) *mesh.Identity {
+	used := map[uint8]bool{}
+	return func(long, short string) *mesh.Identity {
+		for {
+			id, _ := mesh.NewIdentity(nil, long, short)
+			if b := wire.LastByte(id.NodeNum); !used[b] {
+				used[b] = true
+				return id
+			}
+		}
+	}
+}
+
+// addRecords adds the identities' records to h.
+func addRecords(ctx context.Context, t *testing.T, h *mesh.Host, ids ...*mesh.Identity) {
+	t.Helper()
+	for _, id := range ids {
+		if _, err := h.AddRecord(ctx, id.Record()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// personaSeeded reports whether the persona's node has the relay's identity and settings.
+func personaSeeded(persona *mtclienttest.Node, num uint32) bool {
+	c := persona.Config()
+	return persona.Num() == num && persona.Owner().GetLongName() == "RT Relay" &&
+		c.Device.Role == pb.Config_DeviceConfig_ROUTER && persona.Modules().Telemetry.GetDeviceUpdateInterval() == 3600
+}
+
+// deskSeeded reports whether the node has the Desk identity with its role, hops, channel and position.
+func deskSeeded(node *mtclienttest.Node, num uint32) bool {
+	c := node.Config()
+	chs := node.Channels()
+	return node.Num() == num && node.Owner().GetLongName() == "Desk" &&
+		c.Device.Role == pb.Config_DeviceConfig_TRACKER && c.Device.RebroadcastMode == pb.Config_DeviceConfig_NONE &&
+		c.Lora.HopLimit == 2 && len(chs) > 1 && chs[1].GetSettings().GetName() == "Ops" &&
+		node.Position().GetLatitudeI() == 559000000 && !node.Modules().Telemetry.GetDeviceTelemetryEnabled()
+}
+
+// checkSavedRecords expects exactly the two identities to be saved in state, under their own keys.
+func checkSavedRecords(t *testing.T, state string, a, b uint32) {
+	t.Helper()
+	recs, err := mesh.LoadIdentityRecords(state)
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("saved %d identities: %v", len(recs), err)
+	}
+	for _, r := range recs {
+		if r.NodeNum() != a && r.NodeNum() != b {
+			t.Fatalf("saved %q under another key", r.LongName)
+		}
+	}
+}
+
+// checkInstanceGone expects a removed instance's state directory and port to be gone.
+func checkInstanceGone(t *testing.T, dir string, port int) {
+	t.Helper()
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("state left behind: %v", err)
 	}
-	if c, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(base+1), time.Second); err == nil {
+	if c, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), time.Second); err == nil {
 		c.Close()
 		t.Fatal("the removed node still listens")
 	}
@@ -258,19 +287,13 @@ func TestHostingHealth(t *testing.T) {
 	}
 	x.SetLauncherCheck("2.8.0.test", nil)
 
-	used := map[uint8]bool{}
+	newID := distinctIdentities()
 	add := func(long string, relay bool) {
-		for {
-			id, _ := mesh.NewIdentity(nil, long, "")
-			if b := wire.LastByte(id.NodeNum); !used[b] {
-				used[b] = true
-				id.IsRelay = relay
-				_ = id.SetRole("CLIENT_MUTE")
-				if _, err := h.AddRecord(ctx, id.Record()); err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
+		id := newID(long, "")
+		id.IsRelay = relay
+		_ = id.SetRole("CLIENT_MUTE")
+		if _, err := h.AddRecord(ctx, id.Record()); err != nil {
+			t.Fatal(err)
 		}
 	}
 	add("Relay", true)
@@ -286,6 +309,12 @@ func TestHostingHealth(t *testing.T) {
 		t.Fatalf("problem = %q", p)
 	}
 
-	l.kill(base) // the persona's meshtasticd dies too
+	// The persona's meshtasticd dies too, well after its last settings change.
+	x.mu.Lock()
+	for _, e := range x.nodes {
+		e.hn.committed.Store(0)
+	}
+	x.mu.Unlock()
+	l.kill(base)
 	eventually(t, "persona down", func() bool { return x.Health().State == HealthError })
 }

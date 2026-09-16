@@ -158,11 +158,7 @@ func mergeSettings(schema []Setting, saved, in map[string]any, choices siteChoic
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", s.Label, err)
 		}
-		if str, ok := cv.(string); ok && str == "" {
-			delete(out, k)
-			continue
-		}
-		if list, ok := cv.([]string); ok && len(list) == 0 {
+		if emptyValue(cv) {
 			delete(out, k)
 			continue
 		}
@@ -171,44 +167,27 @@ func mergeSettings(schema []Setting, saved, in map[string]any, choices siteChoic
 	return out, nil
 }
 
+// emptyValue reports whether a coerced value is empty text or an empty list, which clears the setting.
+func emptyValue(v any) bool {
+	switch v := v.(type) {
+	case string:
+		return v == ""
+	case []string:
+		return len(v) == 0
+	}
+	return false
+}
+
 // siteChoices are what "radios" and "identities" settings may name.
 type siteChoices struct {
 	radios, identities []string
 }
 
+// coerce checks a value sent for setting s and converts it to the type saved for it.
 func coerce(s Setting, v any, choices siteChoices) (any, error) {
 	switch s.Type {
 	case "multiselect", "radios", "identities":
-		items, ok := v.([]any)
-		if !ok {
-			if list, isList := v.([]string); isList {
-				for _, x := range list {
-					items = append(items, x)
-				}
-				ok = true
-			}
-		}
-		if !ok {
-			return nil, errors.New("must be a list")
-		}
-		out := []string{}
-		for _, it := range items {
-			str, isStr := it.(string)
-			switch {
-			case !isStr:
-				return nil, errors.New("must be a list of names")
-			case s.Type == "multiselect" && !slices.Contains(s.Options, str):
-				return nil, fmt.Errorf("%q isn't one of %s", str, strings.Join(s.Options, ", "))
-			case s.Type == "radios" && choices.radios != nil && !slices.Contains(choices.radios, str):
-				return nil, fmt.Errorf("there's no radio %q", str)
-			case s.Type == "identities" && choices.identities != nil && !slices.Contains(choices.identities, str):
-				return nil, fmt.Errorf("there's no identity %s", str)
-			}
-			if !slices.Contains(out, str) {
-				out = append(out, str)
-			}
-		}
-		return out, nil
+		return coerceList(s, v, choices)
 	case "bool":
 		b, ok := v.(bool)
 		if !ok {
@@ -216,23 +195,83 @@ func coerce(s Setting, v any, choices siteChoices) (any, error) {
 		}
 		return b, nil
 	case "int", "number":
-		f, ok := v.(float64)
-		if !ok {
-			if i, isInt := v.(int); isInt {
-				f, ok = float64(i), true
-			}
+		return coerceNumber(s, v)
+	}
+	return coerceText(s, v)
+}
+
+// coerceList checks a list setting: a list of names, each one the setting allows, without repeats.
+func coerceList(s Setting, v any, choices siteChoices) (any, error) {
+	items, ok := asList(v)
+	if !ok {
+		return nil, errors.New("must be a list")
+	}
+	out := []string{}
+	for _, it := range items {
+		str, isStr := it.(string)
+		if !isStr {
+			return nil, errors.New("must be a list of names")
 		}
-		if !ok {
-			return nil, errors.New("must be a number")
+		if err := checkListItem(s, str, choices); err != nil {
+			return nil, err
 		}
-		if s.Type == "int" {
-			if f != float64(int64(f)) {
-				return nil, errors.New("must be a whole number")
-			}
-			return int64(f), nil
+		if !slices.Contains(out, str) {
+			out = append(out, str)
 		}
+	}
+	return out, nil
+}
+
+// asList accepts a list from JSON ([]any) or from Go ([]string).
+func asList(v any) ([]any, bool) {
+	switch v := v.(type) {
+	case []any:
+		return v, true
+	case []string:
+		var items []any
+		for _, x := range v {
+			items = append(items, x)
+		}
+		return items, true
+	}
+	return nil, false
+}
+
+// checkListItem checks one name is allowed in list setting s.
+func checkListItem(s Setting, str string, choices siteChoices) error {
+	switch {
+	case s.Type == "multiselect" && !slices.Contains(s.Options, str):
+		return fmt.Errorf("%q isn't one of %s", str, strings.Join(s.Options, ", "))
+	case s.Type == "radios" && choices.radios != nil && !slices.Contains(choices.radios, str):
+		return fmt.Errorf("there's no radio %q", str)
+	case s.Type == "identities" && choices.identities != nil && !slices.Contains(choices.identities, str):
+		return fmt.Errorf("there's no identity %s", str)
+	}
+	return nil
+}
+
+// coerceNumber checks a number setting; an int setting must be whole and is saved as an int64.
+func coerceNumber(s Setting, v any) (any, error) {
+	var f float64
+	switch v := v.(type) {
+	case float64:
+		f = v
+	case int:
+		f = float64(v)
+	default:
+		return nil, errors.New("must be a number")
+	}
+	if s.Type != "int" {
 		return f, nil
 	}
+	if f != float64(int64(f)) {
+		return nil, errors.New("must be a whole number")
+	}
+	return int64(f), nil
+}
+
+// coerceText checks a text setting (string, secret, url, select, ...) and trims it.
+func coerceText(s Setting, v any) (any, error) {
 	str, ok := v.(string)
 	if !ok {
 		return nil, errors.New("must be text")
@@ -240,11 +279,8 @@ func coerce(s Setting, v any, choices siteChoices) (any, error) {
 	str = strings.TrimSpace(str)
 	switch s.Type {
 	case "url":
-		if str != "" {
-			u, err := url.Parse(str)
-			if err != nil || (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "wss" && u.Scheme != "ws") || u.Host == "" {
-				return nil, errors.New("must be a URL like https://example.org")
-			}
+		if str != "" && !webURL(str) {
+			return nil, errors.New("must be a URL like https://example.org")
 		}
 	case "select":
 		if str != "" && !slices.Contains(s.Options, str) {
@@ -255,6 +291,15 @@ func coerce(s Setting, v any, choices siteChoices) (any, error) {
 		return nil, errors.New("is too long")
 	}
 	return str, nil
+}
+
+// webURL reports whether s is an http(s) or ws(s) URL with a host.
+func webURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return slices.Contains([]string{"https", "http", "wss", "ws"}, u.Scheme)
 }
 
 // missingSettings lists required settings without a value.

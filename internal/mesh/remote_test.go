@@ -173,17 +173,7 @@ func TestRemoteReceived(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].Direction != "in" || !msgs[0].PKI || msgs[0].RSSI != -80 {
 		t.Fatalf("messages %+v", msgs)
 	}
-	var rec *PacketRecord
-	for rec == nil {
-		select {
-		case e := <-events:
-			if r, ok := e.Data.(PacketRecord); ok && e.Type == "packet" {
-				rec = &r
-			}
-		case <-time.After(time.Second):
-			t.Fatal("no packet record")
-		}
-	}
+	rec := nextEvent(t, events, "packet").Data.(PacketRecord)
 	if rec.Kind != "delivered" || rec.Channel != "PKI" || rec.Summary == "" {
 		t.Fatalf("record %+v", rec)
 	}
@@ -192,16 +182,8 @@ func TestRemoteReceived(t *testing.T) {
 	rd, _ := proto.Marshal(&pb.RouteDiscovery{Route: []uint32{0x12345678}, SnrTowards: []int32{20, 24}})
 	h.RemoteReceived(id, &pb.MeshPacket{From: 0x0badcafe, To: remoteNum, Id: 8,
 		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_TRACEROUTE_APP, Payload: rd, RequestId: 5}}})
-	found := false
-	for !found {
-		select {
-		case e := <-events:
-			if tr, ok := e.Data.(TracerouteResult); ok {
-				found = len(tr.Route) == 1 && tr.Route[0] == "!12345678"
-			}
-		case <-time.After(time.Second):
-			t.Fatal("no traceroute result")
-		}
+	if tr := nextEvent(t, events, "traceroute").Data.(TracerouteResult); len(tr.Route) != 1 || tr.Route[0] != "!12345678" {
+		t.Fatalf("traceroute result %+v", tr)
 	}
 
 	// The host never answers for the node, and ignores frames a link injects.

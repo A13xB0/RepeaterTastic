@@ -111,8 +111,18 @@ A host can run several radios ([Several radios](radios.md)). Radio `main` is the
 - **`?radio=<id>`** picks the radio for endpoints about one radio: status, relay, identity list and
   create, preview-key, nodes, node actions, packets, events, statistics, config and links. Without
   it, they use the main radio. An unknown id also falls back to the main radio.
-- **`?radio=all`** is only supported by `GET /identities`.
-- Endpoints under `/identities/{node_id}/…` find the identity's radio themselves.
+- **`?radio=all`** covers every radio of the site: `GET /identities`, `/nodes`, `/packets`, `/links`,
+  `/events` and the `/stats/…` endpoints. The GUI uses it everywhere, filtering by radio itself.
+  - Packets carry `radio_id`, and are merged newest first. Links carry `radio_id` and `radio_name`.
+    Identity statistics carry `radio_id`.
+  - Nodes are merged: each is shown as its most recent sighting, with `heard_by` listing every radio
+    that heard it (empty for the site's own identities). A single-radio `GET /nodes` has
+    `heard_by` too.
+  - Airtime buckets are summed over the radios, and RF points combined.
+  - `GET /events?radio=all` sends a `status` event for each radio every few seconds (`radio_id` says
+    which), packets with `radio_id`, and node events merged as above.
+- Endpoints under `/identities/{node_id}/…` and `/nodes/{node_id}/…` find the identity's radio
+  themselves.
 
 | Method and path | Body → response |
 | --- | --- |
@@ -345,7 +355,7 @@ is a Meshtastic routing error such as `NO_INTERFACE` or `MAX_RETRANSMIT`.
 
 ## Nodes
 
-`GET /nodes[?radio=<id>]` → `[Node]`, the radio's shared node database.
+`GET /nodes[?radio=<id>|all]` → `[Node]`, the radio's shared node database (every radio's, merged, with `all`).
 
 ```json
 {"node_id": "!5b9e2213", "node_num": 1537090067, "long_name": "Hilltop", "short_name": "HILL",
@@ -381,7 +391,7 @@ is a Meshtastic routing error such as `NO_INTERFACE` or `MAX_RETRANSMIT`.
 
 ## Packets
 
-`GET /packets[?radio=<id>]` → `[Packet]`, newest first.
+`GET /packets[?radio=<id>|all]` → `[Packet]`, newest first.
 
 | Query | Meaning |
 | --- | --- |
@@ -551,7 +561,7 @@ connections are edited through `PUT /config`.
 | `GET /tokens` | → `[{"id", "name", "created_at", "last_used"}]` (`last_used` is `null` or a time, updated at most hourly) |
 | `POST /tokens` | `{"name"}` → 201 `{"id", "name", "token", "created_at", "last_used": null}` |
 | `DELETE /tokens/{id}` | → 204, or 404 |
-| `GET /logs?limit=` | → `[{"time", "level", "msg"}]`, `limit` 1-2000 (default 500) |
+| `GET /logs?limit=` | → `[{"time", "level", "msg", "radio", "identity"}]`, `limit` 1-2000 (default 500); `radio` and `identity` (a node ID) say what the line is about, when it's about one |
 | `GET /backup` | → the backup file |
 | `POST /restore` | the backup file → `{"restart_required": true}` |
 
@@ -574,10 +584,14 @@ board itself as its relay; its identities still run on meshtasticd, one hop behi
 | --- | --- |
 | `GET /hosted` | → `{"meshtasticd", "docker_image", "port_base", "min_version", "instances", "restart_required"}` |
 | `PUT /hosted` | `{"meshtasticd", "docker_image", "port_base"}` → the same as `GET` (applies at restart) |
+| `GET /hosted/{name}/log` | → `[{"time", "text"}]`, the last 1000 lines that instance's meshtasticd printed, oldest first |
 
 - `instances` are the meshtasticd processes running now: `{"radio", "role", "name", "launcher",
-  "port", "running", "connected", "restarts", "last_error", "firmware", "node_id", "log"}`, with
-  `log` the last lines meshtasticd printed. `role` is `persona` or `identity`.
+  "port", "running", "connected", "since", "restarts", "reboots", "last_error", "stops",
+  "firmware", "node_id"}`. `role` is `persona` or `identity`; `since` is when the current process
+  started. `restarts` counts unexpected stops and `reboots` the stops that applied settings
+  RepeaterTastic had just given it (meshtasticd reboots for some). `stops` are the last 20, each
+  `{"time", "reason", "reboot"}`. `GET /hosted/{name}/log` has the instance's output.
 - `GET /setup/runtimes` (no token during setup) → `{"meshtasticd": {"found", "path", "version",
   "ok", "error"}, "docker": {"found", "ok", "version", "error", "image", "image_present"},
   "min_version"}`: whether meshtasticd is installed and new enough, and whether Docker answers and

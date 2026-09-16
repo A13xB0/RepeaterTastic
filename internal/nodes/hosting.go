@@ -31,6 +31,8 @@ type HostingOptions struct {
 	// RelayOwner names the persona (the configured relay names).
 	RelayOwner func() (long, short string)
 	Logf       func(string, ...any)
+	// NodeLogf, when set, logs for one node (by node ID), so its lines say which identity they're about.
+	NodeLogf func(nodeID string) func(string, ...any)
 }
 
 // Hosting runs a radio's identities as hosted meshtasticd nodes on its air: a mesh.Hoster.
@@ -59,7 +61,7 @@ var _ mesh.Hoster = (*Hosting)(nil)
 // NewHosting runs hosted nodes until ctx ends.
 func NewHosting(ctx context.Context, o HostingOptions) *Hosting {
 	if o.Logf == nil {
-		o.Logf = func(string, ...any) {}
+		o.Logf = discardLogf
 	}
 	return &Hosting{ctx: ctx, opts: o, nodes: map[*Node]*hostedEntry{}, starting: map[int]bool{}}
 }
@@ -98,7 +100,11 @@ func (x *Hosting) HostIdentity(ctx context.Context, h *mesh.Host, rec mesh.Ident
 			Port: x.opts.PortBase + slot, HWID: HWIDFor(x.opts.Radio + "/" + nodeID)}
 	}
 	// The node lives as long as the hosting (x.ctx), not the request that started it.
-	hn, err := StartHosted(x.ctx, x.opts.Launcher, in, x.opts.Logf)
+	logf := x.opts.Logf
+	if x.opts.NodeLogf != nil {
+		logf = x.opts.NodeLogf(wire.NodeID(num))
+	}
+	hn, err := StartHosted(x.ctx, x.opts.Launcher, in, logf)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +132,7 @@ func (x *Hosting) HostIdentity(ctx context.Context, h *mesh.Host, rec mesh.Ident
 	x.mu.Lock()
 	x.nodes[hn.Node] = &hostedEntry{hn: hn, host: h, slot: slot, role: role, started: time.Now(), running: done}
 	x.mu.Unlock()
-	x.opts.Logf("meshtasticd: %s %s runs on %s, port %d", role, id.NodeID(), x.opts.Launcher.Describe(), in.Port)
+	logf("meshtasticd: %s %s runs on %s, port %d", role, id.NodeID(), x.opts.Launcher.Describe(), in.Port)
 	return id, nil
 }
 
@@ -222,6 +228,22 @@ type Health struct {
 	Launcher string   `json:"launcher"`
 }
 
+// settling reports whether a node that isn't up is still starting or rebooting, so not yet a problem.
+func (e *hostedEntry) settling(st HostedStatus, now time.Time) bool {
+	return now.Sub(e.started) < startGrace && st.Restarts == 0 || rebooting(st, now)
+}
+
+// downReason says why a node isn't up.
+func downReason(st HostedStatus) string {
+	switch {
+	case st.LastError != "":
+		return st.LastError
+	case !st.Running:
+		return "not running"
+	}
+	return "not connected"
+}
+
 // Health reports whether meshtasticd runs and every node is connected.
 func (x *Hosting) Health() Health {
 	now := time.Now()
@@ -244,24 +266,20 @@ func (x *Hosting) Health() Health {
 	for _, r := range rows {
 		if r.st.Running && r.st.Connected {
 			h.Up++
+			if p := r.e.hn.SettingsProblem(); p != "" {
+				h.Problems = append(h.Problems, fmt.Sprintf("%s: meshtasticd %s", r.e.who(), p))
+			}
 			continue
 		}
-		if now.Sub(r.e.started) < startGrace && r.st.Restarts == 0 {
+		if r.e.settling(r.st, now) {
 			starting = true
 			continue
 		}
-		who := "identity " + r.e.hn.label()
+		who := r.e.who()
 		if r.e.role == "persona" {
-			who, personaDown = "relay persona", true
+			personaDown = true
 		}
-		why := "not connected"
-		switch {
-		case r.st.LastError != "":
-			why = r.st.LastError
-		case !r.st.Running:
-			why = "not running"
-		}
-		h.Problems = append(h.Problems, fmt.Sprintf("%s: %s", who, why))
+		h.Problems = append(h.Problems, fmt.Sprintf("%s: %s", who, downReason(r.st)))
 	}
 	switch {
 	case launchErr != "" && h.Up == 0:
@@ -288,4 +306,33 @@ func (h *Hosted) label() string {
 		return id.NodeID()
 	}
 	return h.inst.Name
+}
+
+// rebooting reports whether a node is down only because it is rebooting to apply settings.
+func rebooting(st HostedStatus, now time.Time) bool {
+	if len(st.Stops) == 0 {
+		return false
+	}
+	last := st.Stops[len(st.Stops)-1]
+	return last.Reboot && now.Sub(time.UnixMilli(last.Time)) < startGrace
+}
+
+// InstanceLog is the log of the instance with that name, or false.
+func (x *Hosting) InstanceLog(name string) ([]LogLine, bool) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for _, e := range x.nodes {
+		if e.hn.Instance().Name == name {
+			return e.hn.Log(), true
+		}
+	}
+	return nil, false
+}
+
+// who names the node for a health problem.
+func (e *hostedEntry) who() string {
+	if e.role == "persona" {
+		return "relay persona"
+	}
+	return "identity " + e.hn.label()
 }

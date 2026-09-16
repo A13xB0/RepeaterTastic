@@ -10,16 +10,17 @@ The top-level radio stays the **main** radio and existing configs keep working u
   EU_868, LongFast, MediumFast, MediumSlow and ShortFast all sit on 869.525 MHz.
 - **Site airtime cap:** `site.duty_cycle_percent` caps the summed airtime of all radios.
 - **Web GUI:** Configuration → Radios adds, edits, renames and removes radios, and sets the site
-  airtime cap. A radio switcher appears in the top bar once there's more than one; the Relay,
-  Airtime, Position and MQTT tabs and most pages follow it. A new radio starts at the next restart
+  airtime cap. With more than one radio, the top bar shows each on its own row, every page
+  shows all radios (with a radio filter where it helps), and the Relay, Airtime, Position and MQTT
+  tabs have a radio selector. A new radio starts at the next restart
   (its settings can still be edited before then).
 - **Identities:** each lives on one radio. Move one from its editor: key, node ID, app port and
   chats go with it, and its primary channel follows the new preset. A key can't be imported onto a
   second radio.
 - **Relay:** each radio has its own relay role: a Meshtastic role (client, client_base, client_mute, router,
   router_late), monitor (listens only) or off
-  (the radio is ignored). Set it from the top bar or Configuration → Relay with that radio picked.
-- **API:** `?radio=<id>` selects a radio (see [HTTP API](api.md#radios-and-the-radio-parameter)).
+  (the radio is ignored). Set it from that radio's row in the top bar, or Configuration → Relay with that radio selected.
+- **API:** `?radio=<id>` selects a radio and `?radio=all` covers them all (see [HTTP API](api.md#radios-and-the-radio-parameter)).
 - **EU_868 notes:** LongTurbo's 500 kHz doesn't fit the 250 kHz sub-band, and LongSlow sits on 869.4625 MHz.
 
 ## Adding a radio

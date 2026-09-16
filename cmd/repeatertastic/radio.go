@@ -83,7 +83,7 @@ func openRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (ra
 	case nodes.BoardDriver:
 		// A board on Meshtastic firmware: it is the radio's relay, and the identities reach the air
 		// through its MQTT client proxy, a hop behind.
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.ID) }
+		logf := logfFor(log)
 		board, err := nodes.OpenBoard(ctx, rc.Radio.Device, filepath.Join(rc.StateDir, "board"), logf)
 		if err != nil {
 			return nil, nil, err
@@ -92,7 +92,7 @@ func openRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (ra
 	case "kiss", "spi":
 		// One lazy radio for both drivers, so first-time setup can switch driver as well as device
 		// before anything has opened (see web.followUnopenedDevices).
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.Radio.Driver) }
+		logf := logfFor(log.With("driver", rc.Radio.Driver))
 		open := modemOpener(rc.Radio.Baud, log)
 		return lazy.New(open, radio.Info{Driver: rc.Radio.Driver, Device: rc.Radio.Device}, 5*time.Second, logf), nil, nil
 	default:
@@ -105,7 +105,7 @@ func openRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (ra
 func modemOpener(baud int, log *slog.Logger) func(ctx context.Context, driver, device string) (radio.Radio, error) {
 	var logged string // the board last described, so retries don't repeat it
 	return func(ctx context.Context, driver, device string) (radio.Radio, error) {
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", driver) }
+		logf := logfFor(log.With("driver", driver))
 		if driver != "spi" {
 			return kiss.Open(ctx, kiss.Options{Device: device, Baud: baud, Logf: logf})
 		}
@@ -148,19 +148,9 @@ func attachBoard(ctx context.Context, host *mesh.Host, board *nodes.BoardRadio) 
 func (rt *radioRuntime) startLinks(ctx context.Context, uplinked *mqtt.Uplinked, log *slog.Logger) error {
 	rc, host := rt.rc, rt.host
 	if rc.Links.UDPMulticast.Enabled {
-		var groups []string
-		if g := rc.Links.UDPMulticast.Group; g != "" && !strings.Contains(g, ":") {
-			groups = strings.Split(g, ",")
-		}
-		var err error
-		if rt.udp, err = udp.New(host, groups, 0, "", log); err != nil {
+		if err := rt.startUDP(ctx, log); err != nil {
 			return err
 		}
-		go func() {
-			if err := rt.udp.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("UDP link stopped", "err", err)
-			}
-		}()
 	}
 	origins := mqtt.NewOrigins()
 	for _, mc := range rc.Links.MQTT {
@@ -176,13 +166,30 @@ func (rt *radioRuntime) startLinks(ctx context.Context, uplinked *mqtt.Uplinked,
 			Latitude: mc.MapReport.Latitude, Longitude: mc.MapReport.Longitude, Altitude: mc.MapReport.Altitude,
 			Origins: origins, Uplinked: uplinked}, log)
 		rt.mqtt = append(rt.mqtt, l)
-		go func() {
-			if err := l.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("MQTT link stopped", "connection", mc.Name, "err", err)
-			}
-		}()
+		go runLink(ctx, l.Run, log, "MQTT link stopped", "connection", mc.Name)
 	}
 	return nil
+}
+
+// startUDP starts the radio's UDP multicast link.
+func (rt *radioRuntime) startUDP(ctx context.Context, log *slog.Logger) error {
+	var groups []string
+	if g := rt.rc.Links.UDPMulticast.Group; g != "" && !strings.Contains(g, ":") {
+		groups = strings.Split(g, ",")
+	}
+	var err error
+	if rt.udp, err = udp.New(rt.host, groups, 0, "", log); err != nil {
+		return err
+	}
+	go runLink(ctx, rt.udp.Run, log, "UDP link stopped")
+	return nil
+}
+
+// runLink runs a link until ctx ends, logging msg (with args) if it stops for another reason.
+func runLink(ctx context.Context, run func(context.Context) error, log *slog.Logger, msg string, args ...any) {
+	if err := run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Error(msg, append(args, "err", err)...)
+	}
 }
 
 // loadIdentities restores identities from the state dir, or creates the relay persona and the
@@ -195,6 +202,23 @@ func loadIdentities(ctx context.Context, cfg *config.Config, host *mesh.Host, lo
 	}
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].IsRelay && !recs[j].IsRelay }) // the persona first
 	boardRelay := host.Relay() != nil                                                          // a board is the relay
+	restoreRecords(ctx, host, recs, boardRelay, log)
+	if host.Relay() == nil && !keptRelay(recs, boardRelay) {
+		if err := createRelay(ctx, cfg, host, log); err != nil {
+			return err
+		}
+	}
+	if len(recs) == 0 {
+		if err := createConfigIdentities(ctx, cfg, host, log); err != nil {
+			return err
+		}
+	}
+	return host.SaveIdentities()
+}
+
+// restoreRecords starts the saved identities, keeping any that can't start (and the saved
+// relay persona while a board is the relay) for the next start.
+func restoreRecords(ctx context.Context, host *mesh.Host, recs []mesh.IdentityRecord, boardRelay bool, log *slog.Logger) {
 	for _, rec := range recs {
 		if rec.IsRelay && boardRelay {
 			host.KeepRecord(rec) // back when the radio isn't a board any more
@@ -205,35 +229,40 @@ func loadIdentities(ctx context.Context, cfg *config.Config, host *mesh.Host, lo
 			host.KeepRecord(rec)
 		}
 	}
-	if host.Relay() == nil && !keptRelay(recs, boardRelay) {
-		relay, err := newUniqueIdentity(host, cfg.Relay.LongName, cfg.Relay.ShortName)
+}
+
+// createRelay makes a new relay persona from the config.
+func createRelay(ctx context.Context, cfg *config.Config, host *mesh.Host, log *slog.Logger) error {
+	relay, err := newUniqueIdentity(host, cfg.Relay.LongName, cfg.Relay.ShortName)
+	if err != nil {
+		return err
+	}
+	relay.IsRelay = true
+	if _, err := host.AddRecord(ctx, relay.Record()); err != nil {
+		log.Error("relay persona not started; kept for the next start", "node", relay.NodeID(), "err", err)
+		host.KeepRecord(relay.Record())
+	} else {
+		log.Info("created relay persona", "node", relay.NodeID())
+	}
+	return nil
+}
+
+// createConfigIdentities makes the identities listed in the config, on first start.
+func createConfigIdentities(ctx context.Context, cfg *config.Config, host *mesh.Host, log *slog.Logger) error {
+	for _, ci := range cfg.Identities {
+		id, err := newUniqueIdentity(host, ci.LongName, ci.ShortName)
 		if err != nil {
 			return err
 		}
-		relay.IsRelay = true
-		if _, err := host.AddRecord(ctx, relay.Record()); err != nil {
-			log.Error("relay persona not started; kept for the next start", "node", relay.NodeID(), "err", err)
-			host.KeepRecord(relay.Record())
-		} else {
-			log.Info("created relay persona", "node", relay.NodeID())
+		id.APIPort, id.APIBind = ci.APIPort, ci.APIBind
+		if _, err := host.AddRecord(ctx, id.Record()); err != nil {
+			log.Error("identity not started; kept for the next start", "node", id.NodeID(), "err", err)
+			host.KeepRecord(id.Record())
+			continue
 		}
+		log.Info("created identity", "node", id.NodeID(), "name", ci.LongName, "api_port", ci.APIPort)
 	}
-	if len(recs) == 0 {
-		for _, ci := range cfg.Identities {
-			id, err := newUniqueIdentity(host, ci.LongName, ci.ShortName)
-			if err != nil {
-				return err
-			}
-			id.APIPort, id.APIBind = ci.APIPort, ci.APIBind
-			if _, err := host.AddRecord(ctx, id.Record()); err != nil {
-				log.Error("identity not started; kept for the next start", "node", id.NodeID(), "err", err)
-				host.KeepRecord(id.Record())
-				continue
-			}
-			log.Info("created identity", "node", id.NodeID(), "name", ci.LongName, "api_port", ci.APIPort)
-		}
-	}
-	return host.SaveIdentities()
+	return nil
 }
 
 // keptRelay reports whether a saved relay persona couldn't be started (so no new one is made).
@@ -271,12 +300,13 @@ func newUniqueIdentity(host *mesh.Host, long, short string) (*mesh.Identity, err
 func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, relay *nodes.Node, log *slog.Logger) *nodes.Hosting {
 	hc := rc.Hosted
 	l := nodes.LauncherFor(hc.Meshtasticd, hc.DockerImage)
-	logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.ID) }
+	logf := logfFor(log)
 	relayLong, relayShort := rc.Relay.LongName, rc.Relay.ShortName
 	air := nodes.NewLoRaAir(host, logf).WithRelay(relay)
 	opts := nodes.HostingOptions{Launcher: l, Air: air, Radio: rc.ID,
 		Dir: filepath.Join(rc.StateDir, "hosted"), PortBase: hc.RadioPortBase(index),
-		RelayOwner: func() (string, string) { return relayLong, relayShort }, Logf: logf}
+		RelayOwner: func() (string, string) { return relayLong, relayShort }, Logf: logf,
+		NodeLogf: func(nodeID string) func(string, ...any) { return logfFor(log.With("identity", nodeID)) }}
 	if relay != nil {
 		opts.HopsBehind = 1
 	}
@@ -293,4 +323,23 @@ func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *m
 			"behind_board", relay != nil, "ports_from", hc.RadioPortBase(index))
 	}
 	return x
+}
+
+// logfFor adapts a logger to the printf-style logging of the radio and node packages. A message
+// marked "ERROR " or "WARN " (after its "component: " prefix) is logged at that level; lines
+// meshtasticd printed as errors are warnings here.
+func logfFor(l *slog.Logger) func(string, ...any) {
+	return func(f string, a ...any) {
+		msg := fmt.Sprintf(f, a...)
+		level := slog.LevelInfo
+		switch {
+		case strings.Contains(msg, ": ERROR "):
+			level, msg = slog.LevelError, strings.Replace(msg, ": ERROR ", ": ", 1)
+		case strings.Contains(msg, ": WARN "):
+			level, msg = slog.LevelWarn, strings.Replace(msg, ": WARN ", ": ", 1)
+		case strings.Contains(msg, "ERROR |") || strings.Contains(msg, "CRIT |"):
+			level = slog.LevelWarn
+		}
+		l.Log(context.Background(), level, msg)
+	}
 }

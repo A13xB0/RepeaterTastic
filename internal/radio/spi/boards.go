@@ -21,6 +21,14 @@ var boardFiles embed.FS
 // boardDirs are where meshtasticd installs board files; they win over the built-in copies.
 var boardDirs = []string{"/etc/meshtasticd/config.d", "/etc/meshtasticd/available.d"}
 
+// Where detectBoard looks for a radio; variables so tests can point them at fixtures.
+var (
+	usbDevicesDir = "/sys/bus/usb/devices"
+	hatDir        = "/proc/device-tree/hat"
+	rakI2CDev     = "/dev/i2c-1"
+	readEEPROM    = readRAKEEPROM
+)
+
 // Resolve finds the board for a radio.device setting:
 //   - a path to a meshtasticd board file or config.yaml (Module: auto detects the board);
 //   - a board file name, with or without "lora-" and ".yaml" (lora-MeshAdv-900M30S.yaml,
@@ -43,7 +51,26 @@ func Resolve(device string) (Board, string, error) {
 	return findBoard(device)
 }
 
+// findBoard looks a board file name up in boardDirs, then in the built-in copies.
 func findBoard(name string) (Board, string, error) {
+	candidates := boardCandidates(name)
+	if p := findInstalledBoard(candidates); p != "" {
+		b, err := LoadBoard(p)
+		return b, p, err
+	}
+	if file := findBuiltinBoard(candidates); file != "" {
+		data, _ := boardFiles.ReadFile("boards/" + file)
+		b, err := ParseBoard(data)
+		if err != nil {
+			return Board{}, "", fmt.Errorf("built-in %s: %w", file, err)
+		}
+		return b, "built-in " + file, nil
+	}
+	return Board{}, "", fmt.Errorf("no board file %q in %s or the built-in list (kisstool boards lists them)", name, strings.Join(boardDirs, ", "))
+}
+
+// boardCandidates are the file names name might mean, with and without ".yaml" and "lora-".
+func boardCandidates(name string) []string {
 	candidates := []string{name}
 	if !strings.HasSuffix(name, ".yaml") {
 		candidates = append(candidates, name+".yaml")
@@ -53,28 +80,33 @@ func findBoard(name string) (Board, string, error) {
 			candidates = append(candidates, "lora-"+c)
 		}
 	}
+	return candidates
+}
+
+// findInstalledBoard is the path of the first candidate in boardDirs, or "".
+func findInstalledBoard(candidates []string) string {
 	for _, dir := range boardDirs {
 		for _, c := range candidates {
 			if p := filepath.Join(dir, c); fileExists(p) {
-				b, err := LoadBoard(p)
-				return b, p, err
+				return p
 			}
 		}
 	}
+	return ""
+}
+
+// findBuiltinBoard is the name of the first candidate among the built-in files (ignoring case),
+// or "".
+func findBuiltinBoard(candidates []string) string {
 	entries, _ := fs.ReadDir(boardFiles, "boards")
 	for _, c := range candidates {
 		for _, e := range entries {
 			if strings.EqualFold(e.Name(), c) {
-				data, _ := boardFiles.ReadFile("boards/" + e.Name())
-				b, err := ParseBoard(data)
-				if err != nil {
-					return Board{}, "", fmt.Errorf("built-in %s: %w", e.Name(), err)
-				}
-				return b, "built-in " + e.Name(), nil
+				return e.Name()
 			}
 		}
 	}
-	return Board{}, "", fmt.Errorf("no board file %q in %s or the built-in list (kisstool boards lists them)", name, strings.Join(boardDirs, ", "))
+	return ""
 }
 
 func fileExists(p string) bool {
@@ -122,53 +154,65 @@ func autoconfName(s string) string {
 // HAT+ EEPROM, then a RAK board EEPROM on I2C.
 func detectBoard() (Board, string, error) {
 	var tried []string
-	try := func(how, file string) (Board, string, bool) {
+	for _, detect := range []func() (how, file, miss string){detectUSBBoard, detectHATBoard, detectRAKBoard} {
+		how, file, miss := detect()
+		if miss != "" {
+			tried = append(tried, miss)
+			continue
+		}
 		b, src, err := findBoard(file)
 		if err != nil {
 			tried = append(tried, fmt.Sprintf("%s → %s: %v", how, file, err))
-			return Board{}, "", false
+			continue
 		}
-		return b, how + " → " + src, true
-	}
-	if product := usbProduct(0x1A86, 0x5512); product != "" {
-		file, ok := autoconfProducts[product]
-		if !ok {
-			file = autoconfName("lora-usb-" + product + ".yaml")
-		}
-		if b, src, ok := try("CH341 USB "+product, file); ok {
-			return b, src, nil
-		}
-	} else {
-		tried = append(tried, "no CH341 USB radio")
-	}
-	if product := readDT("/proc/device-tree/hat/product"); product != "" {
-		vendor := readDT("/proc/device-tree/hat/vendor")
-		file, ok := autoconfProducts[product]
-		if !ok {
-			file = autoconfName("lora-hat-" + vendor + "-" + product + ".yaml")
-		}
-		if b, src, ok := try("Pi HAT+ "+vendor+" "+product, file); ok {
-			return b, src, nil
-		}
-	} else {
-		tried = append(tried, "no Pi HAT+ EEPROM")
-	}
-	if model, err := readRAKEEPROM("/dev/i2c-1"); err == nil {
-		if file, ok := autoconfProducts[model]; ok {
-			if b, src, ok := try("EEPROM "+model, file); ok {
-				return b, src, nil
-			}
-		} else {
-			tried = append(tried, "EEPROM model "+model+" isn't known")
-		}
-	} else {
-		tried = append(tried, "no RAK EEPROM: "+err.Error())
+		return b, how + " → " + src, nil
 	}
 	return Board{}, "", fmt.Errorf("couldn't detect the radio board (%s): set radio.device to its board file", strings.Join(tried, "; "))
 }
 
+// detectUSBBoard names the board file for a CH341 USB radio's product string, or says why not
+// (miss).
+func detectUSBBoard() (how, file, miss string) {
+	product := usbProduct(0x1A86, 0x5512)
+	if product == "" {
+		return "", "", "no CH341 USB radio"
+	}
+	file, ok := autoconfProducts[product]
+	if !ok {
+		file = autoconfName("lora-usb-" + product + ".yaml")
+	}
+	return "CH341 USB " + product, file, ""
+}
+
+// detectHATBoard names the board file for a Pi HAT+ EEPROM, or says why not (miss).
+func detectHATBoard() (how, file, miss string) {
+	product := readDT(filepath.Join(hatDir, "product"))
+	if product == "" {
+		return "", "", "no Pi HAT+ EEPROM"
+	}
+	vendor := readDT(filepath.Join(hatDir, "vendor"))
+	file, ok := autoconfProducts[product]
+	if !ok {
+		file = autoconfName("lora-hat-" + vendor + "-" + product + ".yaml")
+	}
+	return "Pi HAT+ " + vendor + " " + product, file, ""
+}
+
+// detectRAKBoard names the board file for a RAK EEPROM on I2C, or says why not (miss).
+func detectRAKBoard() (how, file, miss string) {
+	model, err := readEEPROM(rakI2CDev)
+	if err != nil {
+		return "", "", "no RAK EEPROM: " + err.Error()
+	}
+	file, ok := autoconfProducts[model]
+	if !ok {
+		return "", "", "EEPROM model " + model + " isn't known"
+	}
+	return "EEPROM " + model, file, ""
+}
+
 func usbProduct(vid, pid uint16) string {
-	dirs, _ := filepath.Glob("/sys/bus/usb/devices/*")
+	dirs, _ := filepath.Glob(filepath.Join(usbDevicesDir, "*"))
 	for _, d := range dirs {
 		v, _ := os.ReadFile(filepath.Join(d, "idVendor"))
 		p, _ := os.ReadFile(filepath.Join(d, "idProduct"))

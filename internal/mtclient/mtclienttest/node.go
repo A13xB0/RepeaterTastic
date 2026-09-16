@@ -339,27 +339,9 @@ func (n *Node) answer(conn io.Writer, p *pb.MeshPacket) bool {
 		n.mu.Unlock()
 		ack(pb.Routing_NONE)
 	case *pb.AdminMessage_SetConfig:
-		n.mu.Lock()
-		if lora := v.SetConfig.GetLora(); lora != nil && n.mintKey && n.config.GetLora().GetRegion() == pb.Config_LoRaConfig_UNSET &&
-			lora.GetRegion() != pb.Config_LoRaConfig_UNSET {
-			pub := []byte(fmt.Sprintf("minted key for %08x..........", n.num))
-			n.config.Security.PublicKey = pub
-			n.num = crc32.ChecksumIEEE(pub)
-			n.owner.PublicKey, n.owner.Id = pub, fmt.Sprintf("!%08x", n.num)
-			mergeConfig(n.config, v.SetConfig)
-			n.mu.Unlock()
-			return true // the ack goes to the old number: lost
+		if n.setConfig(v.SetConfig) {
+			ack(pb.Routing_NONE)
 		}
-		if sec := v.SetConfig.GetSecurity(); sec != nil && !bytes.Equal(sec.GetPublicKey(), n.config.GetSecurity().GetPublicKey()) {
-			n.newKey = sec.GetPublicKey() // the node number follows the key (2.8)
-			if !wire.Clamped(sec.GetPrivateKey()) {
-				// 2.8 replaces an unclamped key with a new one when it boots.
-				n.newKey = []byte(fmt.Sprintf("regenerated key %d", n.dials))
-			}
-		}
-		mergeConfig(n.config, v.SetConfig)
-		n.mu.Unlock()
-		ack(pb.Routing_NONE)
 	case *pb.AdminMessage_SetModuleConfig:
 		n.mu.Lock()
 		mergeModule(n.modules, v.SetModuleConfig)
@@ -390,15 +372,7 @@ func (n *Node) answer(conn io.Writer, p *pb.MeshPacket) bool {
 		ack(pb.Routing_NONE)
 	case *pb.AdminMessage_CommitEditSettings:
 		ack(pb.Routing_NONE)
-		n.mu.Lock()
-		reboot := n.reboot
-		if n.newKey != nil {
-			n.num = crc32.ChecksumIEEE(n.newKey)
-			n.owner.PublicKey, n.owner.Id = n.newKey, fmt.Sprintf("!%08x", n.num)
-			n.newKey, reboot = nil, true
-		}
-		n.mu.Unlock()
-		return !reboot
+		return !n.commitEdit()
 	case *pb.AdminMessage_RebootSeconds:
 		ack(pb.Routing_NOT_AUTHORIZED)
 	case *pb.AdminMessage_FactoryResetDevice:
@@ -410,6 +384,45 @@ func (n *Node) answer(conn io.Writer, p *pb.MeshPacket) bool {
 		ack(pb.Routing_NONE)
 	}
 	return true
+}
+
+// setConfig applies a SetConfig and reports whether to ack it. Setting the region on a node that
+// mints its key changes the node number at once, so that ack is lost.
+func (n *Node) setConfig(cfg *pb.Config) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if lora := cfg.GetLora(); lora != nil && n.mintKey && n.config.GetLora().GetRegion() == pb.Config_LoRaConfig_UNSET &&
+		lora.GetRegion() != pb.Config_LoRaConfig_UNSET {
+		pub := []byte(fmt.Sprintf("minted key for %08x..........", n.num))
+		n.config.Security.PublicKey = pub
+		n.num = crc32.ChecksumIEEE(pub)
+		n.owner.PublicKey, n.owner.Id = pub, fmt.Sprintf("!%08x", n.num)
+		mergeConfig(n.config, cfg)
+		return false
+	}
+	if sec := cfg.GetSecurity(); sec != nil && !bytes.Equal(sec.GetPublicKey(), n.config.GetSecurity().GetPublicKey()) {
+		n.newKey = sec.GetPublicKey() // the node number follows the key (2.8)
+		if !wire.Clamped(sec.GetPrivateKey()) {
+			// 2.8 replaces an unclamped key with a new one when it boots.
+			n.newKey = []byte(fmt.Sprintf("regenerated key %d", n.dials))
+		}
+	}
+	mergeConfig(n.config, cfg)
+	return true
+}
+
+// commitEdit applies a pending key change, which takes a new node number, and reports whether
+// the node reboots.
+func (n *Node) commitEdit() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	reboot := n.reboot
+	if n.newKey != nil {
+		n.num = crc32.ChecksumIEEE(n.newKey)
+		n.owner.PublicKey, n.owner.Id = n.newKey, fmt.Sprintf("!%08x", n.num)
+		n.newKey, reboot = nil, true
+	}
+	return reboot
 }
 
 func mergeModule(dst *pb.LocalModuleConfig, c *pb.ModuleConfig) {

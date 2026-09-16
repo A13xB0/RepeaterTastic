@@ -140,18 +140,9 @@ func (s *sx127x) init() error {
 func (s *sx127x) powerRange(uint32) (int, int) { return 2, boardLimit(20, s.board.MaxPower) }
 
 func (s *sx127x) configure(c radio.Config, power int) error {
-	var bw byte
-	switch c.BandwidthHz {
-	case 62_500:
-		bw = 0x60
-	case 125_000:
-		bw = 0x70
-	case 250_000:
-		bw = 0x80
-	case 500_000:
-		bw = 0x90
-	default:
-		return fmt.Errorf("%w: bandwidth %d Hz on SX127x (62.5, 125, 250 or 500 kHz)", radio.ErrUnsupported, c.BandwidthHz)
+	bw, err := sx127xBandwidth(c.BandwidthHz)
+	if err != nil {
+		return err
 	}
 	if c.SF < 7 { // SF6 needs implicit headers, which Meshtastic doesn't use
 		return fmt.Errorf("%w: SF%d on SX127x", radio.ErrUnsupported, c.SF)
@@ -160,6 +151,29 @@ func (s *sx127x) configure(c radio.Config, power int) error {
 		return fmt.Errorf("%w: %d Hz is outside the SX127x's range", radio.ErrUnsupported, c.FrequencyHz)
 	}
 	s.freqHz, s.bwHz = c.FrequencyHz, c.BandwidthHz
+	if err := s.setModem(c, bw); err != nil {
+		return err
+	}
+	return s.setPower(power)
+}
+
+// sx127xBandwidth is the modem config 1 bandwidth bits for bwHz.
+func sx127xBandwidth(bwHz uint32) (byte, error) {
+	switch bwHz {
+	case 62_500:
+		return 0x60, nil
+	case 125_000:
+		return 0x70, nil
+	case 250_000:
+		return 0x80, nil
+	case 500_000:
+		return 0x90, nil
+	}
+	return 0, fmt.Errorf("%w: bandwidth %d Hz on SX127x (62.5, 125, 250 or 500 kHz)", radio.ErrUnsupported, bwHz)
+}
+
+// setModem writes the frequency, modem configuration, preamble and sync word.
+func (s *sx127x) setModem(c radio.Config, bw byte) error {
 	frf := uint32(uint64(c.FrequencyHz) * (1 << 19) / 32_000_000)
 	if err := s.write(rfRegFrfMsb, byte(frf>>16), byte(frf>>8), byte(frf)); err != nil {
 		return err
@@ -184,10 +198,11 @@ func (s *sx127x) configure(c radio.Config, power int) error {
 	if err := s.write(rfRegPreambleMsb, byte(c.Preamble>>8), byte(c.Preamble)); err != nil {
 		return err
 	}
-	if err := s.write(rfRegSyncWord, c.SyncWord); err != nil {
-		return err
-	}
-	// PA_BOOST: 2–17 dBm, or 20 dBm with the high-power DAC. 18 and 19 aren't settable.
+	return s.write(rfRegSyncWord, c.SyncWord)
+}
+
+// setPower sets PA_BOOST: 2–17 dBm, or 20 dBm with the high-power DAC. 18 and 19 aren't settable.
+func (s *sx127x) setPower(power int) error {
 	if power > 17 && power < 20 {
 		power = 17
 	}
@@ -205,23 +220,9 @@ func (s *sx127x) configure(c radio.Config, power int) error {
 
 // errata applies the SX1276 errata note 2.1 settings RadioLib uses (SX1278::errataFix).
 func (s *sx127x) errata() error {
-	mhz := s.freqHz / 1_000_000
 	if s.bwHz == 500_000 {
-		switch {
-		case mhz >= 862 && mhz <= 1020:
-			if err := s.write(0x36, 0x02); err != nil {
-				return err
-			}
-			if err := s.write(0x3A, 0x64); err != nil {
-				return err
-			}
-		case mhz >= 410 && mhz <= 525:
-			if err := s.write(0x36, 0x02); err != nil {
-				return err
-			}
-			if err := s.write(0x3A, 0x7F); err != nil {
-				return err
-			}
+		if err := s.errata500k(); err != nil {
+			return err
 		}
 		return s.update(0x31, 7, 7, 0x80)
 	}
@@ -232,6 +233,24 @@ func (s *sx127x) errata() error {
 		return err
 	}
 	return s.write(0x30, 0x00)
+}
+
+// errata500k sets the 500 kHz receiver response registers in the 868/915 and 433 MHz bands.
+func (s *sx127x) errata500k() error {
+	mhz := s.freqHz / 1_000_000
+	var reg3A byte
+	switch {
+	case mhz >= 862 && mhz <= 1020:
+		reg3A = 0x64
+	case mhz >= 410 && mhz <= 525:
+		reg3A = 0x7F
+	default:
+		return nil
+	}
+	if err := s.write(0x36, 0x02); err != nil {
+		return err
+	}
+	return s.write(0x3A, reg3A)
 }
 
 func (s *sx127x) standby() error { return s.setMode(rfModeStandby) }

@@ -2,7 +2,7 @@
 // The favourites of a client_base relay: packets from or to them are relayed like router_late.
 // This host's identities always count; other nodes are picked here.
 import { computed, onMounted, ref } from 'vue'
-import { api } from '@/api/client'
+import { api, withRadio } from '@/api/client'
 import type { MeshNode } from '@/api/types'
 import { relTime } from '@/lib/format'
 import { now } from '@/composables/now'
@@ -14,7 +14,8 @@ const loaded = ref(false)
 
 onMounted(async () => {
   try {
-    const list = await api.get<MeshNode[] | { nodes: MeshNode[] }>('/nodes')
+    // No radio context is passed in here: offer every node the site has heard, on any radio.
+    const list = await api.get<MeshNode[] | { nodes: MeshNode[] }>(withRadio('/nodes', 'all'))
     nodes.value = Array.isArray(list) ? list : list.nodes
   } catch {
     nodes.value = []
