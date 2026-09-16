@@ -61,6 +61,13 @@ RAK19714. All of meshtasticd's board files are built in, so pick your board in t
 boards). meshtasticd must not be running on the same radio. Tested on an SX1262 over CH341 so
 far; HATs need testers: see [LoRa HATs and USB sticks](docs/spi-radio-testing.md).
 
+**Or use a node running Meshtastic firmware.** A Heltec, T-Beam, RAK or any other board on stock
+Meshtastic, over USB, or a meshtasticd on the network, can be a radio too
+(`radio: {driver: meshtastic, device: /dev/ttyACM0}` or `device: 192.168.1.20`). The node does the
+radio work and becomes that radio's one identity, with RepeaterTastic's chat, node map, plugins and
+GUI on top; region, preset and role set here are written to the node. See
+[Hardware and modems](docs/hardware.md#nodes-running-meshtastic-firmware).
+
 ### 2a. Run it with Docker
 
 ```bash

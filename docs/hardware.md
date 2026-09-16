@@ -147,6 +147,34 @@ live mesh). HATs, LR1121, RF95 and SX1280 follow the same datasheets and RadioLi
 haven't been run on hardware yet; [LoRa HATs and USB sticks](spi-radio-testing.md) is the
 step-by-step test guide, and reports are welcome.
 
+## Nodes running Meshtastic firmware
+
+Any board on stock Meshtastic firmware (Heltec, T-Beam, RAK4631, T-Echo, XIAO…) can be a radio
+without reflashing, and so can a meshtasticd elsewhere on the network. RepeaterTastic talks to it
+the way the Meshtastic apps do (the client API over USB serial, or TCP port 4403):
+
+```yaml
+radio:
+    driver: meshtastic
+    device: /dev/serial/by-id/usb-…   # or 192.168.1.20, or meshtastic.local:4403
+```
+
+- The node is the radio's **one identity**. Its name, channels, region, preset, TX power, hop limit
+  and role are the node's own: edits in RepeaterTastic are written to it, and changes made on the
+  node (from the app) show up after it reconnects.
+- The node does its own routing, acknowledgements and encryption, and keeps its private key.
+- Chat, the node map, the packet log (what the node delivers), plugins and an app port for the
+  identity work as on any radio. The Meshtastic app can also stay connected to the node directly
+  over Bluetooth or Wi-Fi; a USB board takes one serial client, so close other serial programs.
+- What a node radio doesn't do: host more identities, feed MQTT or UDP multicast links on that radio
+  with channel traffic (use the node's own MQTT module), or report airtime, noise floor and relay
+  counters.
+- If the node is away when RepeaterTastic starts, its last known state stands in until it answers.
+- Switching a radio to or from a node needs a restart; the setup wizard does it for you.
+
+This is the first step of running every identity on real Meshtastic firmware; see
+[Real Meshtastic nodes](meshtasticd-nodes.md).
+
 ## Several modems
 
 Each extra radio is another board on its own USB port, set up in Configuration → Radios → Add radio

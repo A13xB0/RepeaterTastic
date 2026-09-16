@@ -411,7 +411,8 @@ func (m *Manager) Sync(ctx context.Context) {
 	want := map[uint32]string{}
 	byNum := map[uint32]*mesh.Identity{}
 	for _, id := range m.host.Identities() {
-		if id.IsRelay || !id.Enabled || id.APIPort <= 0 {
+		// The relay persona has no app port, unless it is a real node (a board radio's only identity).
+		if (id.IsRelay && id.Remote() == nil) || !id.Enabled || id.APIPort <= 0 {
 			continue
 		}
 		bind := id.APIBind

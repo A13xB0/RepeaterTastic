@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// Setup wizard: modem → radio → relay → admin password → review.
+// Setup wizard: radio → region → relay → admin password → review.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Check, CircleAlert, CircuitBoard, CircleCheck, RefreshCw, Usb } from '@lucide/vue'
+import { Check, CircleAlert, CircuitBoard, CircleCheck, RadioTower, RefreshCw, Usb } from '@lucide/vue'
 import { request, setToken } from '@/api/client'
 import type { Board, Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/types'
 import BoardSelect from '@/components/config/BoardSelect.vue'
@@ -12,14 +12,15 @@ import { markSetupDone } from '@/router'
 import { num } from '@/lib/format'
 
 const router = useRouter()
-const steps = ['Modem', 'Radio', 'Relay', 'Password', 'Review']
+const steps = ['Radio', 'Region', 'Relay', 'Password', 'Review']
 const step = ref(0)
 
 const ports = ref<SerialPort[]>([])
 const loadingPorts = ref(false)
 const device = ref('')
-// kiss: a USB modem on the serial port `device`; spi: `device` is a LoRa board the daemon drives itself.
-const driver = ref<'kiss' | 'spi'>('kiss')
+// kiss: a USB modem on the serial port `device`; spi: `device` is a LoRa board the daemon drives
+// itself; meshtastic: `device` is a node running Meshtastic firmware (a serial port or host[:port]).
+const driver = ref<'kiss' | 'spi' | 'meshtastic'>('kiss')
 const probe = ref<ProbeResult | null>(null)
 const probing = ref(false)
 
@@ -57,6 +58,11 @@ async function runProbe() {
   probe.value = null
   try {
     probe.value = await post<ProbeResult>('/setup/probe', { device: device.value, driver: driver.value })
+    // A node that already has a region keeps its settings unless they're changed on the next step.
+    if (probe.value.ok && probe.value.driver === 'meshtastic' && probe.value.region && probe.value.region !== 'UNSET') {
+      region.value = probe.value.region
+      if (probe.value.preset) preset.value = probe.value.preset
+    }
   } catch (e) {
     probe.value = { ok: false, driver: '', firmware: '', name: '', sync_word_ok: false, error: (e as Error).message }
   } finally {
@@ -75,6 +81,20 @@ function pickBoard() {
 }
 watch(board, (v) => {
   if (usingBoard.value) device.value = v
+})
+
+// A node running Meshtastic firmware, over USB or the network. It becomes the radio's one identity.
+const usingNode = computed(() => driver.value === 'meshtastic')
+const nodeVia = ref<'usb' | 'net'>('usb')
+const nodePort = ref('')
+const nodeHost = ref('')
+const nodeDevice = computed(() => (nodeVia.value === 'usb' ? nodePort.value.trim() : nodeHost.value.trim()))
+function pickNode() {
+  driver.value = 'meshtastic'
+  device.value = nodeDevice.value
+}
+watch(nodeDevice, (v) => {
+  if (usingNode.value) device.value = v
 })
 
 // A serial port typed by hand, for one the daemon didn't list.
@@ -152,14 +172,31 @@ const canNext = computed(() => {
   }
 })
 
+async function waitForRestart() {
+  await new Promise((r) => setTimeout(r, 1500))
+  for (let i = 0; i < 40; i++) {
+    try {
+      await request('GET', '/status')
+      return
+    } catch {
+      await new Promise((r) => setTimeout(r, 750))
+    }
+  }
+}
+
 async function finish() {
   finishing.value = true
   error.value = ''
   try {
-    const r = await post<{ token: string }>('/setup', {
+    const r = await post<{ token: string; restart_required: boolean }>('/setup', {
       password: password.value, region: region.value, preset: preset.value, primary_channel: primary.value, driver: driver.value, device: device.value, relay_role: role.value,
     })
     setToken(r.token)
+    // A node is a different kind of radio: the daemon restarts to connect to it.
+    if (r.restart_required && driver.value === 'meshtastic') {
+      await request('POST', '/restart').catch(() => {})
+      await waitForRestart()
+    }
     markSetupDone()
     router.replace('/')
   } catch (e) {
@@ -199,11 +236,11 @@ async function finish() {
 
       <div class="card !bg-surface-solid/90">
         <div class="px-5 py-5 sm:px-7 sm:py-6">
-          <!-- 1. Modem -->
+          <!-- 1. Radio -->
           <section v-if="step === 0">
-            <h2 class="text-base font-semibold tracking-tight">Connect the modem</h2>
+            <h2 class="text-base font-semibold tracking-tight">Connect the radio</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch) or a LoRa board RepeaterTastic drives itself. We'll ping it and check it accepts sync word 0x2B.
+              A USB modem with the RepeaterTastic KISS firmware (Heltec V3, RAK4631…), a LoRa HAT or USB stick RepeaterTastic drives itself, or a node running Meshtastic firmware. We'll check it answers.
             </p>
             <div class="mt-4 space-y-2">
               <label
@@ -243,10 +280,29 @@ async function finish() {
                 </label>
                 <BoardSelect v-if="usingBoard" id="setup-board" v-model="board" :boards="boards" input-class="input h-8 text-xs" class="mt-2.5 pl-7" />
               </div>
+              <div :class="['rounded-xl border px-3.5 py-3 transition-colors', usingNode ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
+                <label class="flex cursor-pointer items-center gap-3">
+                  <input id="setup-node-pick" type="radio" :checked="usingNode" class="accent-[var(--brand)]" @change="pickNode" />
+                  <RadioTower class="size-4 shrink-0 text-ink-3" />
+                  <div class="min-w-0">
+                    <div class="text-[13px] font-medium">A node running Meshtastic firmware</div>
+                    <div class="text-2xs text-ink-3">A Heltec, T-Beam, RAK or similar on stock Meshtastic over USB, or a meshtasticd on the network. It becomes this radio's one identity.</div>
+                  </div>
+                </label>
+                <div v-if="usingNode" class="mt-2.5 flex flex-wrap items-center gap-2 pl-7">
+                  <div class="seg" role="group" aria-label="How the node is connected">
+                    <button type="button" :aria-pressed="nodeVia === 'usb'" @click="nodeVia = 'usb'">USB</button>
+                    <button type="button" :aria-pressed="nodeVia === 'net'" @click="nodeVia = 'net'">Network</button>
+                  </div>
+                  <input v-if="nodeVia === 'usb'" id="setup-node-serial" v-model="nodePort" class="input h-8 mono min-w-0 flex-1 text-xs" list="setup-node-ports" placeholder="/dev/ttyACM0" spellcheck="false" aria-label="Node serial port" />
+                  <input v-else id="setup-node-host" v-model="nodeHost" class="input h-8 mono min-w-0 flex-1 text-xs" placeholder="192.168.1.20 or meshtastic.local:4403" spellcheck="false" aria-label="Node address" />
+                  <datalist id="setup-node-ports"><option v-for="p in ports" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
+                </div>
+              </div>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
-              <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />Test modem</button>
+              <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />{{ usingNode ? 'Test node' : 'Test modem' }}</button>
 
             </div>
             <div v-if="probe" :class="['mt-3 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[13px]', probe.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
@@ -255,13 +311,14 @@ async function finish() {
               <div v-if="probe.ok" class="min-w-0">
                 <div class="font-medium">{{ probe.name }} answered</div>
                 <div v-if="probe.driver === 'spi'" class="text-ink-2">{{ probe.firmware }} module · ready for sync word 0x2B</div>
+                <div v-else-if="probe.driver === 'meshtastic'" class="text-ink-2">{{ probe.firmware }}<template v-if="probe.region && probe.region !== 'UNSET'"> · {{ probe.region }} · {{ presetLabel(probe.preset ?? '') }}</template></div>
                 <div v-else class="text-ink-2">{{ probe.firmware }} · sync word 0x2B {{ probe.sync_word_ok ? 'accepted' : 'rejected (flash the patched firmware)' }}</div>
                 <ul v-if="probe.details?.length" class="mono mt-1.5 space-y-0.5 text-2xs text-ink-3">
                   <li v-for="(d, i) in probe.details" :key="i" class="break-words">{{ d }}</li>
                 </ul>
               </div>
               <div v-else>
-                <div class="font-medium">{{ usingBoard ? 'The board didn’t answer' : 'No modem on this port' }}</div>
+                <div class="font-medium">{{ usingBoard ? 'The board didn’t answer' : usingNode ? 'The node didn’t answer' : 'No modem on this port' }}</div>
                 <div class="text-ink-2">{{ probe.error }}</div>
               </div>
             </div>
@@ -270,7 +327,7 @@ async function finish() {
           <!-- 2. Radio -->
           <section v-else-if="step === 1">
             <h2 class="text-base font-semibold tracking-tight">Region and preset</h2>
-            <p class="mt-1 text-[13px] text-ink-3">These must match the mesh you want to join. Most UK and EU meshes use EU_868 with LongFast.</p>
+            <p class="mt-1 text-[13px] text-ink-3">These must match the mesh you want to join. Most UK and EU meshes use EU_868 with LongFast.<template v-if="usingNode"> They're written to the node.</template></p>
             <div class="mt-4 grid gap-4 sm:grid-cols-2">
               <div>
                 <label class="label" for="region">Region</label>
@@ -321,8 +378,11 @@ async function finish() {
 
           <!-- 3. Relay -->
           <section v-else-if="step === 2">
-            <h2 class="text-base font-semibold tracking-tight">Relay role</h2>
-            <p class="mt-1 text-[13px] text-ink-3">
+            <h2 class="text-base font-semibold tracking-tight">{{ usingNode ? 'Node role' : 'Relay role' }}</h2>
+            <p v-if="usingNode" class="mt-1 text-[13px] text-ink-3">
+              Written to the node: Client, Router and Mute set its device role (CLIENT, ROUTER, CLIENT_MUTE); Monitor and Off switch its transmitter off. You can change this any time from the top bar.
+            </p>
+            <p v-else class="mt-1 text-[13px] text-ink-3">
               The relay persona rebroadcasts other people's packets. You can change this any time from the top bar.
             </p>
             <div class="mt-4 grid gap-2 sm:grid-cols-3">
@@ -368,12 +428,13 @@ async function finish() {
           <section v-else>
             <h2 class="text-base font-semibold tracking-tight">Ready to go</h2>
             <dl class="kv mt-4">
-              <dt>Modem</dt><dd class="mono truncate">{{ usingBoard ? `board · ${device}` : device }}</dd>
-              <dt>Radio</dt><dd>{{ region }} · {{ phy?.preset_name }} · {{ phy?.frequency_mhz.toFixed(3) }} MHz</dd>
+              <dt>Radio</dt><dd class="mono truncate">{{ usingBoard ? `board · ${device}` : usingNode ? `Meshtastic node · ${device}` : device }}</dd>
+              <dt>Region</dt><dd>{{ region }} · {{ phy?.preset_name }} · {{ phy?.frequency_mhz.toFixed(3) }} MHz</dd>
               <dt>Relay role</dt><dd class="capitalize">{{ role }}</dd>
               <dt>Admin password</dt><dd>{{ '•'.repeat(Math.min(password.length, 16)) }}</dd>
             </dl>
-            <p class="mt-4 text-[13px] text-ink-3">Next you'll land on the dashboard, where you can create your first identity.</p>
+            <p v-if="usingNode" class="mt-4 text-[13px] text-ink-3">RepeaterTastic restarts to connect to the node; the dashboard then shows it as this radio's identity.</p>
+            <p v-else class="mt-4 text-[13px] text-ink-3">Next you'll land on the dashboard, where you can create your first identity.</p>
             <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
           </section>
         </div>

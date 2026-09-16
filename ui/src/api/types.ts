@@ -121,6 +121,8 @@ export interface Identity {
   hw_model: string
   public_key: string
   is_relay: boolean
+  /** A real node running Meshtastic firmware (the one identity of a node radio). */
+  real_node?: boolean
   enabled: boolean
   api: { bind: string; port: number; clients: number } | null
   outbox: number
@@ -316,8 +318,11 @@ export interface ProbeResult {
   name: string
   sync_word_ok: boolean
   error: string
-  /** spi: the chip's diagnostic lines */
+  /** spi: the chip's diagnostic lines; meshtastic: the node's name, role and radio */
   details?: string[]
+  /** meshtastic: the node's current region and preset */
+  region?: string
+  preset?: string
 }
 
 export interface ApiToken {

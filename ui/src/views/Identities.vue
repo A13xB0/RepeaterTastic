@@ -105,6 +105,9 @@ async function remove(i: Identity) {
     toastError(e)
   }
 }
+
+// A node radio's only identity is the node: no more can be added there.
+const nodeRadio = computed(() => scope.value !== 'all' && source.value.some((i) => i.real_node))
 </script>
 
 <template>
@@ -113,7 +116,7 @@ async function remove(i: Identity) {
       <div>
         <h2 class="page-title">Identities</h2>
         <p class="page-sub">
-          {{ source.length }} nodes {{ multiRadio && scope === 'all' ? `on ${live.radios.length} radios` : 'on this modem' }} · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
+          {{ source.length }} {{ source.length === 1 ? 'node' : 'nodes' }} {{ multiRadio && scope === 'all' ? `on ${live.radios.length} radios` : 'on this radio' }} · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -122,8 +125,8 @@ async function remove(i: Identity) {
             :class="['rounded-md px-2.5 py-1 text-xs font-medium', scope === o.v ? 'bg-raised text-ink shadow-sm' : 'text-ink-3 hover:text-ink']"
             :aria-pressed="scope === o.v" @click="scope = o.v">{{ o.l }}</button>
         </div>
-        <button class="btn" @click="createMode = 'import'"><Import class="size-4" />Import key</button>
-        <button class="btn btn-primary" @click="createMode = 'create'"><Plus class="size-4" />New identity</button>
+        <button class="btn" :disabled="nodeRadio" @click="createMode = 'import'"><Import class="size-4" />Import key</button>
+        <button class="btn btn-primary" :disabled="nodeRadio" :title="nodeRadio ? 'A Meshtastic node radio has one identity: the node itself' : undefined" @click="createMode = 'create'"><Plus class="size-4" />New identity</button>
       </div>
     </div>
 
@@ -148,11 +151,14 @@ async function remove(i: Identity) {
                 <div class="flex items-center gap-3">
                   <NodeAvatar :id="i.node_id" :short="i.short_name" />
                   <div class="min-w-0 leading-tight">
-                    <div class="flex items-center gap-1.5 truncate text-[13px] font-semibold">{{ i.long_name }}</div>
+                    <div class="flex items-center gap-1.5 truncate text-[13px] font-semibold">
+                      {{ i.long_name }}
+                      <span v-if="i.real_node" class="chip bg-brand/12 text-brand" title="A node running Meshtastic firmware: names and channels are written to it">Meshtastic node</span>
+                    </div>
                     <div class="flex items-center gap-1 text-xs text-ink-3">
                       <span class="mono">{{ i.node_id }}</span>
                       <CopyButton :text="i.node_id" label="Node id" />
-                      <span>· {{ i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
+                      <span>· {{ i.real_node ? roleLabel(i.role) : i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
                     </div>
                     <div v-if="multiRadio" class="mt-1 flex flex-wrap gap-1">
                       <span class="chip bg-ink-3/12 text-ink-2" :title="`Home radio ${i.radio_name}`">{{ i.radio_name }}</span>
@@ -204,7 +210,7 @@ async function remove(i: Identity) {
                   <RouterLink :to="`/chat/${i.node_id}`" class="icon-btn" :title="i.is_relay ? 'Chat as the relay persona' : 'Open chat'"><MessagesSquare class="size-4" /></RouterLink>
                   <button class="icon-btn" title="Edit" @click="editing = i"><Pencil class="size-4" /></button>
                   <button class="icon-btn lg:hidden" title="Channels" @click="channelsFor = i.node_id"><Layers class="size-4" /></button>
-                  <button class="icon-btn" title="Show key" @click="keyFor = i"><KeyRound class="size-4" /></button>
+                  <button v-if="!i.real_node" class="icon-btn" title="Show key" @click="keyFor = i"><KeyRound class="size-4" /></button>
                   <button v-if="i.api" class="icon-btn max-sm:hidden" title="Restart API server" :disabled="!i.enabled" @click="restartApi(i)"><RotateCcw class="size-4" /></button>
                   <button v-if="!i.is_relay" class="icon-btn hover:!text-bad" title="Delete" @click="remove(i)"><Trash class="size-4" /></button>
                 </div>

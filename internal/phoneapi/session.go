@@ -393,6 +393,14 @@ func (s *Session) handlePacket(p *pb.MeshPacket) {
 		return
 	}
 
+	if p.To == s.id.NodeNum && s.id.Remote() != nil {
+		// A real node answers its own admin messages and requests; the replies come back to
+		// every client of the identity with this packet's id.
+		if err := s.host.Send(s.id, p); err != nil {
+			s.routingToClient(p.Id, pb.Routing_NO_INTERFACE)
+		}
+		return
+	}
 	if p.To == s.id.NodeNum {
 		if d.Portnum == pb.PortNum_ADMIN_APP {
 			s.handleAdmin(p)

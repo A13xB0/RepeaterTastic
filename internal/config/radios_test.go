@@ -67,3 +67,25 @@ func TestRadioValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestMeshtasticRadio(t *testing.T) {
+	c, err := load(t, "radio: {driver: meshtastic, device: /dev/ttyACM0}\n"+
+		"radios: [{id: b, radio: {driver: meshtastic, device: pi.local}, mesh: {preset: MEDIUM_FAST}}]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rcs := c.RadioConfigs(); rcs[1].Radio.Driver != "meshtastic" || rcs[1].Radio.Device != "pi.local" {
+		t.Fatalf("radio configs = %+v", rcs)
+	}
+	for yml, want := range map[string]string{
+		"radio: {driver: meshtastic, device: ''}\n":        "needs radio.device",
+		"radio: {driver: meshtastic, device: 'a:b:c:d'}\n": "bad address",
+		"radio: {driver: meshtastic, device: Pi.local}\n" +
+			"radios: [{id: b, radio: {driver: meshtastic, device: 'pi.local:4403'}, mesh: {preset: MEDIUM_FAST}}]\n": "both use",
+		"radio: {driver: lora}\n": "kiss, spi, meshtastic or none",
+	} {
+		if _, err := load(t, yml); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: error %v, want %q", yml, err, want)
+		}
+	}
+}

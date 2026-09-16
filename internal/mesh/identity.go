@@ -52,6 +52,8 @@ type Identity struct {
 	MACAddr      []byte
 	// multiRadio is experimental routing across radios (nil = home radio only).
 	multiRadio *MultiRadio
+	// remote is the real node this identity stands for (nil = a virtual node run by the host).
+	remote Remote
 
 	sinks             map[ClientSink]struct{}
 	backlog           []*pb.FromRadio

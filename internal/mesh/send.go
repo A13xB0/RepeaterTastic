@@ -54,6 +54,10 @@ func (h *Host) Send(from *Identity, p *pb.MeshPacket) error {
 		h.publishMessage(from, *m)
 	}
 
+	if r := from.Remote(); r != nil {
+		// The node routes it; identities that share its air hear it from there.
+		return h.sendRemote(from, r, p)
+	}
 	if target := h.Identity(p.To); target != nil && target != from {
 		h.deliverLocal(from, target, p)
 		if !h.Config().LocalDMOverRF {
@@ -90,6 +94,9 @@ func (h *Host) Send(from *Identity, p *pb.MeshPacket) error {
 
 // transmit encrypts and queues a packet we originate.
 func (h *Host) transmit(from *Identity, p *pb.MeshPacket, reliable bool) error {
+	if r := from.Remote(); r != nil {
+		return h.sendRemote(from, r, p)
+	}
 	now := time.Now()
 	broadcast := p.To == wire.Broadcast
 	onAir := clonePacket(p)

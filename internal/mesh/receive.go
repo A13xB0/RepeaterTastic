@@ -29,10 +29,13 @@ type decodeResult struct {
 // HandleReceived runs the receive pipeline for an encrypted packet from the radio or a link.
 // raw is the full LoRa frame when it came off the air (for the packet log), else nil.
 func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
+	relay := h.Relay()
+	if relay.Remote() != nil {
+		return // a real node does its own receiving; links can't feed it frames
+	}
 	now := time.Now()
 	h.Counters.Rx.Add(1)
 	k := pktKey{p.From, p.Id}
-	relay := h.Relay()
 	relayByte := wire.LastByte(relay.NodeNum)
 	rec := h.baseRecord(p, raw, "rx", "heard")
 
@@ -323,20 +326,9 @@ func (h *Host) sniffRouting(p *pb.MeshPacket, dec decodeResult) {
 	if d.Portnum == pb.PortNum_ROUTING_APP && d.RequestId != 0 {
 		rt := &pb.Routing{}
 		_ = proto.Unmarshal(d.Payload, rt)
-		key := pktKey{target.NodeNum, d.RequestId}
-		errReason := rt.GetErrorReason()
-		h.stopPendingEverywhere(key)
-		status, errText := "acked", ""
-		if errReason != pb.Routing_NONE {
-			status, errText = "failed", errReason.String()
-			h.Counters.AckFail.Add(1)
-		} else {
-			h.Counters.AckOK.Add(1)
-		}
-		if m, ok := h.storeFor(target).SetStatus(target.NodeNum, d.RequestId, status, errText); ok {
-			h.publishMessage(target, m)
-		}
-		if errReason == pb.Routing_PKI_UNKNOWN_PUBKEY {
+		h.stopPendingEverywhere(pktKey{target.NodeNum, d.RequestId})
+		h.routingResult(target, d)
+		if rt.GetErrorReason() == pb.Routing_PKI_UNKNOWN_PUBKEY {
 			h.sendNodeInfo(target, p.From, false, ch, true)
 		}
 	}
