@@ -6,6 +6,7 @@ import { Check, CircleAlert, CircuitBoard, CircleCheck, RadioTower, RefreshCw, S
 import { request, setToken } from '@/api/client'
 import type { Board, Phy, ProbeResult, RelayRole, Region, Runtimes, SerialPort } from '@/api/types'
 import BoardSelect from '@/components/config/BoardSelect.vue'
+import BoardMqttNotice from '@/components/config/BoardMqttNotice.vue'
 import Logo from '@/components/ui/Logo.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { markSetupDone } from '@/router'
@@ -423,6 +424,7 @@ async function finish() {
                     <div class="text-2xs text-ink-3">A Heltec, T-Beam, RAK or similar on stock firmware, over USB or the network. It becomes the relay, and carries your identities over its MQTT client proxy.</div>
                   </div>
                 </label>
+                <BoardMqttNotice v-if="usingNode" compact class="mt-2.5 ml-7" />
                 <div v-if="usingNode" class="mt-2.5 flex flex-wrap items-center gap-2 pl-7">
                   <div class="seg" role="group" aria-label="How the board is connected">
                     <button type="button" :aria-pressed="nodeVia === 'usb'" @click="nodeVia = 'usb'">USB</button>
@@ -553,6 +555,7 @@ async function finish() {
                 </tbody>
               </table>
               <p v-if="usingNode" class="mt-2 text-2xs text-ink-3">The board repeats your identities' packets onto the air, so the mesh hears them one hop away. Its role must be one that repeats (Client or Router), and its MQTT module is used for this.</p>
+              <BoardMqttNotice v-if="usingNode" compact class="mt-2" />
               <p v-else class="mt-2 text-2xs text-ink-3">Everything on this radio transmits from here. The relay hears your identities but never repeats them: they already went out from this mast.</p>
             </div>
           </section>
@@ -665,6 +668,7 @@ async function finish() {
               <dt>Relay runs on</dt><dd>{{ usingNode ? 'the board' : hosted ? `meshtasticd ${hostedCheck?.version ?? ''} (${hostedVia === 'docker' ? 'Docker' : 'installed'})` : 'RepeaterTastic' }}</dd>
               <dt>Admin password</dt><dd>{{ '•'.repeat(Math.min(password.length, 16)) }}</dd>
             </dl>
+            <BoardMqttNotice v-if="usingNode" class="mt-4" />
             <p v-if="hosted" class="mt-4 text-[13px] text-ink-3">RepeaterTastic restarts once to start the relay on meshtasticd, then opens the dashboard.</p>
             <p v-else class="mt-4 text-[13px] text-ink-3">Next you'll land on the dashboard, where you can create your first identity.</p>
             <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
