@@ -448,3 +448,16 @@ func (s *Server) restartDaemon(w http.ResponseWriter, r *http.Request) {
 		os.Exit(75)
 	}()
 }
+
+// radioIDOK reports whether a radio id is safe to use as a folder name.
+func radioIDOK(id string) bool {
+	if id == "" || len(id) > 24 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
+}

@@ -131,7 +131,7 @@ async function save() {
       <div v-if="!plugin.pinned" class="flex items-center justify-end gap-2 sm:col-span-2">
         <p v-if="error" class="mr-auto text-[13px] text-bad">{{ error }}</p>
         <button type="button" class="btn" :disabled="!dirty || saving" @click="reset">Discard</button>
-        <button class="btn btn-primary" :disabled="!dirty || saving"><Spinner v-if="saving" />Save settings</button>
+        <button type="submit" class="btn btn-primary" :disabled="!dirty || saving"><Spinner v-if="saving" />Save settings</button>
       </div>
     </form>
   </div>

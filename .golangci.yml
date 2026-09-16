@@ -1,0 +1,53 @@
+# golangci-lint v2: `make lint`. The default set (errcheck, govet, ineffassign, staticcheck,
+# unused) plus checks that have found real problems here. SonarQube (sonar-project.properties)
+# covers complexity and duplication across the tree.
+version: "2"
+run:
+  timeout: 10m
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gosec
+    - nilerr
+    - unconvert
+    - unparam
+    - wastedassign
+  settings:
+    gosec:
+      excludes:
+        - G103 # unsafe: the spi driver's ioctls need it
+        - G115 # integer conversions: protocol and register fields are sized by the spec
+        - G204 # subprocesses: meshtasticd and docker, with the program and image validated in config
+        - G304 # reading files named in the config (board files, EEPROMs, state)
+        - G703 # the same, through the state dir
+        - G704 # the healthcheck asks this daemon's own port
+        - G101 # a settings key name, not a credential
+        - G104 # errcheck covers unchecked errors
+        - G117 # keys and the JWT secret are saved on purpose, in 0600 files
+        - G118 # background work that must outlive the request
+        - G404 # jitter and backoff don't need crypto randomness
+        - G301 # plugin and state directories are shared with plugin processes
+        - G302
+        - G306
+    staticcheck:
+      checks:
+        - all
+        - -ST1000 # package comments
+        - -ST1003 # names like Id match the Meshtastic protobufs
+        - -SA1019 # Meshtastic marks fields and enums deprecated that nodes still send
+        - -QF1001 # "not (a and b)" often reads better than De Morgan's form
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters: [errcheck, gosec, unparam]
+      # Cleanup on paths that are already failing or closing, and terminal output.
+      - linters: [errcheck]
+        text: "Error return value of `(.*\\.)?(Close|Remove|RemoveAll|Fprintf?|Fprintln)` is not checked"
+      # A read error on a closed socket ends the loop; a walk skips entries it can't read.
+      - linters: [nilerr]
+        path: (internal/mdns/mdns\.go|internal/plugins/cli\.go)
+      - path: ^(pb|pluginapi)/
+        linters: [staticcheck]

@@ -221,10 +221,10 @@ const nextHop = computed(() => (node.value?.next_hop ? nodeByLastByte(node.value
           <option v-for="s in senders" :key="s.node_id" :value="s.node_id">{{ s.long_name }} ({{ s.node_id }}){{ s.is_relay ? ' · relay persona' : '' }}</option>
         </select>
         <div class="mt-3 flex flex-wrap gap-2">
-          <button class="btn btn-sm" :disabled="pending || !from" @click="traceroute"><Spinner v-if="pending" /><RouteIcon v-else class="size-3.5" />Traceroute</button>
-          <button class="btn btn-sm" :disabled="nodeinfoBusy || !from" @click="requestNodeinfo"><Spinner v-if="nodeinfoBusy" /><IdCard v-else class="size-3.5" />Request NodeInfo</button>
-          <button class="btn btn-sm" @click="dm"><MessagesSquare class="size-3.5" />Message</button>
-          <button class="btn btn-sm btn-ghost ml-auto hover:!text-bad" @click="forget"><Trash class="size-3.5" />Forget</button>
+          <button type="button" class="btn btn-sm" :disabled="pending || !from" @click="traceroute"><Spinner v-if="pending" /><RouteIcon v-else class="size-3.5" />Traceroute</button>
+          <button type="button" class="btn btn-sm" :disabled="nodeinfoBusy || !from" @click="requestNodeinfo"><Spinner v-if="nodeinfoBusy" /><IdCard v-else class="size-3.5" />Request NodeInfo</button>
+          <button type="button" class="btn btn-sm" @click="dm"><MessagesSquare class="size-3.5" />Message</button>
+          <button type="button" class="btn btn-sm btn-ghost ml-auto hover:!text-bad" @click="forget"><Trash class="size-3.5" />Forget</button>
         </div>
 
         <div v-if="pending" class="mt-3 flex items-center gap-2 text-xs text-ink-3"><Spinner />Waiting for the route reply…</div>

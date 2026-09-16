@@ -72,8 +72,8 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
   <Drawer :open="!!identity" :title="`Channels · ${identity?.long_name ?? ''}`" :subtitle="identity?.node_id" wide @close="emit('close')">
     <div v-if="identity">
       <div class="tabs -mx-5 -mt-4 mb-4 px-5" role="tablist">
-        <button role="tab" :aria-selected="tab === 'edit'" @click="tab = 'edit'">Slots</button>
-        <button role="tab" :aria-selected="tab === 'share'" @click="tab = 'share'">Share &amp; import</button>
+        <button type="button" role="tab" :aria-selected="tab === 'edit'" @click="tab = 'edit'">Slots</button>
+        <button type="button" role="tab" :aria-selected="tab === 'share'" @click="tab = 'share'">Share &amp; import</button>
       </div>
 
       <div v-if="tab === 'edit'" class="space-y-2">
@@ -127,8 +127,8 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
           <h3 class="eyebrow mb-2">Import</h3>
           <p class="mb-2 text-[13px] text-ink-3">Paste a <span class="mono">meshtastic.org/e/#…</span> link. Secondary channels are added to free slots; the primary stays locked.</p>
           <div class="flex gap-2">
-            <input v-model="importUrl" class="input mono" placeholder="https://meshtastic.org/e/#…" spellcheck="false" />
-            <button class="btn btn-primary shrink-0" :disabled="!importUrl.trim() || importing" @click="doImport"><Spinner v-if="importing" />Import</button>
+            <input id="channel-import-url" v-model="importUrl" aria-label="Channel link" class="input mono" placeholder="https://meshtastic.org/e/#…" spellcheck="false" />
+            <button type="button" class="btn btn-primary shrink-0" :disabled="!importUrl.trim() || importing" @click="doImport"><Spinner v-if="importing" />Import</button>
           </div>
         </section>
       </div>

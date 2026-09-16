@@ -112,7 +112,7 @@ func (h *linuxHAL) Transfer(tx []byte) ([]byte, error) {
 		if err := h.cs.Set(false); err != nil {
 			return nil, err
 		}
-		defer h.cs.Set(true)
+		defer func() { _ = h.cs.Set(true) }()
 	}
 	var xfer [32]byte
 	binary.LittleEndian.PutUint64(xfer[0:], uint64(uintptr(unsafe.Pointer(&buf[0]))))

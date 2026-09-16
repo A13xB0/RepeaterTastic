@@ -58,7 +58,7 @@ async function enable() {
         <TriangleAlert class="mt-0.5 size-4 shrink-0" />
         <div>
           Fill in {{ missing.map((s) => s.label).join(', ') }} before turning it on.
-          <button class="mt-1 block font-medium underline underline-offset-2" @click="emit('settings')">Open settings</button>
+          <button type="button" class="mt-1 block font-medium underline underline-offset-2" @click="emit('settings')">Open settings</button>
         </div>
       </div>
 
@@ -88,8 +88,8 @@ async function enable() {
       <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     </template>
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="busy || missing.length > 0" @click="enable"><Spinner v-if="busy" />Enable</button>
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="busy || missing.length > 0" @click="enable"><Spinner v-if="busy" />Enable</button>
     </template>
   </Modal>
 </template>

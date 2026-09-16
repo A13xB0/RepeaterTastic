@@ -53,7 +53,7 @@ async function reveal() {
             <p class="mt-1 text-ink-2">Only reveal it on a screen you trust, e.g. to move the node to a physical device or into a backup.</p>
           </div>
         </div>
-        <button class="btn btn-sm mt-3" :disabled="loading" @click="reveal"><Spinner v-if="loading" /><KeyRound v-else class="size-3.5" />Reveal private key</button>
+        <button type="button" class="btn btn-sm mt-3" :disabled="loading" @click="reveal"><Spinner v-if="loading" /><KeyRound v-else class="size-3.5" />Reveal private key</button>
         <p v-if="error" class="mt-2 text-xs text-bad">{{ error }}</p>
       </div>
       <div v-else class="flex items-center gap-1 rounded-xl border border-warn/40 bg-warn/8 px-3 py-2">
@@ -62,7 +62,7 @@ async function reveal() {
       </div>
     </div>
     <template #footer>
-      <button class="btn" @click="emit('close')">Done</button>
+      <button type="button" class="btn" @click="emit('close')">Done</button>
     </template>
   </Modal>
 </template>

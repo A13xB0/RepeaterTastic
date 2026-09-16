@@ -90,15 +90,15 @@ export const state = {
 state.identities = [
   identity({ node_id: '!3f0a91c2', long_name: 'RepeaterTastic Relay', short_name: 'RPTR', is_relay: true, role: 'ROUTER',
     airtime_ms_1h: 9800, share_limit_pct: 100, created_at: created - HOUR }),
-  identity({ node_id: '!a1c40e07', long_name: 'Base Camp', short_name: 'BASE', api: { bind: '0.0.0.0', port: 4403, clients: 1 },
+  identity({ node_id: '!a1c40e07', long_name: 'Base Camp', short_name: 'BASE', api: { bind: '0.0.0.0', port: 4403, clients: 1, listening: true },
     airtime_ms_1h: 3200 }),
-  identity({ node_id: '!5b9e2213', long_name: 'Ops Desk', short_name: 'OPS', api: { bind: '0.0.0.0', port: 4404, clients: 0 },
+  identity({ node_id: '!5b9e2213', long_name: 'Ops Desk', short_name: 'OPS', api: { bind: '0.0.0.0', port: 4404, clients: 0, listening: true },
     outbox: 12, airtime_ms_1h: 1100, created_at: created + 2 * 24 * HOUR,
     channels: channelSlots([{ index: 1, role: 'SECONDARY', name: 'LothianOps', psk: 'q2YH8n1Vx0bE3cE1s7w8pF0c6rJmKf9Qe2bT4yUuVhA=' }]) }),
-  identity({ node_id: '!7d21e4a9', long_name: 'Weather Bot', short_name: 'WX', role: 'SENSOR', api: { bind: '0.0.0.0', port: 4405, clients: 1 },
+  identity({ node_id: '!7d21e4a9', long_name: 'Weather Bot', short_name: 'WX', role: 'SENSOR', api: { bind: '0.0.0.0', port: 4405, clients: 1, listening: true },
     airtime_ms_1h: 133600, created_at: created + 6 * 24 * HOUR }),
   identity({ node_id: '!e41b6c58', long_name: 'Pentland Hut', short_name: 'PHUT', enabled: false,
-    api: { bind: '0.0.0.0', port: 4406, clients: 0 }, created_at: now() - 3 * 24 * HOUR }),
+    api: { bind: '0.0.0.0', port: 4406, clients: 0, listening: true }, created_at: now() - 3 * 24 * HOUR }),
 ]
 
 export const identityById = (id: string) => state.identities.find((i) => i.node_id === id)
@@ -532,7 +532,7 @@ function packetLog(p: Packet, emit?: Emit) {
     case 'relayed': return log('info', `relay: rebroadcast ${id} from ${who} (hop_limit ${p.hop_limit}→${Math.max(0, p.hop_limit - 1)})`, emit, p.time)
     case 'dup': return log('debug', `history: duplicate ${id} from ${who} via relay 0x${p.relay_node.toString(16)}, dropped`, emit, p.time)
     case 'undecryptable': return log('debug', `rx: ${p.size} B from ${who} on unknown channel hash 0x${p.channel_hash.toString(16).padStart(2, '0')}`, emit, p.time)
-    case 'ours': return log('info', `${p.direction} ${p.port} ${id} ${p.direction === 'tx' ? `${who} → ${nodeName(p.to)}` : `${who} → ${nodeName(p.to)}`} (${p.airtime_ms} ms)`, emit, p.time)
+    case 'ours': return log('info', `${p.direction} ${p.port} ${id} ${who} → ${nodeName(p.to)} (${p.airtime_ms} ms)`, emit, p.time)
     default: return log('debug', `rx ${p.port} ${id} from ${who} snr=${p.snr} rssi=${p.rssi} hops=${p.hop_start - p.hop_limit}`, emit, p.time)
   }
 }

@@ -205,7 +205,7 @@ func (n *Node) Received() []*pb.ToRadio {
 func (n *Node) Packets() []*pb.MeshPacket {
 	var out []*pb.MeshPacket
 	for _, tr := range n.Received() {
-		if p := tr.GetPacket(); p != nil && !(p.To == n.Num() && p.GetDecoded().GetPortnum() == pb.PortNum_ADMIN_APP) {
+		if p := tr.GetPacket(); p != nil && (p.To != n.Num() || p.GetDecoded().GetPortnum() != pb.PortNum_ADMIN_APP) {
 			out = append(out, p)
 		}
 	}

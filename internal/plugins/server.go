@@ -35,18 +35,16 @@ type session struct {
 	dropped atomic.Uint64
 }
 
-func (s *session) send(msg *pluginv1.HostMessage) bool {
+func (s *session) send(msg *pluginv1.HostMessage) {
 	select {
 	case <-s.done:
-		return false
+		return
 	default:
 	}
 	select {
 	case s.out <- msg:
-		return true
 	default:
 		s.dropped.Add(1)
-		return false
 	}
 }
 
@@ -66,7 +64,7 @@ func (s *session) close(reason string) {
 type ctxKey struct{}
 
 // serve listens on the Unix socket (and TCP, if configured) and serves the Plugin API.
-func (m *Manager) serve(ctx context.Context) (*grpc.Server, error) {
+func (m *Manager) serve() (*grpc.Server, error) {
 	auth := func(ctx context.Context) (context.Context, error) {
 		md, _ := metadata.FromIncomingContext(ctx)
 		var tok string

@@ -83,7 +83,7 @@ async function removeEverywhere(ch: SiteChannel) {
           Slot 0 is each identity's primary channel and is locked. Slots 1–7: press + to add, click to edit, × to remove.
         </p>
       </div>
-      <button class="btn btn-primary" @click="dialog = {}"><Plus class="size-4" />Add channel to identities</button>
+      <button type="button" class="btn btn-primary" @click="dialog = {}"><Plus class="size-4" />Add channel to identities</button>
     </div>
 
     <section class="card overflow-hidden">
@@ -116,18 +116,19 @@ async function removeEverywhere(ch: SiteChannel) {
                   <span class="flex items-center gap-1"><Lock class="size-3" />{{ c.display_name }}</span>
                 </div>
                 <div v-else-if="c.role !== 'DISABLED'" class="mx-auto flex h-10 min-w-24 items-stretch rounded-lg border border-line bg-surface-solid text-xs font-medium">
-                  <button class="flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-2 text-left transition-colors hover:bg-raised" :title="`Edit · hash 0x${c.hash.toString(16).padStart(2, '0')}`" @click="dialog = { identityId: i.node_id, slot: c.index }">
+                  <button type="button" class="flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-2 text-left transition-colors hover:bg-raised" :title="`Edit · hash 0x${c.hash.toString(16).padStart(2, '0')}`" @click="dialog = { identityId: i.node_id, slot: c.index }">
                     <span class="size-2 shrink-0 rounded-full" :style="{ background: colours.get(chanKey(c)) }" />
                     <span class="min-w-0 leading-tight">
                       <span class="block truncate">{{ c.display_name }}</span>
                     </span>
                   </button>
-                  <button class="flex w-6 shrink-0 items-center justify-center rounded-r-lg border-l border-line-soft text-ink-3 hover:bg-bad/10 hover:text-bad" :aria-label="`Remove ${c.display_name} from ${i.long_name}`" title="Remove from this identity" @click="removeSlot(i, c)">
+                  <button type="button" class="flex w-6 shrink-0 items-center justify-center rounded-r-lg border-l border-line-soft text-ink-3 hover:bg-bad/10 hover:text-bad" :aria-label="`Remove ${c.display_name} from ${i.long_name}`" title="Remove from this identity" @click="removeSlot(i, c)">
                     <X class="size-3" />
                   </button>
                 </div>
                 <button
                   v-else-if="c.index > 0"
+                  type="button"
                   class="mx-auto flex h-10 w-full min-w-12 items-center justify-center rounded-lg border border-dashed border-line-soft text-ink-3 opacity-60 transition hover:border-line hover:opacity-100"
                   :title="`Add a channel in slot ${c.index}`"
                   :aria-label="`Add a channel to ${i.long_name} in slot ${c.index}`"
@@ -137,7 +138,7 @@ async function removeEverywhere(ch: SiteChannel) {
                 </button>
               </td>
               <td>
-                <button class="icon-btn" title="Share or import channels" @click="open = i.node_id"><QrCode class="size-4" /></button>
+                <button type="button" class="icon-btn" title="Share or import channels" @click="open = i.node_id"><QrCode class="size-4" /></button>
               </td>
             </tr>
           </tbody>
@@ -157,8 +158,8 @@ async function removeEverywhere(ch: SiteChannel) {
             <div class="text-[13px] font-medium">{{ ch.name }} <span class="font-normal text-ink-3">· {{ keyKind(ch.psk) }}</span></div>
             <div class="truncate text-xs text-ink-3">{{ list.filter((i) => ch.holders.includes(i.node_id)).map((i) => i.long_name).join(', ') }}</div>
           </div>
-          <button class="btn btn-sm" @click="dialog = { preset: ch }"><Plus class="size-3.5" />Add to…</button>
-          <button class="btn btn-sm btn-ghost hover:!text-bad" @click="removeEverywhere(ch)">Remove from all</button>
+          <button type="button" class="btn btn-sm" @click="dialog = { preset: ch }"><Plus class="size-3.5" />Add to…</button>
+          <button type="button" class="btn btn-sm btn-ghost hover:!text-bad" @click="removeEverywhere(ch)">Remove from all</button>
         </li>
       </ul>
     </section>

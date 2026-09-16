@@ -218,8 +218,8 @@ async function save() {
       <p v-if="error" class="hint !text-bad">{{ error }}</p>
     </div>
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="saving || !channel || (!single && !targets.length)" @click="save">
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="saving || !channel || (!single && !targets.length)" @click="save">
         <Spinner v-if="saving" />{{ single ? (editing ? 'Save channel' : 'Add channel') : `Add to ${targets.length || ''} identit${targets.length === 1 ? 'y' : 'ies'}` }}
       </button>
     </template>

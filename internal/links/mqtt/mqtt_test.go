@@ -178,7 +178,7 @@ func TestBrokerUplinkAndDownlink(t *testing.T) {
 	}).WaitTimeout(5 * time.Second)
 
 	deadline := time.Now().Add(15 * time.Second)
-	for !(link.Connected() && len(link.Subscriptions()) == 1) {
+	for !link.Connected() || len(link.Subscriptions()) != 1 {
 		if time.Now().After(deadline) {
 			t.Fatalf("link connected=%v subscriptions=%v", link.Connected(), link.Subscriptions())
 		}
@@ -284,7 +284,7 @@ func TestBrokerTwoConnections(t *testing.T) {
 	obs.Subscribe("msh/MON/#", 0, func(_ paho.Client, m paho.Message) { seen <- m.Topic() + " " + string(m.Payload()) }).WaitTimeout(5 * time.Second)
 
 	deadline := time.Now().Add(15 * time.Second)
-	for !(gw.Connected() && mon.Connected() && len(gw.Subscriptions()) == 1) {
+	for !gw.Connected() || !mon.Connected() || len(gw.Subscriptions()) != 1 {
 		if time.Now().After(deadline) {
 			t.Fatalf("gateway connected=%v subs=%v, monitor connected=%v", gw.Connected(), gw.Subscriptions(), mon.Connected())
 		}

@@ -183,10 +183,10 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
           <p v-if="plugin.description" class="mt-2 max-w-3xl text-[13px] text-ink-2">{{ plugin.description }}</p>
         </div>
         <div class="flex items-center gap-2">
-          <button v-if="plugin.enabled" class="btn btn-sm" :disabled="plugin.state === 'needs_settings' || plugin.state === 'needs_review'" @click="restart">
+          <button type="button" v-if="plugin.enabled" class="btn btn-sm" :disabled="plugin.state === 'needs_settings' || plugin.state === 'needs_review'" @click="restart">
             <RotateCw class="size-3.5" />{{ plugin.state === 'crashed' ? 'Try again' : 'Restart' }}
           </button>
-          <button class="btn btn-sm" :disabled="plugin.pinned" :title="plugin.pinned ? 'Set in the config file' : undefined" @click="remove"><Trash class="size-3.5" />Remove</button>
+          <button type="button" class="btn btn-sm" :disabled="plugin.pinned" :title="plugin.pinned ? 'Set in the config file' : undefined" @click="remove"><Trash class="size-3.5" />Remove</button>
           <Toggle :model-value="plugin.enabled" :disabled="plugin.pinned" :label="`Enable ${plugin.name}`" @update:model-value="toggle" />
         </div>
       </div>
@@ -194,13 +194,13 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
       <div v-if="plugin.state === 'needs_review' || plugin.state === 'needs_settings' || plugin.state === 'crashed' || plugin.state === 'unsupported'"
         :class="['mb-4 flex flex-wrap items-center gap-3 rounded-xl px-4 py-3 text-[13px]', plugin.state === 'crashed' || plugin.state === 'unsupported' ? 'bg-bad/10 text-bad' : 'bg-warn/10 text-warn']">
         <span class="flex-1">{{ plugin.detail }}</span>
-        <button v-if="plugin.state === 'needs_review'" class="btn btn-sm" @click="enabling = plugin">Review permissions</button>
-        <button v-if="plugin.state === 'needs_settings'" class="btn btn-sm" @click="setTab('settings')">Open settings</button>
+        <button type="button" v-if="plugin.state === 'needs_review'" class="btn btn-sm" @click="enabling = plugin">Review permissions</button>
+        <button type="button" v-if="plugin.state === 'needs_settings'" class="btn btn-sm" @click="setTab('settings')">Open settings</button>
       </div>
 
       <section class="card overflow-hidden">
         <div class="tabs px-3 sm:px-4" role="tablist">
-          <button v-for="t in tabs" :key="t.id" role="tab" :aria-selected="tab === t.id" @click="setTab(t.id)">{{ t.label }}</button>
+          <button type="button" v-for="t in tabs" :key="t.id" role="tab" :aria-selected="tab === t.id" @click="setTab(t.id)">{{ t.label }}</button>
         </div>
         <div class="p-4 sm:p-6">
           <!-- PANEL -->
@@ -237,7 +237,7 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
                   <span :class="p.granted ? '' : 'text-ink-3 line-through'">{{ p.text }}</span>
                 </li>
               </ul>
-              <button v-if="plugin.enabled && !plugin.pinned" class="btn btn-sm mt-3" @click="enabling = plugin">Change permissions</button>
+              <button type="button" v-if="plugin.enabled && !plugin.pinned" class="btn btn-sm mt-3" @click="enabling = plugin">Change permissions</button>
               <p v-if="granted.some((p) => transmits(p.key))" class="hint mt-3">
                 Sends are capped at {{ meta?.messages_per_hour }} messages and {{ meta?.traceroutes_per_hour }} traceroutes an hour
                 (<RouterLink :to="{ name: 'plugins' }" class="underline underline-offset-2">Plugins → Send limits</RouterLink>).
@@ -251,7 +251,7 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
                 <p class="text-[13px] text-ink-2">
                   Address <span class="mono">{{ meta?.attach_address || 'attaching is off (plugins.listen)' }}</span>
                 </p>
-                <button class="btn btn-sm mt-2" @click="regenerate"><KeyRound class="size-3.5" />New token</button>
+                <button type="button" class="btn btn-sm mt-2" @click="regenerate"><KeyRound class="size-3.5" />New token</button>
               </template>
             </div>
           </div>
@@ -291,7 +291,7 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
         <pre class="mono overflow-x-auto rounded-lg bg-raised px-3 py-2.5 pr-10 text-xs">RT_PLUGIN_TOKEN={{ newToken.token }}</pre>
         <span class="absolute right-2 top-2"><CopyButton :text="newToken.token" label="Token" /></span>
       </div>
-      <template #footer><button class="btn btn-primary" @click="newToken = null">Done</button></template>
+      <template #footer><button type="button" class="btn btn-primary" @click="newToken = null">Done</button></template>
     </Modal>
   </div>
 </template>

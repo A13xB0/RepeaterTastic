@@ -73,7 +73,7 @@ function logout() {
           <div class="text-[15px] font-bold tracking-tight">Repeater<span class="text-brand">Tastic</span></div>
           <div class="text-2xs text-ink-3">Virtual Meshtastic nodes</div>
         </div>
-        <button class="icon-btn lg:hidden" aria-label="Close menu" @click="emit('close')"><X class="size-4" /></button>
+        <button type="button" class="icon-btn lg:hidden" aria-label="Close menu" @click="emit('close')"><X class="size-4" /></button>
       </div>
 
       <div class="mx-3 rounded-xl border border-line-soft bg-raised/70 p-3">
@@ -142,7 +142,7 @@ function logout() {
           <div>RepeaterTastic <span class="tabular-nums">v{{ (live.status?.version ?? '…').replace(/^v/, '') }}</span></div>
           <div>UI layout after openHop (MIT)</div>
         </div>
-        <button class="btn btn-sm btn-ghost" title="Sign out" @click="logout"><LogOut class="size-4" />Sign out</button>
+        <button type="button" class="btn btn-sm btn-ghost" title="Sign out" @click="logout"><LogOut class="size-4" />Sign out</button>
       </div>
     </div>
   </aside>

@@ -124,7 +124,8 @@ export interface Identity {
   /** Runs on a meshtasticd RepeaterTastic starts, with the key RepeaterTastic keeps. */
   hosted?: boolean
   enabled: boolean
-  api: { bind: string; port: number; clients: number } | null
+  /** The app port; listening is false when the port couldn't be opened. */
+  api: { bind: string; port: number; clients: number; listening: boolean } | null
   outbox: number
   airtime_ms_1h: number
   share_pct: number

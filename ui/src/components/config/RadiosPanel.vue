@@ -196,7 +196,7 @@ function openSettings(id: string) {
               <form v-if="renaming === r.id" class="flex items-center gap-2" @submit.prevent="saveName(r.id)">
                 <label class="sr-only" :for="`rn-${r.id}`">Radio name</label>
                 <input :id="`rn-${r.id}`" v-model="newName" class="input h-8 w-44" maxlength="40" autofocus @keydown.esc="renaming = null" />
-                <button class="btn btn-sm btn-primary">Save</button>
+                <button type="submit" class="btn btn-sm btn-primary">Save</button>
                 <button type="button" class="btn btn-sm" @click="renaming = null">Cancel</button>
               </form>
               <template v-else>
@@ -243,7 +243,7 @@ function openSettings(id: string) {
           </p>
         </div>
         <div class="flex items-end">
-          <button class="btn" :disabled="savingSite || !site || siteDuty === site.duty_cycle_percent"><Spinner v-if="savingSite" />Save cap</button>
+          <button type="submit" class="btn" :disabled="savingSite || !site || siteDuty === site.duty_cycle_percent"><Spinner v-if="savingSite" />Save cap</button>
         </div>
       </form>
     </template>
@@ -293,7 +293,7 @@ function openSettings(id: string) {
         <p v-if="addError" class="hint !text-bad sm:col-span-2">{{ addError }}</p>
         <div class="flex justify-end gap-2 sm:col-span-2">
           <button type="button" class="btn" @click="adding = false">Cancel</button>
-          <button class="btn btn-primary" :disabled="busy || !form.id || !form.device"><Spinner v-if="busy" />{{ editingId ? 'Save radio' : 'Add radio' }}</button>
+          <button type="submit" class="btn btn-primary" :disabled="busy || !form.id || !form.device"><Spinner v-if="busy" />{{ editingId ? 'Save radio' : 'Add radio' }}</button>
         </div>
       </form>
     </Modal>

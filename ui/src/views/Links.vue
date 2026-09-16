@@ -68,7 +68,7 @@ onBeforeUnmount(() => clearInterval(timer))
         <h2 class="page-title">Links</h2>
         <p class="page-sub">Non-RF interfaces. Each has its own packet history entry and never uses airtime.</p>
       </div>
-      <button class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
+      <button type="button" class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
     </div>
 
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -99,7 +99,7 @@ onBeforeUnmount(() => clearInterval(timer))
             <label class="label" :for="`grp-${l.name}`">Multicast group</label>
             <input :id="`grp-${l.name}`" class="input mono !h-8" placeholder="239.0.0.69:4403" :value="groupDraft[l.name] ?? l.group ?? ''" @input="groupDraft[l.name] = ($event.target as HTMLInputElement).value" />
           </div>
-          <button class="btn btn-sm" :disabled="groupDraft[l.name] === undefined || groupDraft[l.name] === (l.group ?? '')">Save</button>
+          <button type="submit" class="btn btn-sm" :disabled="groupDraft[l.name] === undefined || groupDraft[l.name] === (l.group ?? '')">Save</button>
         </form>
         <dl v-if="l.type === 'mqtt' && l.enabled" class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
           <dt class="text-ink-3">Topic root</dt><dd class="mono truncate">{{ l.root || '—' }}{{ l.tls ? ' · TLS' : '' }}</dd>

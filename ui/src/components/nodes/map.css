@@ -1,0 +1,38 @@
+/* Leaflet maps in the theme: the nodes map and the position picker. */
+.rt-map {
+  background: var(--sunken);
+  font: inherit;
+}
+.dark .rt-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.6);
+}
+.rt-map .leaflet-control-zoom a,
+.rt-map .leaflet-control-attribution {
+  background: var(--surface-solid);
+  color: var(--ink-2);
+  border-color: var(--line);
+}
+.rt-map .leaflet-control-attribution a {
+  color: var(--brand);
+}
+.rt-map .leaflet-tooltip {
+  background: var(--surface-solid);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+}
+.rt-map .leaflet-tooltip-top::before {
+  border-top-color: var(--line);
+}
+.rt-pin span {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--brand);
+  border: 2px solid var(--surface-solid);
+  box-shadow: var(--shadow);
+}

@@ -117,7 +117,7 @@ async function save() {
       </div>
       <p v-if="error" class="mt-2 text-xs text-bad">{{ error }}</p>
       <div class="mt-3 flex justify-end">
-        <button class="btn btn-sm btn-primary" :disabled="busy" @click="save"><Spinner v-if="busy" />Save</button>
+        <button type="button" class="btn btn-sm btn-primary" :disabled="busy" @click="save"><Spinner v-if="busy" />Save</button>
       </div>
     </div>
 

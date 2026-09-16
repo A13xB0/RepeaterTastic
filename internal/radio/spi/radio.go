@@ -114,7 +114,7 @@ func Open(ctx context.Context, b Board, logf func(string, ...any)) (*Radio, erro
 	if err != nil {
 		return nil, err
 	}
-	r, err := newRadio(ctx, h, b, logf)
+	r, err := newRadio(h, b, logf)
 	if err != nil {
 		h.Close()
 		return nil, err
@@ -137,7 +137,7 @@ func newChip(h hal, b Board, logf func(string, ...any)) (chip, error) {
 	return nil, fmt.Errorf("spi: no driver for module %q", b.Module)
 }
 
-func newRadio(ctx context.Context, h hal, b Board, logf func(string, ...any)) (*Radio, error) {
+func newRadio(h hal, b Board, logf func(string, ...any)) (*Radio, error) {
 	c, err := newChip(h, b, logf)
 	if err != nil {
 		return nil, err
@@ -229,7 +229,7 @@ func (r *Radio) Send(ctx context.Context, frame []byte) error {
 		r.errs.Add(1)
 		_ = r.chip.standby()
 		_ = r.startRx()
-		return fmt.Errorf("%w: no TxDone: %v", radio.ErrTxFailed, ctx.Err())
+		return fmt.Errorf("%w: no TxDone: %w", radio.ErrTxFailed, ctx.Err())
 	case <-r.stop:
 		return radio.ErrNotConnected
 	}

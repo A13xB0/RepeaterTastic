@@ -1,291 +1,217 @@
+// The node DB: nodes, sightings, traceroutes and NodeInfo requests.
+
 package web
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
-	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
-	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
-// pushOwner writes a node identity's names to the node.
-func pushOwner(ctx context.Context, id *mesh.Identity) error {
-	rm := id.Remote()
-	if rm == nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	if _, err := rm.Admin(ctx, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetOwner{SetOwner: id.UserCopy()}}); err != nil {
-		return fmt.Errorf("saved here, but meshtasticd didn't take the new name: %w", err)
-	}
-	return nil
+type traceWait struct {
+	mu      sync.Mutex
+	pending map[string]time.Time // identity|target → deadline
 }
 
-// pushChannels writes a node identity's channel slots to the node.
-func pushChannels(ctx context.Context, id *mesh.Identity, slots ...int) error {
-	rm := id.Remote()
-	if rm == nil || len(slots) == 0 {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	for _, i := range slots {
-		ch := id.ChannelCopy(i)
-		if p, ok := rm.(interface{ PrepareChannel(*pb.Channel) }); ok {
-			p.PrepareChannel(ch) // what the node needs on every channel (a board's MQTT proxy)
-		}
-		if _, err := rm.Admin(ctx, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetChannel{SetChannel: ch}}); err != nil {
-			return fmt.Errorf("saved here, but meshtasticd didn't take channel %d: %w", i, err)
-		}
-	}
-	return nil
-}
-
-// hostedInstances lists every radio's meshtasticd instances.
-func (s *Server) hostedInstances() []HostedInstance {
-	out := []HostedInstance{}
-	for _, rc := range s.radios {
-		x := s.opt.Hosting[rc.id]
-		if x == nil {
-			continue
-		}
-		for _, hn := range x.Nodes() {
-			out = append(out, HostedInstance{Radio: rc.id, Role: hn.Role, HostedStatus: hn.HostedStatus})
-		}
-	}
-	return out
-}
-
-// nodesHealth is how meshtasticd is doing across the site: the worst radio's state, and every
-// radio's problems.
-func (s *Server) nodesHealth() map[string]any {
-	rank := map[string]int{nodes.HealthOK: 0, nodes.HealthStarting: 1, nodes.HealthWarning: 2, nodes.HealthError: 3}
-	state, total, up := nodes.HealthOK, 0, 0
-	problems := []string{}
-	var version, launcher string
-	for _, rc := range s.radios {
-		x := s.opt.Hosting[rc.id]
-		if x == nil {
-			continue
-		}
-		h := x.Health()
-		if rank[h.State] > rank[state] {
-			state = h.State
-		}
-		total, up = total+h.Nodes, up+h.Up
-		for _, p := range h.Problems {
-			if len(s.radios) > 1 {
-				p = rc.name + ": " + p
+func (s *Server) watchTraceroutes(ctx context.Context, rc *radioCtx) {
+	events, unsub := rc.host.Bus.Subscribe(64)
+	defer unsub()
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e, ok := <-events:
+			if !ok {
+				return
 			}
-			problems = append(problems, p)
+			if tr, ok := e.Data.(mesh.TracerouteResult); ok && e.Type == "traceroute" {
+				s.traces.mu.Lock()
+				delete(s.traces.pending, tr.Identity+"|"+tr.Target)
+				s.traces.mu.Unlock()
+			}
+		case now := <-t.C:
+			s.traces.mu.Lock()
+			for k, deadline := range s.traces.pending {
+				if now.After(deadline) {
+					parts := strings.SplitN(k, "|", 2)
+					if num, err := wire.ParseNodeID(parts[0]); err != nil || rc.host.Identity(num) == nil {
+						continue // another radio's traceroute
+					}
+					delete(s.traces.pending, k)
+					rc.host.Bus.Publish(mesh.Event{Type: "traceroute", Data: map[string]any{
+						"identity": parts[0], "target": parts[1], "route": []string{}, "snr_towards": []float64{},
+						"route_back": []string{}, "snr_back": []float64{}, "error": "no response within 60 s"}})
+				}
+			}
+			s.traces.mu.Unlock()
 		}
-		if version == "" {
-			version = h.Version
-		}
-		launcher = h.Launcher
 	}
-	return map[string]any{"state": state, "nodes": total, "up": up, "problems": problems, "version": version, "launcher": launcher}
 }
 
-func (s *Server) getHosted(w http.ResponseWriter, r *http.Request) {
-	s.cfgMu.Lock()
-	hc := s.cfg.Hosted
-	s.cfgMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"meshtasticd": hc.Meshtasticd, "docker_image": hc.DockerImage,
-		"port_base": hc.HostedPortBase(), "min_version": nodes.MinFirmware, "instances": s.hostedInstances(),
-		"restart_required": len(s.restartReasons()) > 0})
+func (s *Server) expectTraceroute(from, target string) {
+	s.traces.mu.Lock()
+	s.traces.pending[from+"|"+target] = time.Now().Add(60 * time.Second)
+	s.traces.mu.Unlock()
 }
 
-func (s *Server) putHosted(w http.ResponseWriter, r *http.Request) {
-	var req config.Hosted
-	if !readJSON(w, r, &req) {
-		return
+func nodeJSON(e mesh.NodeEntry, knownBy []string) map[string]any {
+	n := map[string]any{"node_id": wire.NodeID(e.Num), "node_num": e.Num, "has_public_key": e.PublicKey() != nil,
+		"snr": nil, "rssi": nil, "via_mqtt": e.ViaMQTT, "local": e.Local, "favorite": e.Favorite, "ignored": e.Ignored}
+	// Signal is only measured for nodes heard directly (as in the firmware); for relayed,
+	// MQTT and local nodes 0/0 means "unknown", not a 0 dB link.
+	if !e.Local && e.HopsAway == 0 && e.RSSI != 0 {
+		n["snr"], n["rssi"] = e.SNR, e.RSSI
 	}
-	req.Meshtasticd = strings.TrimSpace(req.Meshtasticd)
-	req.DockerImage = strings.TrimSpace(req.DockerImage)
-	if req.PortBase == 4500 {
-		req.PortBase = 0 // the default stays implicit in the file
-	}
-	s.cfgMu.Lock()
-	next := *s.cfg
-	next.Hosted = req
-	err := next.Validate()
-	s.cfgMu.Unlock()
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	// Check the launcher will run: better to say so now than after the restart.
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-	defer cancel()
-	if _, err := nodes.CheckLauncher(ctx, nodes.LauncherFor(req.Meshtasticd, req.DockerImage)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	s.cfgMu.Lock()
-	s.cfg.Hosted = req
-	s.cfgMu.Unlock()
-	if err := s.saveIfPath(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.log.Info("meshtasticd settings changed", "meshtasticd", req.Meshtasticd, "docker_image", req.DockerImage)
-	s.getHosted(w, r)
-}
-
-// checkMeshtasticd is the setup check for hosted nodes: which meshtasticd would run, and whether
-// it can. Before a password exists only a meshtasticd program or an official image may be tried.
-func (s *Server) checkMeshtasticd(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Meshtasticd string `json:"meshtasticd"`
-		DockerImage string `json:"docker_image"`
-	}
-	if !readJSON(w, r, &req) {
-		return
-	}
-	req.Meshtasticd, req.DockerImage = strings.TrimSpace(req.Meshtasticd), strings.TrimSpace(req.DockerImage)
-	if !nodes.MeshtasticdBinary(req.Meshtasticd) {
-		writeError(w, http.StatusBadRequest, "the program must be meshtasticd (a path ending in /meshtasticd)")
-		return
-	}
-	if req.DockerImage != "" && s.auth.SetupNeeded() && !nodes.OfficialImage(req.DockerImage) {
-		writeError(w, http.StatusBadRequest, "until a password is set, only meshtastic/meshtasticd images can be checked")
-		return
-	}
-	l := nodes.LauncherFor(req.Meshtasticd, req.DockerImage)
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-	defer cancel()
-	v, err := nodes.CheckLauncher(ctx, l)
-	res := map[string]any{"ok": err == nil, "version": v, "min_version": nodes.MinFirmware, "launcher": l.Describe(), "error": ""}
-	if err != nil {
-		res["error"] = err.Error()
-	}
-	writeJSON(w, http.StatusOK, res)
-}
-
-// probeBoard is the setup probe for driver meshtastic: it connects to the board, reads its
-// configuration and disconnects. A board a running radio already uses is reported, not opened
-// twice (a serial board takes one client).
-func (s *Server) probeBoard(w http.ResponseWriter, r *http.Request, device string) {
-	res := map[string]any{"ok": false, "driver": nodes.BoardDriver, "firmware": "", "name": "", "sync_word_ok": false, "error": "", "details": []string{}}
-	for _, rc := range s.radios {
-		b, ok := rc.host.Radio().(*nodes.BoardRadio)
-		if !ok || (device != "" && b.Info().Device != device) {
-			continue
-		}
-		snap := b.Node().Client().Snapshot()
-		fillBoardProbe(res, snap)
-		if !snap.Connected {
-			res["error"] = "the board isn't answering: " + b.Info().Device
-		}
-		writeJSON(w, http.StatusOK, res)
-		return
-	}
-	if device == "" {
-		writeError(w, http.StatusBadRequest, "device must be the board's serial port or its address (host or host:port)")
-		return
-	}
-	if mtclient.IsSerial(device) {
-		if !serialPath(device) {
-			writeError(w, http.StatusBadRequest, "device must be a serial port such as /dev/ttyACM0 or /dev/serial/by-id/…")
-			return
-		}
+	if e.User != nil {
+		n["long_name"], n["short_name"], n["hw_model"], n["role"] = e.User.LongName, e.User.ShortName, e.User.HwModel.String(), e.User.Role.String()
+		n["has_user"] = true
 	} else {
-		addr, err := mtclient.TCPAddress(device)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		// Heard but no NodeInfo yet: the firmware's own placeholder names, so every
+		// node always has the fields the GUI sorts and filters on.
+		id := wire.NodeID(e.Num)
+		short := id[len(id)-4:]
+		n["long_name"], n["short_name"], n["hw_model"], n["role"] = "Meshtastic "+short, short,
+			pb.HardwareModel_UNSET.String(), pb.Config_DeviceConfig_CLIENT.String()
+		n["has_user"] = false
+	}
+	if !e.LastHeard.IsZero() {
+		n["last_heard"] = e.LastHeard.UnixMilli()
+	} else {
+		n["last_heard"] = nil
+	}
+	if e.HopsAway >= 0 {
+		n["hops_away"] = e.HopsAway
+	} else {
+		n["hops_away"] = nil
+	}
+	if e.NextHop != 0 {
+		n["next_hop"] = e.NextHop
+	} else {
+		n["next_hop"] = nil
+	}
+	if p := e.Position; p != nil && (p.GetLatitudeI() != 0 || p.GetLongitudeI() != 0) {
+		n["position"] = map[string]any{"lat": float64(p.GetLatitudeI()) / 1e7, "lon": float64(p.GetLongitudeI()) / 1e7,
+			"alt": p.GetAltitude(), "time": int64(p.Time) * 1000}
+	} else {
+		n["position"] = nil
+	}
+	if m := e.Metrics; m != nil {
+		n["telemetry"] = map[string]any{"battery": m.GetBatteryLevel(), "voltage": m.GetVoltage(),
+			"channel_util": m.GetChannelUtilization(), "air_util_tx": m.GetAirUtilTx()}
+	} else {
+		n["telemetry"] = nil
+	}
+	if e.Local {
+		n["known_by"] = []string{}
+	} else {
+		n["known_by"] = knownBy
+	}
+	return n
+}
+
+func (s *Server) localIDs(h *mesh.Host) []string {
+	var ids []string
+	for _, id := range h.Identities() {
+		if id.Enabled {
+			ids = append(ids, id.NodeID())
 		}
-		// Before a password exists anyone can call this: keep it to this machine and the LAN.
-		if s.auth.SetupNeeded() && !lanAddr(r.Context(), addr) {
-			writeError(w, http.StatusBadRequest, "until a password is set, a board's address must be on this machine or the local network")
-			return
-		}
 	}
-	s.boardProbe(r.Context(), device, res, 15*time.Second)
-	writeJSON(w, http.StatusOK, res)
+	return ids
 }
 
-// boardProbe connects to a board, reads its settings into res and disconnects.
-func (s *Server) boardProbe(ctx context.Context, device string, res map[string]any, wait time.Duration) {
-	ctx, cancel := context.WithTimeout(ctx, wait+5*time.Second)
-	defer cancel()
-	c := mtclient.New(mtclient.Options{Address: device, ConfigTimeout: wait, Logf: func(string, ...any) {}})
-	if err := c.Start(ctx); err != nil {
-		res["error"] = err.Error()
-		return
+func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
+	out := []map[string]any{}
+	known := s.localIDs(s.hostFor(r))
+	for _, e := range s.hostFor(r).DB.Snapshot() {
+		out = append(out, nodeJSON(e, known))
 	}
-	defer c.Close()
-	if err := c.Wait(ctx); err != nil {
-		res["error"] = "no Meshtastic board answered on " + device + ": " + err.Error()
-		return
-	}
-	fillBoardProbe(res, c.Snapshot())
+	writeJSON(w, http.StatusOK, out)
 }
 
-func fillBoardProbe(res map[string]any, s mtclient.Snapshot) {
-	if !s.Connected && s.MyInfo == nil {
-		return
-	}
-	u := s.Self().GetUser()
-	lora := s.Config.GetLora()
-	res["ok"], res["sync_word_ok"] = s.Connected, s.Connected
-	res["name"] = u.GetLongName()
-	res["firmware"] = "Meshtastic " + s.Metadata.GetFirmwareVersion()
-	details := []string{
-		fmt.Sprintf("node %s %q (%s)", wire.NodeID(s.NodeNum()), u.GetLongName(), u.GetShortName()),
-		fmt.Sprintf("hardware %s, role %s", s.Metadata.GetHwModel(), s.Config.GetDevice().GetRole()),
-		fmt.Sprintf("region %s, preset %s, hop limit %d", lora.GetRegion(), lora.GetModemPreset(), lora.GetHopLimit()),
-		fmt.Sprintf("%d nodes known", len(s.Nodes)),
-		"its MQTT module will carry your identities (client proxy); its own MQTT connection stops",
-	}
-	if lora.GetRegion() == pb.Config_LoRaConfig_UNSET {
-		details = append(details, "the region isn't set yet: it will be set to the one chosen here")
-	}
-	res["region"], res["preset"] = lora.GetRegion().String(), lora.GetModemPreset().String()
-	res["role"] = s.Config.GetDevice().GetRole().String()
-	res["node_id"] = wire.NodeID(s.NodeNum())
-	res["details"] = details
-}
-
-// lanAddr reports whether host:port resolves only to loopback, private or link-local addresses.
-func lanAddr(ctx context.Context, addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
+func (s *Server) fromIdentity(w http.ResponseWriter, r *http.Request) (*mesh.Identity, uint32, bool) {
+	target, err := wire.ParseNodeID(r.PathValue("id"))
 	if err != nil {
-		return false
+		writeError(w, http.StatusBadRequest, "bad node id")
+		return nil, 0, false
 	}
-	ips := []net.IP{net.ParseIP(host)}
-	if ips[0] == nil {
-		lctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		found, err := net.DefaultResolver.LookupIP(lctx, "ip", host)
-		if err != nil || len(found) == 0 {
-			return false
-		}
-		ips = found
+	var req struct {
+		From string `json:"from"`
 	}
-	for _, ip := range ips {
-		if !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
-			return false
-		}
+	if !readJSON(w, r, &req) {
+		return nil, 0, false
 	}
-	return true
+	var from *mesh.Identity
+	if req.From == "" {
+		from = s.hostFor(r).Relay()
+	} else if n, err := wire.ParseNodeID(req.From); err == nil {
+		from = s.hostFor(r).Identity(n)
+	}
+	if from == nil {
+		writeError(w, http.StatusBadRequest, "from must be one of this host's identities")
+		return nil, 0, false
+	}
+	return from, target, true
 }
 
-// runtimes reports what this machine can run hosted nodes with: an installed meshtasticd and
-// Docker (with whether the image is already downloaded), for the configured program and image.
-func (s *Server) runtimes(w http.ResponseWriter, r *http.Request) {
-	s.cfgMu.Lock()
-	hc := s.cfg.Hosted
-	s.cfgMu.Unlock()
-	writeJSON(w, http.StatusOK, nodes.DetectRuntimes(r.Context(), hc.Meshtasticd, hc.DockerImage))
+func (s *Server) traceroute(w http.ResponseWriter, r *http.Request) {
+	from, target, ok := s.fromIdentity(w, r)
+	if !ok {
+		return
+	}
+	if err := s.hostFor(r).Traceroute(from, target); err != nil {
+		writeError(w, http.StatusTooManyRequests, "traceroute not sent: "+err.Error())
+		return
+	}
+	s.expectTraceroute(from.NodeID(), wire.NodeID(target))
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent"})
+}
+
+func (s *Server) requestNodeInfo(w http.ResponseWriter, r *http.Request) {
+	from, target, ok := s.fromIdentity(w, r)
+	if !ok {
+		return
+	}
+	s.hostFor(r).RequestNodeInfo(from, target)
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent"})
+}
+
+func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
+	num, err := wire.ParseNodeID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad node id")
+		return
+	}
+	if s.hostFor(r).Identity(num) != nil {
+		writeError(w, http.StatusConflict, "that node is one of this host's identities; delete it under Identities")
+		return
+	}
+	s.hostFor(r).DB.Delete(num)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// nodeSightings is GET /nodes/{id}/sightings: what every radio knows about a node.
+func (s *Server) nodeSightings(w http.ResponseWriter, r *http.Request) {
+	num, err := wire.ParseNodeID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "node id must look like !a1c40e07")
+		return
+	}
+	out := []map[string]any{}
+	for _, sg := range s.radios[0].host.Sightings(num) {
+		name := sg.Radio
+		if rc := s.radioByID(sg.Radio); rc != nil {
+			name = rc.name
+		}
+		out = append(out, map[string]any{"radio_id": sg.Radio, "radio_name": name, "last_heard": sg.LastHeard.UnixMilli(),
+			"snr": sg.SNR, "rssi": sg.RSSI, "hops_away": sg.HopsAway, "via_mqtt": sg.ViaMQTT})
+	}
+	writeJSON(w, http.StatusOK, out)
 }

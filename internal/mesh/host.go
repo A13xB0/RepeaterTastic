@@ -758,7 +758,7 @@ func (h *Host) txLoop(ctx context.Context) {
 			rec.Port, rec.PKI, rec.Data = it.plain.Portnum.String(), it.pkt.PkiEncrypted, it.plain
 			rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
 		} else if dec := h.decode(it.pkt); dec.ok {
-			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold
+			h.fillRecordFromDecoded(&rec, dec) // a relayed packet on a channel we hold
 		}
 		if o := h.Identity(it.origin); o != nil {
 			rec.DecodedBy = o.NodeID()

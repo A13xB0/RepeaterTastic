@@ -12,3 +12,7 @@
 
 # local scratch tools
 zz-*/
+
+# built in place by `go build` in a command directory
+/cmd/*/repeatertastic
+/cmd/*/kisstool

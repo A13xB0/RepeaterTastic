@@ -121,7 +121,7 @@ func TestSX127x(t *testing.T) {
 	m := &rf95Model{}
 	m.reg[rfRegVersion] = 0x12
 	h := newFakeHAL(m.xfer, false)
-	r, err := newRadio(context.Background(), h, Board{Module: ModuleRF95, MaxPower: 20}, t.Logf)
+	r, err := newRadio(h, Board{Module: ModuleRF95, MaxPower: 20}, t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestSX1280(t *testing.T) {
 		m.regs[s8RegVersionString+uint16(i)] = c
 	}
 	h := newFakeHAL(m.xfer, true)
-	r, err := newRadio(context.Background(), h, Board{Module: ModuleSX1280}, t.Logf)
+	r, err := newRadio(h, Board{Module: ModuleSX1280}, t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestLR1121(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := newRadio(context.Background(), h, b, t.Logf)
+	r, err := newRadio(h, b, t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}

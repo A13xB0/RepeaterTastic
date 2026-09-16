@@ -54,7 +54,7 @@ type Run struct {
 	Managed *Managed `yaml:"managed" json:"managed,omitempty"`
 }
 
-// Managed: RepeaterTastic runs Exec (a bundle path; {os} and {arch} are replaced, e.g.
+// Managed says how RepeaterTastic runs a plugin: Exec (a bundle path; {os} and {arch} are replaced, e.g.
 // bin/my-plugin-{os}-{arch}) and keeps it running while the plugin is enabled.
 type Managed struct {
 	Exec string   `yaml:"exec" json:"exec"`

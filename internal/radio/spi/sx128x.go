@@ -78,7 +78,7 @@ func (s *sx128x) init() error {
 	if err != nil {
 		return err
 	}
-	s.version = strings.TrimRight(string(v), "\x00\xff")
+	s.version = string(cutPadding(v))
 	if !strings.HasPrefix(s.version, "SX1280") {
 		return fmt.Errorf("the chip didn't answer as an SX1280 (version string %q): check spidev, CS and wiring", s.version)
 	}

@@ -103,22 +103,22 @@ const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
         <p class="page-sub">The shared node DB every identity sees · {{ counts.active }} heard in the last 2 h</p>
       </div>
       <div class="seg" role="group" aria-label="Layout">
-        <button :aria-pressed="view === 'split'" class="max-lg:hidden" @click="setView('split')">Split</button>
-        <button :aria-pressed="view === 'list'" @click="setView('list')">List</button>
-        <button :aria-pressed="view === 'map'" @click="setView('map')">Map</button>
+        <button type="button" :aria-pressed="view === 'split'" class="max-lg:hidden" @click="setView('split')">Split</button>
+        <button type="button" :aria-pressed="view === 'list'" @click="setView('list')">List</button>
+        <button type="button" :aria-pressed="view === 'map'" @click="setView('map')">Map</button>
       </div>
     </div>
 
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <div class="relative w-full sm:w-72">
         <Search class="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-3" />
-        <input v-model="q" class="input pl-9" placeholder="Search name, id or hardware" />
+        <input id="nodes-search" v-model="q" aria-label="Search nodes" class="input pl-9" placeholder="Search name, id or hardware" />
       </div>
       <div class="seg">
-        <button :aria-pressed="scope === 'all'" @click="scope = 'all'">All {{ counts.all }}</button>
-        <button :aria-pressed="scope === 'active'" @click="scope = 'active'">Active {{ counts.active }}</button>
-        <button :aria-pressed="scope === 'local'" @click="scope = 'local'">Local {{ counts.local }}</button>
-        <button :aria-pressed="scope === 'key'" @click="scope = 'key'">With key {{ counts.key }}</button>
+        <button type="button" :aria-pressed="scope === 'all'" @click="scope = 'all'">All {{ counts.all }}</button>
+        <button type="button" :aria-pressed="scope === 'active'" @click="scope = 'active'">Active {{ counts.active }}</button>
+        <button type="button" :aria-pressed="scope === 'local'" @click="scope = 'local'">Local {{ counts.local }}</button>
+        <button type="button" :aria-pressed="scope === 'key'" @click="scope = 'key'">With key {{ counts.key }}</button>
       </div>
     </div>
 
@@ -129,7 +129,7 @@ const cols = computed<{ key: SortKey; label: string; cls?: string }[]>(() => [
             <thead>
               <tr>
                 <th v-for="c in cols" :key="c.key" :class="c.cls">
-                  <button class="inline-flex items-center gap-1 uppercase hover:text-ink" @click="sortBy(c.key)">
+                  <button type="button" class="inline-flex items-center gap-1 uppercase hover:text-ink" @click="sortBy(c.key)">
                     {{ c.label }}
                     <template v-if="sortKey === c.key"><ArrowUp v-if="sortDir === 1" class="size-3" /><ArrowDown v-else class="size-3" /></template>
                   </button>

@@ -191,9 +191,7 @@ func readDT(path string) string {
 // parseRAKEEPROM checks a RAK autoconf EEPROM string, "<model>:<mac>:<device id>:<crc32>", and
 // returns the model. The CRC32 covers everything before the last colon.
 func parseRAKEEPROM(raw []byte) (string, error) {
-	if i := strings.IndexAny(string(raw), "\x00\xff"); i >= 0 {
-		raw = raw[:i]
-	}
+	raw = cutPadding(raw)
 	s := string(raw)
 	parts := strings.Split(s, ":")
 	if len(parts) != 4 || len(parts[3]) != 8 {
@@ -207,4 +205,14 @@ func parseRAKEEPROM(raw []byte) (string, error) {
 		return "", errors.New("EEPROM checksum mismatch")
 	}
 	return parts[0], nil
+}
+
+// cutPadding cuts b at its first NUL or 0xFF byte (unwritten EEPROM or register padding).
+func cutPadding(b []byte) []byte {
+	for i, c := range b {
+		if c == 0x00 || c == 0xff {
+			return b[:i]
+		}
+	}
+	return b
 }
