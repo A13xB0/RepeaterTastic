@@ -14,7 +14,7 @@ import { toast } from '@/composables/toast'
 const props = defineProps<{ identity: Identity | null }>()
 const emit = defineEmits<{ close: [] }>()
 
-const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, share_limit_pct: 25, hop_limit: 0,
+const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, app_settings: false, share_limit_pct: 25, hop_limit: 0,
   own_position: false, latitude: 0, longitude: 0, altitude: 0, position_secs: 0, radio_id: 'main', api_bind: '' })
 const saving = ref(false)
 const error = ref('')
@@ -27,7 +27,7 @@ watch(
     if (!i) return
     refreshIdentities().catch(() => {})
     error.value = ''
-    form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
+    form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, app_settings: i.app_settings ?? false, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
       own_position: !!i.position, latitude: i.position?.latitude ?? 0, longitude: i.position?.longitude ?? 0, altitude: i.position?.altitude ?? 0,
       position_secs: i.position_secs ?? 0, radio_id: i.radio_id ?? 'main', api_bind: !i.api?.bind || i.api.bind === '0.0.0.0' ? '' : i.api.bind }
   },
@@ -46,6 +46,7 @@ function buildPatch(i: Identity, f: Form): Record<string, unknown> {
   if (f.short_name !== i.short_name) patch.short_name = f.short_name.trim()
   if (f.role !== i.role) patch.role = f.role
   if (f.enabled !== i.enabled) patch.enabled = f.enabled
+  if (f.app_settings !== (i.app_settings ?? false)) patch.app_settings = f.app_settings
   if (i.api && f.api_port !== i.api.port) patch.api_port = f.api_port
   if (i.api && f.api_bind !== apiBindValue(i)) patch.api_bind = f.api_bind
   if (f.share_limit_pct !== (i.share_limit_pct ?? 25)) patch.share_limit_pct = f.share_limit_pct
@@ -176,6 +177,16 @@ async function save() {
           <div class="text-xs text-ink-3">Disabled identities stop transmitting and close their API port.</div>
         </div>
         <Toggle v-model="form.enabled" label="Enabled" />
+      </div>
+      <div v-if="!identity.is_relay" class="flex items-center justify-between gap-3 rounded-xl border border-line-soft bg-raised px-3.5 py-3 sm:col-span-2">
+        <div>
+          <div class="text-[13px] font-medium">App can change node settings</div>
+          <div class="text-xs text-ink-3">
+            Lets an app connected to this identity change its radio, device, module and position settings, and reboot or reset its meshtasticd.
+            Off, the app can still read everything and change the names and channels.
+          </div>
+        </div>
+        <Toggle v-model="form.app_settings" label="App can change node settings" />
       </div>
     </div>
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>

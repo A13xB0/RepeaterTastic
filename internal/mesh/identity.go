@@ -39,6 +39,9 @@ type Identity struct {
 	CreatedAt  time.Time
 	// ShareLimitPct is this identity's slice of the hourly duty budget (0 = host default).
 	ShareLimitPct float64
+	// AppSettings lets an app connected to the identity change its node's settings (radio,
+	// device, modules, position) and reboot or reset it. Off, those admin messages are refused.
+	AppSettings bool
 	// HopLimit caps the hop limit of every packet this identity originates, whatever its
 	// client asks for (0 = the radio's hop_limit). Keeps a chatty client, such as rnsd's
 	// RNS tunnel, from flooding the whole mesh.
@@ -254,6 +257,7 @@ type IdentityRecord struct {
 	APIPort      int               `json:"api_port,omitempty"`
 	CreatedAt    int64             `json:"created_at"`
 	ShareLimit   float64           `json:"share_limit_pct,omitempty"`
+	AppSettings  bool              `json:"app_settings,omitempty"`
 	HopLimit     uint32            `json:"hop_limit,omitempty"`
 	Position     *IdentityPosition `json:"position,omitempty"`
 	PositionSecs uint32            `json:"position_secs,omitempty"`
@@ -267,7 +271,7 @@ func (id *Identity) Record() IdentityRecord {
 		PrivateKey: base64.StdEncoding.EncodeToString(id.PrivateKey),
 		LongName:   id.User.LongName, ShortName: id.User.ShortName, Role: id.User.Role.String(),
 		IsRelay: id.IsRelay, Enabled: id.Enabled, APIBind: id.APIBind, APIPort: id.APIPort,
-		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct, HopLimit: id.HopLimit,
+		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct, AppSettings: id.AppSettings, HopLimit: id.HopLimit,
 		Position: id.OwnPosition, PositionSecs: id.PositionSecs,
 	}
 	for _, ch := range id.Channels {
@@ -304,7 +308,7 @@ func (id *Identity) applyRecordSettings(r IdentityRecord) {
 	id.mu.Lock()
 	defer id.mu.Unlock()
 	id.IsRelay, id.Enabled, id.APIBind, id.APIPort = r.IsRelay, r.Enabled, r.APIBind, r.APIPort
-	id.ShareLimitPct = r.ShareLimit
+	id.ShareLimitPct, id.AppSettings = r.ShareLimit, r.AppSettings
 	id.HopLimit = r.HopLimit
 	id.OwnPosition, id.PositionSecs = r.Position, r.PositionSecs
 	if r.CreatedAt > 0 {
@@ -455,21 +459,28 @@ type IdentitySettings struct {
 	APIPort       int
 	APIBind       string
 	ShareLimitPct float64
+	AppSettings   bool
 }
 
-// SetSettings changes Enabled, APIPort, APIBind and ShareLimitPct under the identity's lock, so a
+// SetSettings changes Enabled, APIPort, APIBind, ShareLimitPct and AppSettings under the identity's lock, so a
 // concurrent Record (saving) never sees a half-changed identity.
 func (id *Identity) SetSettings(fn func(*IdentitySettings)) {
 	id.mu.Lock()
 	defer id.mu.Unlock()
-	x := IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct}
+	x := id.settingsLocked()
 	fn(&x)
-	id.Enabled, id.APIPort, id.APIBind, id.ShareLimitPct = x.Enabled, x.APIPort, x.APIBind, x.ShareLimitPct
+	id.Enabled, id.APIPort, id.APIBind, id.ShareLimitPct, id.AppSettings = x.Enabled, x.APIPort, x.APIBind, x.ShareLimitPct, x.AppSettings
 }
 
-// Settings reads Enabled, APIPort, APIBind and ShareLimitPct under the identity's lock.
+// Settings reads the settings SetSettings changes, under the identity's lock.
 func (id *Identity) Settings() IdentitySettings {
 	id.mu.RLock()
 	defer id.mu.RUnlock()
-	return IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct}
+	return id.settingsLocked()
+}
+
+// settingsLocked reads the settings; the caller holds id.mu.
+func (id *Identity) settingsLocked() IdentitySettings {
+	return IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct,
+		AppSettings: id.AppSettings}
 }

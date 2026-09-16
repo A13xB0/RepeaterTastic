@@ -411,6 +411,11 @@ func (s *Session) rateLimited(port pb.PortNum, now time.Time) bool {
 
 // forward sends a client's packet from the identity.
 func (s *Session) forward(p *pb.MeshPacket) {
+	if kind, refused := s.refusedAdmin(p); refused {
+		s.log.Info("app not allowed to change node settings", "identity", s.id.NodeID(), "request", kind)
+		s.routingToClient(p.Id, pb.Routing_NOT_AUTHORIZED)
+		return
+	}
 	if p.To == s.id.NodeNum {
 		// The node answers its own admin messages and requests; the replies come back to every
 		// client of the identity with this packet's id.

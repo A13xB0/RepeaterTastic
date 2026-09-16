@@ -77,7 +77,8 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		"is_relay": id.IsRelay, "real_node": id.Remote() != nil, "hosted": id.Hosted(), "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
 		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id), "hop_limit": id.MaxHops(),
-		"position": identityPositionJSON(id), "position_secs": id.PositionInterval(),
+		"app_settings": id.Settings().AppSettings,
+		"position":     identityPositionJSON(id), "position_secs": id.PositionInterval(),
 		"unread":   rc.host.Messages.UnreadTotal(id.NodeNum, id.NodeID()),
 		"radio_id": rc.id, "radio_name": rc.name,
 	}
@@ -391,6 +392,9 @@ type identityPatch struct {
 	HopLimit  *uint32         `json:"hop_limit"`
 	Position  json.RawMessage `json:"position"` // {"latitude","longitude","altitude"} or null to remove
 	PosSecs   *uint32         `json:"position_secs"`
+	// AppSettings lets the identity's app change its node's radio, device, module and position
+	// settings, and reboot or reset it.
+	AppSettings *bool `json:"app_settings"`
 }
 
 func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
@@ -576,6 +580,9 @@ func applyPatchSettings(id *mesh.Identity, req *identityPatch, bind *string) {
 		}
 		if req.Share != nil {
 			x.ShareLimitPct = *req.Share
+		}
+		if req.AppSettings != nil {
+			x.AppSettings = *req.AppSettings
 		}
 	})
 }

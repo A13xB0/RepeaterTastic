@@ -67,6 +67,13 @@ it, or **×** to remove it. The QR button shares or imports a `meshtastic.org/e/
 Slot 0 is the primary channel. It's shared by every identity on a radio because its name picks the
 frequency; change it under Configuration → Radios → Edit.
 
+### Let an app change a node's settings
+
+Identities → **Edit** → **App can change node settings** (off by default). Off, an app connected to
+the identity can read everything and change its names and channels, but not its radio, device,
+module or position settings, and it can't reboot or reset the node: those stay RepeaterTastic's to
+manage.
+
 ### Move an identity to another radio
 
 Identities → **Edit** → **Home radio**. Its key, node ID, app port and chats move with it; its

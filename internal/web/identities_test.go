@@ -331,3 +331,20 @@ func TestIdentitySaveFailureIsLogged(t *testing.T) {
 		t.Fatalf("logs = %v", env.logs.Recent(10))
 	}
 }
+
+func TestAppSettingsSwitch(t *testing.T) {
+	env := newTestEnv(t, nil)
+	tok := env.signIn(t)
+	_, created, _ := call(t, env.srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk"})
+	if created["app_settings"] != false {
+		t.Fatalf("a new identity lets its app change node settings: %v", created["app_settings"])
+	}
+	path := "/api/v1/identities/" + created["node_id"].(string)
+	if code, res, _ := call(t, env.srv, "PATCH", path, tok, map[string]any{"app_settings": true}); code != 200 || res["app_settings"] != true {
+		t.Fatalf("patch: %d %v", code, res)
+	}
+	num, _ := wire.ParseNodeID(created["node_id"].(string))
+	if !env.host.Identity(num).Settings().AppSettings || !env.host.Identity(num).Record().AppSettings {
+		t.Fatal("switch not kept with the identity")
+	}
+}

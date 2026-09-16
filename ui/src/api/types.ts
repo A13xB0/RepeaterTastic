@@ -131,6 +131,8 @@ export interface Identity {
   share_pct: number
   /** Proposed: configured slice of the hourly duty budget (percent of the budget). */
   share_limit_pct?: number
+  /** The app may change the node's radio, device, module and position settings, and reboot it. */
+  app_settings?: boolean
   /** Cap on the hop limit of packets this identity sends; 0 = the radio's hop limit. */
   hop_limit?: number
   /** Own fixed position (null = uses the radio's site position). */
