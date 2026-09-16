@@ -76,9 +76,10 @@ func TestHostedNodeTakesHostSettings(t *testing.T) {
 	eventually(t, "owner on the node and the identity", func() bool {
 		return r.id.UserCopy().GetLongName() == "RT Relay" || r.h.Relay().UserCopy().GetLongName() == "RT Relay"
 	})
+	// The first region goes alone (it may move the node number); the rest in one transaction.
 	admins := fake.Admins()
-	if !admins[0].GetBeginEditSettings() {
-		t.Fatalf("settings not in an edit transaction: %v", admins[0])
+	if admins[0].GetSetConfig().GetLora().GetRegion() != pb.Config_LoRaConfig_EU_868 || !admins[1].GetBeginEditSettings() {
+		t.Fatalf("settings order: %v", admins[:2])
 	}
 	if r.h.Config().Region != "EU_868" {
 		t.Fatal("the node's settings must not flow back into the host")
@@ -227,5 +228,28 @@ func testLogf(t *testing.T) func(string, ...any) {
 		if !done {
 			t.Logf(f, a...)
 		}
+	}
+}
+
+func TestFirstRegionMovesTheNodeNumber(t *testing.T) {
+	fake := mtclienttest.New(hostedNum)
+	fake.Update(func(s *mtclienttest.State) { s.Config.Lora.Region = pb.Config_LoRaConfig_UNSET })
+	fake.SetMintKeyOnFirstRegion(true)
+	r := startNode(t, fake, t.TempDir(), 2*time.Second)
+	r.n.SetOwner("Mast", "MAST")
+	eventually(t, "renumbered board configured", func() bool {
+		c := fake.Config()
+		return fake.Num() != hostedNum && c.Lora.Region == pb.Config_LoRaConfig_EU_868 && c.Device.Role == pb.Config_DeviceConfig_ROUTER &&
+			fake.Owner().GetLongName() == "Mast"
+	})
+	eventually(t, "the host follows the new number", func() bool {
+		return r.h.Relay() != nil && r.h.Relay().NodeNum == fake.Num() && r.h.Identity(hostedNum) == nil
+	})
+	// Admin now reaches the node under its new number.
+	if _, err := r.n.Admin(context.Background(), &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetOwner{SetOwner: &pb.User{LongName: "Mast 2", ShortName: "MST2"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.Owner().GetLongName() != "Mast 2" {
+		t.Fatalf("owner %v", fake.Owner())
 	}
 }

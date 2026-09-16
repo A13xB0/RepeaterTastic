@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Configuration → Experimental: run the relay persona on meshtasticd, and see what runs.
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api } from '@/api/client'
-import type { HostedSettings, Runtimes } from '@/api/types'
+import type { HostedSettings, RadiosResponse, Runtimes } from '@/api/types'
 import Spinner from '@/components/ui/Spinner.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import { refreshStatus } from '@/store/live'
@@ -17,6 +17,11 @@ const persona = ref(false)
 const identities = ref(false)
 const busy = ref(false)
 const runtimes = ref<Runtimes | null>(null)
+// Radios on a Meshtastic board keep the board as their relay: the persona switch is for the others.
+const radios = ref<RadiosResponse['radios']>([])
+const boardRadios = computed(() => radios.value.filter((r) => r.driver === 'meshtastic'))
+const modemRadios = computed(() => radios.value.filter((r) => r.driver !== 'meshtastic'))
+const onlyBoards = computed(() => radios.value.length > 0 && modemRadios.value.length === 0)
 const error = ref('')
 
 function load(s: HostedSettings) {
@@ -32,6 +37,7 @@ function load(s: HostedSettings) {
 onMounted(async () => {
   try {
     load(await api.get<HostedSettings>('/hosted'))
+    api.get<RadiosResponse>('/radios').then((r) => (radios.value = r.radios)).catch(() => {})
     api.get<Runtimes>('/setup/runtimes').then((r) => {
       runtimes.value = r
       if (!state.value?.persona && !state.value?.identities && !r.meshtasticd.ok && r.docker.ok) via.value = 'docker'
@@ -66,7 +72,14 @@ async function save() {
 <template>
   <div v-if="!state" class="h-24 animate-pulse rounded-xl bg-sunken" />
   <div v-else class="rounded-xl border border-line-soft px-4 py-3.5">
-    <div class="flex items-start justify-between gap-4">
+    <div v-if="onlyBoards" class="text-xs text-ink-3">
+      <div class="text-[13px] font-medium text-ink">Relay persona</div>
+      <p class="mt-1">
+        {{ boardRadios.length === 1 ? 'Your radio is a board' : 'Your radios are boards' }} running Meshtastic firmware, so the relay persona lives on the board itself and nothing here moves it.
+        RepeaterTastic writes its region, preset and role. Only your identities can run on meshtasticd, one hop behind the board.
+      </p>
+    </div>
+    <div v-else class="flex items-start justify-between gap-4">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2 text-[13px] font-medium">
           Relay persona on meshtasticd
@@ -75,6 +88,7 @@ async function save() {
         <p class="mt-1 text-xs text-ink-3">
           Each modem or HAT radio's relay runs as a real Meshtastic node: a meshtasticd {{ state.min_version }}+ on a simulated radio, still transmitting on this radio at zero hops.
           It keeps its saved key, so its node number stays the same. Takes effect at the next restart.
+          <template v-if="boardRadios.length"> Doesn't apply to {{ boardRadios.map((r) => r.name).join(', ') }}: a board running Meshtastic firmware stays its own relay.</template>
         </p>
       </div>
       <Toggle :model-value="persona" :disabled="busy" label="Relay persona on meshtasticd" @update:model-value="persona = $event" />
@@ -93,7 +107,9 @@ async function save() {
           <p class="mt-1 text-xs text-ink-3">
             Every identity becomes a meshtasticd of its own, with its saved key: node numbers, channels and chats stay. Each keeps its app port.
             Identities routed across radios stay in RepeaterTastic, and hosted identities can only take roles that never repeat.
-            On a modem or HAT radio this needs the relay on meshtasticd too; behind a board running Meshtastic firmware it works on its own.
+            <template v-if="onlyBoards">Each runs one hop behind the board.</template>
+            <template v-else-if="boardRadios.length">On a modem or HAT radio this needs the relay persona on meshtasticd too; behind a board it works on its own, one hop behind it.</template>
+            <template v-else>It needs the relay persona on meshtasticd too.</template>
           </p>
         </div>
         <Toggle :model-value="identities" :disabled="busy" label="Identities on meshtasticd" @update:model-value="identities = $event" />

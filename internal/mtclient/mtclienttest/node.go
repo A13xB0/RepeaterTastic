@@ -39,6 +39,7 @@ type Node struct {
 	noise    bool
 	silent   bool
 	reboot   bool
+	mintKey  bool // a first region makes new keys and a new number at once (a real 2.8 board)
 }
 
 // SetNoise writes console text between frames, as a serial board does.
@@ -46,6 +47,11 @@ func (n *Node) SetNoise(on bool) { n.mu.Lock(); n.noise = on; n.mu.Unlock() }
 
 // SetSilent stops the node finishing the handshake.
 func (n *Node) SetSilent(on bool) { n.mu.Lock(); n.silent = on; n.mu.Unlock() }
+
+// SetMintKeyOnFirstRegion makes the node act like a 2.8 board without keys: setting a region for
+// the first time makes a new key pair and moves the node number to match straight away, so the
+// answer (addressed to the old number) never comes.
+func (n *Node) SetMintKeyOnFirstRegion(on bool) { n.mu.Lock(); n.mintKey = on; n.mu.Unlock() }
 
 // SetRebootOnCommit drops the connection after commit_edit_settings, as a board does.
 func (n *Node) SetRebootOnCommit(on bool) { n.mu.Lock(); n.reboot = on; n.mu.Unlock() }
@@ -334,6 +340,16 @@ func (n *Node) answer(conn io.Writer, p *pb.MeshPacket) bool {
 		ack(pb.Routing_NONE)
 	case *pb.AdminMessage_SetConfig:
 		n.mu.Lock()
+		if lora := v.SetConfig.GetLora(); lora != nil && n.mintKey && n.config.GetLora().GetRegion() == pb.Config_LoRaConfig_UNSET &&
+			lora.GetRegion() != pb.Config_LoRaConfig_UNSET {
+			pub := []byte(fmt.Sprintf("minted key for %08x..........", n.num))
+			n.config.Security.PublicKey = pub
+			n.num = crc32.ChecksumIEEE(pub)
+			n.owner.PublicKey, n.owner.Id = pub, fmt.Sprintf("!%08x", n.num)
+			mergeConfig(n.config, v.SetConfig)
+			n.mu.Unlock()
+			return true // the ack goes to the old number: lost
+		}
 		if sec := v.SetConfig.GetSecurity(); sec != nil && !bytes.Equal(sec.GetPublicKey(), n.config.GetSecurity().GetPublicKey()) {
 			n.newKey = sec.GetPublicKey() // the node number follows the key (2.8)
 			if !wire.Clamped(sec.GetPrivateKey()) {

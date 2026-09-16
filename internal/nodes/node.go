@@ -40,6 +40,7 @@ type Node struct {
 	// node starts with. nil for a node that keeps its own identity.
 	seed      *mesh.IdentityRecord
 	seedTries int // key pushes that didn't take, in a row
+	pushTries int // settings pushes that failed, in a row
 	// extra adds settings a node needs for its part (a board's MQTT proxy), in the same edit.
 	extra func(mtclient.Snapshot) []*pb.AdminMessage
 	// hopsBehind is how far the node is from the air (1 behind a board): its hop limit is that much
@@ -259,8 +260,27 @@ func (n *Node) configured(ctx context.Context) {
 	}
 	// Pushing may wait for a reboot; the event loop keeps delivering meanwhile.
 	go func(id string) {
-		if err := n.ApplyConfig(ctx, h.Config()); err != nil && ctx.Err() == nil {
-			n.logf("meshtasticd: node %s didn't take the host's settings: %v", id, err)
+		err := n.ApplyConfig(ctx, h.Config())
+		n.mu.Lock()
+		if err == nil {
+			n.pushTries = 0
+		} else {
+			n.pushTries++
+		}
+		tries := n.pushTries
+		n.mu.Unlock()
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		if tries > maxSeedTries {
+			n.logf("meshtasticd: ERROR node %s didn't take the host's settings after %d tries: %v", id, maxSeedTries, err)
+			return
+		}
+		n.logf("meshtasticd: node %s didn't take the host's settings: %v; trying again", id, err)
+		select { // on a fresh connection: the node may have moved to a new number
+		case <-ctx.Done():
+		case <-time.After(n.rebootWait):
+			n.client.Reconnect()
 		}
 	}(cur.NodeID())
 	h.SyncRemote(cur, st)
@@ -442,6 +462,12 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 		// A board carries the identities over MQTT: it must take what comes that way.
 		lora.IgnoreMqtt = cfg.IgnoreMQTT && extra == nil
 	}
+	if s.Config.GetLora().GetRegion() == pb.Config_LoRaConfig_UNSET && lora.Region != pb.Config_LoRaConfig_UNSET && !fresh {
+		// A board's first region makes its keys, and its node number moves with them at once:
+		// answers to anything addressed to the old number are lost, a commit included. So the
+		// region goes on its own, saved straight away; the rest follows on the next connection.
+		return n.firstRegion(ctx, lora)
+	}
 	if !proto.Equal(lora, s.Config.GetLora()) {
 		setConfig(&pb.Config{PayloadVariant: &pb.Config_Lora{Lora: lora}})
 	}
@@ -612,6 +638,21 @@ func (n *Node) positionMsgs(s mtclient.Snapshot, h *mesh.Host, id *mesh.Identity
 		msgs = append(msgs, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_RemoveFixedPosition{RemoveFixedPosition: true}})
 	}
 	return msgs
+}
+
+// firstRegion sets a node's region for the first time, outside an edit transaction so the node
+// saves it at once, then reconnects to learn the node's new number. Configured then pushes the rest.
+func (n *Node) firstRegion(ctx context.Context, lora *pb.Config_LoRaConfig) error {
+	n.logf("meshtasticd: node at %s gets its first region, %s (its node number changes with its new keys)", n.addr, lora.Region)
+	actx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err := n.client.Admin(actx, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetConfig{SetConfig: &pb.Config{PayloadVariant: &pb.Config_Lora{Lora: lora}}}})
+	cancel()
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		n.logf("meshtasticd: node at %s: first region: %v (the answer is expected to go missing)", n.addr, err)
+	}
+	time.Sleep(time.Second) // let it save
+	n.client.Reconnect()
+	return nil
 }
 
 // edit applies admin messages inside begin/commit_edit_settings and refreshes the mirror.
