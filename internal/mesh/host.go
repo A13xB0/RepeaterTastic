@@ -192,7 +192,12 @@ type Host struct {
 	pending map[pktKey]*pendingTx
 
 	linkMu sync.RWMutex
-	links  []Link
+	tapMu  sync.RWMutex
+	taps   []AirTap
+
+	appliers []ConfigApplier  // under cfgMu
+	kept     []IdentityRecord // saved identities not running here (the relay persona while it is hosted); under mu
+	links    []Link
 
 	started       time.Time
 	nextTelemetry time.Time // run loop only
@@ -569,6 +574,9 @@ func (h *Host) rxLoop(ctx context.Context) {
 			if h.Config().RelayRole == RoleOff {
 				continue // the radio is off: whatever the modem hears is ignored
 			}
+			for _, t := range h.airTaps() {
+				t.Heard(f)
+			}
 			p := wire.DecodeFrame(f.Data, int32(f.RSSI), f.SNR)
 			if p == nil {
 				h.Counters.RxBad.Add(1)
@@ -692,6 +700,9 @@ func (h *Host) txLoop(ctx context.Context) {
 		}
 		ms := rp.AirtimeMs(len(frame))
 		h.Air.AddTx(time.Now(), ms, it.origin)
+		for _, t := range h.airTaps() {
+			t.Transmitted(frame, it.pkt, it.origin)
+		}
 		h.Counters.Tx.Add(1)
 		kind := "ours"
 		if it.relay {
@@ -743,7 +754,18 @@ func (h *Host) SaveIdentities() error {
 		}
 		recs = append(recs, id.Record())
 	}
+	h.mu.RLock()
+	recs = append(recs, h.kept...)
+	h.mu.RUnlock()
 	return writeJSONAtomic(filepath.Join(h.stateDir, "identities.json"), recs)
+}
+
+// KeepRecord keeps a saved identity that isn't running (a relay persona replaced by a hosted
+// node) so SaveIdentities writes it back.
+func (h *Host) KeepRecord(r IdentityRecord) {
+	h.mu.Lock()
+	h.kept = append(h.kept, r)
+	h.mu.Unlock()
 }
 
 // LoadIdentityRecords reads identities saved by SaveIdentities.
@@ -765,17 +787,38 @@ func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
 	if err := h.MirrorConfig(ctx, cfg); err != nil {
 		return err
 	}
+	return h.PushConfig(ctx)
+}
+
+// ConfigApplier keeps its own copy of the host settings: a real Meshtastic node, as the radio or
+// as a hosted identity.
+type ConfigApplier interface {
+	ApplyConfig(ctx context.Context, cfg Config) error
+}
+
+// AddConfigApplier registers a node that takes the host settings on every change.
+func (h *Host) AddConfigApplier(ca ConfigApplier) {
+	h.cfgMu.Lock()
+	h.appliers = append(h.appliers, ca)
+	h.cfgMu.Unlock()
+}
+
+// PushConfig hands the current settings to the radio (if it is a node) and to every registered
+// node.
+func (h *Host) PushConfig(ctx context.Context) error {
+	h.cfgMu.RLock()
+	all := append([]ConfigApplier(nil), h.appliers...)
+	h.cfgMu.RUnlock()
 	if ca, ok := h.radio.(ConfigApplier); ok {
-		if err := ca.ApplyConfig(ctx, h.Config()); err != nil {
+		all = append([]ConfigApplier{ca}, all...)
+	}
+	cfg := h.Config()
+	for _, ca := range all {
+		if err := ca.ApplyConfig(ctx, cfg); err != nil {
 			return fmt.Errorf("settings saved but the node didn't take them: %w", err)
 		}
 	}
 	return nil
-}
-
-// ConfigApplier is a radio that keeps its own copy of the host settings: a real Meshtastic node.
-type ConfigApplier interface {
-	ApplyConfig(ctx context.Context, cfg Config) error
 }
 
 // MirrorConfig applies a host configuration without handing it to a ConfigApplier radio (the

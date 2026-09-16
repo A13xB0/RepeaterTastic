@@ -166,9 +166,11 @@ radio:
 - Chat, the node map, the packet log (what the node delivers), plugins and an app port for the
   identity work as on any radio. The Meshtastic app can also stay connected to the node directly
   over Bluetooth or Wi-Fi; a USB board takes one serial client, so close other serial programs.
-- What a node radio doesn't do: host more identities, feed MQTT or UDP multicast links on that radio
-  with channel traffic (use the node's own MQTT module), or report airtime, noise floor and relay
-  counters.
+- The node is the radio's relay persona. More identities on a node radio are coming: they will run
+  as hosted meshtasticd nodes one hop behind the board, carried by its MQTT client proxy or UDP
+  multicast. Until then a node radio has just the one identity.
+- A node radio doesn't feed MQTT or UDP multicast links on that radio with channel traffic (use the
+  node's own MQTT module), or report airtime, noise floor and relay counters.
 - If the node is away when RepeaterTastic starts, its last known state stands in until it answers.
 - Switching a radio to or from a node needs a restart; the setup wizard does it for you.
 

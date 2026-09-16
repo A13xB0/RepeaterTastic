@@ -298,7 +298,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 	return map[string]any{
 		"node_id": id.NodeID(), "node_num": id.NodeNum, "long_name": u.LongName, "short_name": u.ShortName,
 		"role": u.Role.String(), "hw_model": rc.host.Hardware().String(), "public_key": base64.StdEncoding.EncodeToString(id.PublicKey),
-		"is_relay": id.IsRelay, "real_node": id.Remote() != nil, "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
+		"is_relay": id.IsRelay, "real_node": id.Remote() != nil, "node_kind": nodeKind(id), "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
 		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id), "hop_limit": id.MaxHops(),
 		"position": identityPositionJSON(id), "position_secs": id.PositionInterval(),

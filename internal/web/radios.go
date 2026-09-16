@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
-	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 )
 
 // radioByID returns the radio with that ID, or nil.
@@ -363,11 +362,9 @@ func (s *Server) putExtraRelay(w http.ResponseWriter, r *http.Request, rc *radio
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if ca, ok := rc.host.Radio().(mesh.ConfigApplier); ok {
-		if err := ca.ApplyConfig(r.Context(), rc.host.Config()); err != nil {
-			writeError(w, http.StatusBadGateway, "relay role changed here but the Meshtastic node didn't take it: "+err.Error())
-			return
-		}
+	if err := rc.host.PushConfig(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, "relay role changed here, but "+err.Error())
+		return
 	}
 	s.cfgMu.Lock()
 	for i := range s.cfg.Radios {

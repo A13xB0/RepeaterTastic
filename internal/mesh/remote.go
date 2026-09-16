@@ -128,6 +128,9 @@ func (h *Host) sendRemote(from *Identity, r Remote, p *pb.MeshPacket) error {
 		}
 		return &RoutingError{pb.Routing_NO_INTERFACE}
 	}
+	if !h.remoteOnly() {
+		return nil // a hosted node's frame is logged when the host puts it on air
+	}
 	h.Counters.Tx.Add(1)
 	rec := h.baseRecord(p, nil, "tx", "sent")
 	rec.Size = 0
@@ -150,8 +153,9 @@ func (h *Host) RemoteReceived(id *Identity, p *pb.MeshPacket) {
 		h.DB.UpdateFromPacket(p, now)
 	}
 	if d == nil {
-		rec := h.baseRecord(p, nil, "rx", "undecryptable")
-		h.publishPacket(rec)
+		if h.remoteOnly() {
+			h.publishPacket(h.baseRecord(p, nil, "rx", "undecryptable"))
+		}
 		return
 	}
 	var target *Identity
@@ -164,14 +168,16 @@ func (h *Host) RemoteReceived(id *Identity, p *pb.MeshPacket) {
 	if d.Portnum == pb.PortNum_ROUTING_APP && d.RequestId != 0 && p.To == id.NodeNum {
 		h.routingResult(id, d)
 	}
-	rec := h.baseRecord(p, nil, "rx", "delivered")
-	rec.Size = 0
-	h.fillRecordFromDecoded(&rec, p, dec)
-	h.remoteChannel(&rec, id, p)
-	if p.From == id.NodeNum {
-		rec.Direction, rec.Kind = "local", "local" // the node talking to its own client
+	if h.remoteOnly() { // with an air bridge the host logs the frame itself
+		rec := h.baseRecord(p, nil, "rx", "delivered")
+		rec.Size = 0
+		h.fillRecordFromDecoded(&rec, p, dec)
+		h.remoteChannel(&rec, id, p)
+		if p.From == id.NodeNum {
+			rec.Direction, rec.Kind = "local", "local" // the node talking to its own client
+		}
+		h.publishPacket(rec)
 	}
-	h.publishPacket(rec)
 
 	switch d.Portnum {
 	case pb.PortNum_TEXT_MESSAGE_APP:

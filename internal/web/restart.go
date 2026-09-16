@@ -90,6 +90,9 @@ func (s *Server) restartReasons() []string {
 	if !reflect.DeepEqual(b.Plugins, c.Plugins) {
 		out = append(out, "plugins")
 	}
+	if b.Hosted != c.Hosted {
+		out = append(out, "hosted meshtasticd")
+	}
 	running := map[string]config.RadioConfig{}
 	for _, rc := range b.RadioConfigs() {
 		running[rc.ID] = rc

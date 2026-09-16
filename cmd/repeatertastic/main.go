@@ -116,7 +116,7 @@ func run(cfgPath string) error {
 		if len(rcs) > 1 {
 			rlog = log.With("radio", rc.ID)
 		}
-		rt, err := startRadio(ctx, rc, rlog, uplinked)
+		rt, err := startRadio(ctx, rc, len(radios), rlog, uplinked)
 		if err != nil {
 			return fmt.Errorf("radio %s: %w", rc.ID, err)
 		}
@@ -198,7 +198,16 @@ func run(cfgPath string) error {
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
 			MapAPIKey: key, MapKeySource: source, LogLevel: level, Federation: fed, Plugins: pm,
 			Restart: func() { restartRequested.Store(true); stop() },
-			Radios:  extra, Site: st, Version: version, Log: log})
+			Hosted: func() []web.HostedInstance {
+				var out []web.HostedInstance
+				for _, rt := range radios {
+					for _, hn := range rt.hosted {
+						out = append(out, web.HostedInstance{Radio: rt.rc.ID, Role: "persona", HostedStatus: hn.Status()})
+					}
+				}
+				return out
+			},
+			Radios: extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
 		}
@@ -250,16 +259,18 @@ type radioRuntime struct {
 	udp      *udp.Link
 	mqtt     []*mqtt.Link
 	attached *nodes.Attached // a board running Meshtastic firmware (driver meshtastic)
+	hosted   []*nodes.Hosted // meshtasticd instances standing in for this radio's nodes
 }
 
 // startRadio opens a radio's modem, builds its host and identities and starts its client
 // API and UDP link. The host itself is run by the caller.
-func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, uplinked *mqtt.Uplinked) (*radioRuntime, error) {
+func startRadio(ctx context.Context, rc config.RadioConfig, index int, log *slog.Logger, uplinked *mqtt.Uplinked) (*radioRuntime, error) {
 	if err := os.MkdirAll(rc.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("state dir: %w", err)
 	}
 	var r radio.Radio
 	var attached *nodes.Attached
+	var hosted []*nodes.Hosted
 	switch rc.Radio.Driver {
 	case nodes.Driver:
 		// A board running Meshtastic firmware, or a meshtasticd elsewhere: the node is the radio and
@@ -316,6 +327,12 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 			return nil, err
 		}
 		go attached.Bind(ctx, host, id)
+	} else if persona := startHostedPersona(ctx, rc, index, host, log); persona != nil {
+		hosted = append(hosted, persona)
+		if err := loadIdentities(rc.Config, host, log); err != nil {
+			r.Close()
+			return nil, err
+		}
 	} else if err := loadIdentities(rc.Config, host, log); err != nil {
 		r.Close()
 		return nil, err
@@ -323,7 +340,7 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 	api := phoneapi.NewManager(host, log)
 	go api.Run(ctx)
 
-	rt := &radioRuntime{rc: rc, radio: r, host: host, api: api, attached: attached}
+	rt := &radioRuntime{rc: rc, radio: r, host: host, api: api, attached: attached, hosted: hosted}
 	if rc.Links.UDPMulticast.Enabled {
 		var groups []string
 		if g := rc.Links.UDPMulticast.Group; g != "" && !strings.Contains(g, ":") {
@@ -367,8 +384,13 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 // identities listed in the config on first start.
 func loadIdentities(cfg *config.Config, host *mesh.Host, log *slog.Logger) error {
 	recs, err := mesh.LoadIdentityRecords(cfg.StateDir)
+	hostedRelay := host.Relay() != nil // a hosted persona already stands in
 	if err == nil && len(recs) > 0 {
 		for _, rec := range recs {
+			if rec.IsRelay && hostedRelay {
+				host.KeepRecord(rec) // back when the persona runs here again
+				continue
+			}
 			id, err := mesh.IdentityFromRecord(rec)
 			if err != nil {
 				return err
@@ -507,4 +529,53 @@ func pluginCommand(cfgPath string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// startHostedPersona runs a modem or HAT radio's relay persona as a hosted meshtasticd, when the
+// config asks for it and meshtasticd can run. It returns nil to keep the persona in RepeaterTastic.
+func startHostedPersona(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, log *slog.Logger) *nodes.Hosted {
+	hc := rc.Hosted
+	if !hc.Persona || (rc.Radio.Driver != "kiss" && rc.Radio.Driver != "spi") {
+		return nil
+	}
+	var l nodes.Launcher = nodes.ExecLauncher{Binary: hc.Meshtasticd}
+	if hc.DockerImage != "" {
+		l = nodes.DockerLauncher{Image: hc.DockerImage}
+	}
+	vctx, cancel := context.WithTimeout(ctx, 90*time.Second) // docker may pull the image first
+	v, err := l.Version(vctx)
+	cancel()
+	switch {
+	case err != nil:
+		log.Error("hosted persona: meshtasticd can't run, keeping the persona in RepeaterTastic", "launcher", l.Describe(), "err", err)
+		return nil
+	case !nodes.VersionAtLeast(v, nodes.MinFirmware):
+		log.Error("hosted persona: meshtasticd is too old, keeping the persona in RepeaterTastic", "version", v, "need", nodes.MinFirmware)
+		return nil
+	}
+	logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...)) }
+	in := nodes.Instance{Name: "persona-" + rc.ID, Dir: filepath.Join(rc.StateDir, "hosted", "persona"),
+		Port: hc.HostedPortBase() + 20*index, HWID: nodes.HWIDFor(rc.ID + "/persona")}
+	hn, err := nodes.StartHosted(ctx, l, in, logf)
+	if err != nil {
+		log.Error("hosted persona: not started, keeping the persona in RepeaterTastic", "err", err)
+		return nil
+	}
+	hn.SetOwner(rc.Relay.LongName, rc.Relay.ShortName)
+	id, err := hn.Identity(ctx, 30*time.Second)
+	if err == nil {
+		id.IsRelay = true
+		err = host.AddIdentity(id)
+	}
+	if err != nil {
+		log.Error("hosted persona: no identity, keeping the persona in RepeaterTastic", "err", err)
+		hn.Close()
+		return nil
+	}
+	host.AddConfigApplier(hn)
+	air := nodes.NewAir(host, logf)
+	go hn.Bind(ctx, host, id)
+	go air.Serve(ctx, hn.Client(), id, true)
+	log.Info("relay persona runs on meshtasticd", "node", id.NodeID(), "version", v, "launcher", l.Describe(), "port", in.Port)
+	return hn
 }
