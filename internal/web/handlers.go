@@ -23,7 +23,6 @@ import (
 
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
-	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
@@ -44,7 +43,7 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		Password  string `json:"password"`
 		Region    string `json:"region"`
 		Preset    string `json:"preset"`
-		Driver    string `json:"driver"` // kiss, spi or meshtastic; empty keeps the config's driver
+		Driver    string `json:"driver"` // kiss or spi; empty keeps the config's driver
 		Device    string `json:"device"`
 		RelayRole string `json:"relay_role"`
 		// PrimaryChannel names the primary channel ("" = the preset's name), which picks the slot.
@@ -74,15 +73,11 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Device = strings.TrimSpace(req.Device)
 	switch req.Driver {
-	case "kiss", "spi", nodes.Driver:
-		if req.Driver != "kiss" && req.Device == "" {
-			// Don't let a serial port left in the config pass as a board or a node.
+	case "kiss", "spi":
+		if req.Driver == "spi" && req.Device == "" {
+			// Don't let a serial port left in the config pass as a board.
 			s.cfgMu.Unlock()
-			if req.Driver == "spi" {
-				writeError(w, http.StatusBadRequest, "driver spi needs a device: a board from GET /boards, or auto")
-			} else {
-				writeError(w, http.StatusBadRequest, "driver meshtastic needs a device: the board's serial port or a meshtasticd address")
-			}
+			writeError(w, http.StatusBadRequest, "driver spi needs a device: a board from GET /boards, or auto")
 			return
 		}
 		next.Radio.Driver = req.Driver
@@ -91,12 +86,12 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		}
 	case "":
 		// An older wizard only picks serial ports: don't write one over an SPI radio's board.
-		if req.Device != "" && next.Radio.Driver == "kiss" {
+		if req.Device != "" && next.Radio.Driver != "spi" {
 			next.Radio.Device = req.Device
 		}
 	default:
 		s.cfgMu.Unlock()
-		writeError(w, http.StatusBadRequest, "driver must be kiss, spi or meshtastic")
+		writeError(w, http.StatusBadRequest, "driver must be kiss or spi")
 		return
 	}
 	if err := next.Validate(); err != nil {
@@ -287,7 +282,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 		share = mine / txTotal * 100
 	}
 	var api any
-	if !id.IsRelay || (id.Remote() != nil && id.APIPort > 0) {
+	if !id.IsRelay {
 		bind := id.APIBind
 		if bind == "" {
 			bind = "0.0.0.0"
@@ -425,10 +420,6 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	host := rc.host
-	if host.Relay().Remote() != nil {
-		writeError(w, http.StatusConflict, "a Meshtastic node radio has one identity, the node itself; add identities on a modem or HAT radio")
-		return
-	}
 	if strings.TrimSpace(req.LongName) == "" {
 		writeError(w, http.StatusBadRequest, "long_name is required")
 		return
@@ -525,9 +516,6 @@ func (s *Server) moveIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	case id.IsRelay:
 		writeError(w, http.StatusConflict, "a relay persona belongs to its radio and can't be moved")
-		return
-	case to.host.Relay().Remote() != nil:
-		writeError(w, http.StatusConflict, "a Meshtastic node radio has one identity, the node itself")
 		return
 	}
 	for _, other := range to.host.Identities() {
@@ -666,8 +654,7 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		}
 		bind = &b
 	}
-	appPort := !id.IsRelay || id.Remote() != nil // a node radio's one identity has an app port
-	if req.APIPort != nil && appPort {
+	if req.APIPort != nil && !id.IsRelay {
 		if *req.APIPort < 1 || *req.APIPort > 65535 {
 			bad(http.StatusBadRequest, "api_port must be 1-65535")
 			return
@@ -722,7 +709,7 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		if req.Enabled != nil && !id.IsRelay {
 			x.Enabled = *req.Enabled
 		}
-		if req.APIPort != nil && appPort {
+		if req.APIPort != nil && !id.IsRelay {
 			x.APIPort = *req.APIPort
 		}
 		if bind != nil {
@@ -761,7 +748,7 @@ func (s *Server) getKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id.Remote() != nil {
-		writeError(w, http.StatusNotFound, "a Meshtastic node keeps its own private key: back it up from the Meshtastic app")
+		writeError(w, http.StatusNotFound, "this identity runs on meshtasticd, which keeps its own private key")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"private_key": base64.StdEncoding.EncodeToString(id.PrivateKey),

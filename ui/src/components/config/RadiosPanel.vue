@@ -204,7 +204,7 @@ function openSettings(id: string) {
                 <button type="button" class="icon-btn size-6" :aria-label="`Rename ${r.name}`" title="Rename" @click="startRename(r.id, r.name)"><Pencil class="size-3" /></button>
               </template>
               <span class="chip mono">{{ r.id }}</span>
-              <span :class="['chip', r.connected ? 'bg-ok/14 text-ok' : 'bg-warn/15 text-warn']"><span :class="['dot size-1.5', r.connected ? 'bg-ok' : 'bg-warn']" />{{ r.connected ? 'on air' : r.driver === 'meshtastic' ? 'node not connected' : 'modem not connected' }}</span>
+              <span :class="['chip', r.connected ? 'bg-ok/14 text-ok' : 'bg-warn/15 text-warn']"><span :class="['dot size-1.5', r.connected ? 'bg-ok' : 'bg-warn']" />{{ r.connected ? 'on air' : 'modem not connected' }}</span>
               <span v-if="data.pending.some((p) => p.id === r.id && p.action === 'remove')" class="chip bg-bad/12 text-bad">removed · stops at restart</span>
             </div>
             <div class="mt-0.5 text-xs text-ink-3">
