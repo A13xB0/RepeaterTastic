@@ -247,8 +247,9 @@ type Host struct {
 	tapMu  sync.RWMutex
 	taps   []AirTap
 
-	appliers []ConfigApplier // under cfgMu
-	hoster   Hoster          // runs identities as real nodes (nil = all here); under mu
+	appliers []ConfigApplier  // under cfgMu
+	hoster   Hoster           // runs identities as real nodes (nil = all here); under mu
+	kept     []IdentityRecord // saved identities not running (a relay persona while a board is the relay); under mu
 	links    []Link
 
 	started       time.Time
@@ -801,7 +802,18 @@ func (h *Host) SaveIdentities() error {
 		}
 		recs = append(recs, id.Record())
 	}
+	h.mu.RLock()
+	recs = append(recs, h.kept...)
+	h.mu.RUnlock()
 	return writeJSONAtomic(filepath.Join(h.stateDir, "identities.json"), recs)
+}
+
+// KeepRecord keeps a saved identity that isn't running (a relay persona while a board is the
+// radio's relay) so SaveIdentities writes it back.
+func (h *Host) KeepRecord(r IdentityRecord) {
+	h.mu.Lock()
+	h.kept = append(h.kept, r)
+	h.mu.Unlock()
 }
 
 // LoadIdentityRecords reads identities saved by SaveIdentities.

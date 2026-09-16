@@ -101,6 +101,9 @@ async function save() {
         <div class="sm:col-span-2">
           <ModemDeviceField id="rs-port" v-model="form.port" v-model:driver="form.type" :ports="ports" restart-hint />
         </div>
+        <p v-if="form.type === 'meshtastic'" class="rounded-lg border border-brand/30 bg-brand/6 px-3 py-2 text-xs text-ink-2 sm:col-span-2">
+          These settings are written to the board: region, preset, primary channel, TX power and hop limit, and the relay role. The board may reboot to apply them.
+        </p>
         <div>
           <label class="label" for="rs-region">Region</label>
           <select id="rs-region" v-model="form.region" class="input">
@@ -173,7 +176,7 @@ async function save() {
         <div v-else class="mt-2 h-24 animate-pulse rounded-lg bg-sunken" />
       </aside>
     </div>
-    <RadioNodesPanel v-if="radioId && form" :radio-id="radioId" />
+    <RadioNodesPanel v-if="radioId && form" :radio-id="radioId" :board="form.type === 'meshtastic'" />
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
       <button class="btn" @click="emit('close')">Cancel</button>

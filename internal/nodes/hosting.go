@@ -29,6 +29,8 @@ type HostingOptions struct {
 	Persona bool
 	// Identities runs the other identities on meshtasticd too (not those routed across radios).
 	Identities bool
+	// HopsBehind is how far joined nodes are from the air (1 behind a board's relay).
+	HopsBehind uint32
 	// RelayOwner names the persona (the configured relay names).
 	RelayOwner func() (long, short string)
 	Logf       func(string, ...any)
@@ -111,6 +113,7 @@ func (x *Hosting) HostIdentity(ctx context.Context, h *mesh.Host, rec mesh.Ident
 		hn.SetOwner(x.opts.RelayOwner())
 	}
 	hn.SetSeed(rec)
+	hn.SetHopsBehind(x.opts.HopsBehind)
 	id, err := hn.Identity(ctx, 0)
 	if err == nil {
 		err = h.AddIdentity(id)

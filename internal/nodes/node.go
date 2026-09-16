@@ -40,6 +40,11 @@ type Node struct {
 	// node starts with. nil for a node that keeps its own identity.
 	seed      *mesh.IdentityRecord
 	seedTries int // key pushes that didn't take, in a row
+	// extra adds settings a node needs for its part (a board's MQTT proxy), in the same edit.
+	extra func(mtclient.Snapshot) []*pb.AdminMessage
+	// hopsBehind is how far the node is from the air (1 behind a board): its hop limit is that much
+	// higher, so its packets reach as far as the relay's.
+	hopsBehind uint32
 
 	// rebootWait is how long a settings change waits for the node to reboot before re-reading it.
 	rebootWait time.Duration
@@ -133,6 +138,20 @@ const maxSeedTries = 3
 
 // OnAir reports whether the node may transmit: it holds its saved key (if it has one).
 func (n *Node) OnAir() bool { return n.seeded(n.client.Snapshot()) }
+
+// SetExtraSettings adds settings fn returns to every settings change.
+func (n *Node) SetExtraSettings(fn func(mtclient.Snapshot) []*pb.AdminMessage) {
+	n.mu.Lock()
+	n.extra = fn
+	n.mu.Unlock()
+}
+
+// SetHopsBehind says how many hops from the air the node is.
+func (n *Node) SetHopsBehind(hops uint32) {
+	n.mu.Lock()
+	n.hopsBehind = hops
+	n.mu.Unlock()
+}
 
 // Bind makes id, on host h, the identity the node stands for.
 func (n *Node) Bind(h *mesh.Host, id *mesh.Identity) {
@@ -385,7 +404,7 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 		return ErrNotReady
 	}
 	n.mu.Lock()
-	h, id, owner, seed := n.host, n.id, n.owner, n.seed
+	h, id, owner, seed, extra, behind := n.host, n.id, n.owner, n.seed, n.extra, n.hopsBehind
 	n.mu.Unlock()
 	relay := id == nil || id.IsRelay
 	var msgs []*pb.AdminMessage
@@ -408,6 +427,9 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 		lora.HopLimit = cfg.HopLimit
 	}
 	transmits := cfg.RelayRole != mesh.RoleMonitor && cfg.RelayRole != mesh.RoleOff
+	if behind > 0 {
+		lora.HopLimit = min(lora.HopLimit+behind, wire.HopMax)
+	}
 	if !relay {
 		if cap := id.MaxHops(); cap > 0 && cap < lora.HopLimit {
 			lora.HopLimit = cap
@@ -417,7 +439,8 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 	lora.TxEnabled = transmits
 	lora.ConfigOkToMqtt = cfg.OKToMQTT
 	if relay {
-		lora.IgnoreMqtt = cfg.IgnoreMQTT
+		// A board carries the identities over MQTT: it must take what comes that way.
+		lora.IgnoreMqtt = cfg.IgnoreMQTT && extra == nil
 	}
 	if !proto.Equal(lora, s.Config.GetLora()) {
 		setConfig(&pb.Config{PayloadVariant: &pb.Config_Lora{Lora: lora}})
@@ -448,6 +471,7 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 	}
 
 	msgs = append(msgs, n.positionMsgs(s, h, id)...)
+
 	if tel := s.ModuleConfig.GetTelemetry(); tel != nil {
 		t := proto.Clone(tel).(*pb.ModuleConfig_TelemetryConfig)
 		t.DeviceTelemetryEnabled = relay && cfg.TelemetryInterval > 0
@@ -498,6 +522,9 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 			msgs = append(msgs, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetOwner{SetOwner: u}})
 		}
 	}
+	if extra != nil {
+		msgs = mergeChannelSets(msgs, extra(s))
+	}
 	rekey := false
 	if fresh {
 		// The key goes last: once the node takes it, it answers under its new number, and
@@ -515,6 +542,24 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 		return nil
 	}
 	return n.edit(ctx, msgs, rekey)
+}
+
+// mergeChannelSets appends more to msgs. A channel set for a slot msgs already sets takes that
+// set's name and key, and replaces it, so one slot is written once.
+func mergeChannelSets(msgs, more []*pb.AdminMessage) []*pb.AdminMessage {
+	for _, m := range more {
+		if ch := m.GetSetChannel(); ch != nil {
+			for i, prev := range msgs {
+				if p := prev.GetSetChannel(); p != nil && p.Index == ch.Index {
+					ch.Settings.Name, ch.Settings.Psk, ch.Role = p.GetSettings().GetName(), p.GetSettings().GetPsk(), p.Role
+					msgs = append(msgs[:i], msgs[i+1:]...)
+					break
+				}
+			}
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs
 }
 
 // IdentityRole is the device role and rebroadcast mode a hosted identity runs with. Identities
