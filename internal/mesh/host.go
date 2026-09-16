@@ -274,6 +274,7 @@ type Host struct {
 	links    []Link
 
 	started time.Time
+	saveMu  sync.Mutex // SaveIdentities, one at a time
 
 	site     atomic.Pointer[Site]
 	stateDir string
@@ -850,6 +851,9 @@ func (h *Host) SaveIdentities() error {
 	if h.stateDir == "" {
 		return nil
 	}
+	// One save at a time, each taking its snapshot inside the turn: the last to finish is the newest.
+	h.saveMu.Lock()
+	defer h.saveMu.Unlock()
 	var recs []IdentityRecord
 	for _, id := range h.Identities() {
 		if id.Remote() != nil && !id.Hosted() {

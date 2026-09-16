@@ -3,6 +3,7 @@ package mesh
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -381,5 +382,30 @@ func TestMessageStoreLoadErrors(t *testing.T) {
 	}
 	if l := s.List(4, "", "", 0, 10); len(l) != 1 || l[0].ID != 2 || s.read[4]["ch:0"] != 5 || len(s.per) != 1 {
 		t.Fatalf("odd keys not skipped: %+v", s.per)
+	}
+}
+
+func TestConcurrentIdentitySaves(t *testing.T) {
+	h, _, _ := remoteHost(t)
+	h.stateDir = t.TempDir()
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- h.SaveIdentities()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent save: %v", err)
+		}
+	}
+	left, _ := filepath.Glob(filepath.Join(h.stateDir, "*.tmp"))
+	if len(left) != 0 {
+		t.Fatalf("temp files left: %v", left)
 	}
 }
