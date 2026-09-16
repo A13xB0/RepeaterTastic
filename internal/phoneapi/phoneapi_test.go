@@ -19,6 +19,28 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
+// fakeNode is an identity's meshtasticd: it answers get_owner and takes everything else.
+type fakeNode struct {
+	h  *mesh.Host
+	id *mesh.Identity
+}
+
+func (f *fakeNode) SendPacket(p *pb.MeshPacket) (uint32, error) {
+	d := p.GetDecoded()
+	req := &pb.AdminMessage{}
+	if d.GetPortnum() == pb.PortNum_ADMIN_APP && proto.Unmarshal(d.Payload, req) == nil && req.GetGetOwnerRequest() {
+		payload, _ := proto.Marshal(&pb.AdminMessage{SessionPasskey: make([]byte, 8),
+			PayloadVariant: &pb.AdminMessage_GetOwnerResponse{GetOwnerResponse: f.id.UserCopy()}})
+		go f.h.RemoteReceived(f.id, &pb.MeshPacket{From: f.id.NodeNum, To: f.id.NodeNum, Id: wire.RandomPacketID(),
+			PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_ADMIN_APP, Payload: payload, RequestId: p.Id}}})
+	}
+	return p.Id, nil
+}
+
+func (f *fakeNode) Admin(context.Context, *pb.AdminMessage) (*pb.AdminMessage, error) {
+	return nil, nil
+}
+
 func testServer(t *testing.T) (*mesh.Host, *mesh.Identity, *Server) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -28,19 +50,26 @@ func testServer(t *testing.T) (*mesh.Host, *mesh.Identity, *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var relay, id *mesh.Identity
-	for relay == nil || id == nil {
+	var relay, key *mesh.Identity
+	for relay == nil || key == nil {
 		r, _ := mesh.NewIdentity(nil, "Relay", "RLY")
 		i, _ := mesh.NewIdentity(nil, "Base Camp", "BASE")
 		if r == nil || i == nil || wire.LastByte(r.NodeNum) == wire.LastByte(i.NodeNum) {
 			continue
 		}
 		r.IsRelay = true
-		relay, id = r, i
+		relay, key = r, i
 	}
 	if err := h.AddIdentity(relay); err != nil {
 		t.Fatal(err)
 	}
+	node := &fakeNode{h: h}
+	id, err := mesh.NewHostedIdentity(node, mesh.RemoteState{NodeNum: key.NodeNum,
+		User: &pb.User{LongName: "Base Camp", ShortName: "BASE", PublicKey: key.PublicKey}}, key.Record())
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.id = id
 	if err := h.AddIdentity(id); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +154,7 @@ func TestStreamHandshakeAdminAndSend(t *testing.T) {
 		t.Fatalf("handshake incomplete: channels=%d configs=%d modules=%d meta=%v own=%v", channels, configs, modules, sawMeta, sawOwn)
 	}
 
-	// Admin get_owner to ourselves.
+	// Admin get_owner to ourselves: the node answers.
 	adm, _ := proto.Marshal(&pb.AdminMessage{PayloadVariant: &pb.AdminMessage_GetOwnerRequest{GetOwnerRequest: true}})
 	writeToRadio(t, c, &pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: &pb.MeshPacket{To: id.NodeNum, Id: 77,
 		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_ADMIN_APP, Payload: adm, WantResponse: true}}}}})

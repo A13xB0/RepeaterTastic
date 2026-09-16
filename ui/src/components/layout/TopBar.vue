@@ -7,6 +7,7 @@ import { api, radio, setRadio } from '@/api/client'
 import type { RelayRole, Status } from '@/api/types'
 import { live } from '@/store/live'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
+import NodesHealthChip from '@/components/layout/NodesHealthChip.vue'
 import { cycleTheme, themeMode } from '@/composables/theme'
 import { toast, toastError } from '@/composables/toast'
 import { confirmDialog } from '@/composables/confirm'
@@ -101,6 +102,13 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
       </div>
 
       <div class="hidden h-7 w-px bg-line-soft sm:block" />
+
+      <RouterLink v-if="s.nodes" :to="{ name: 'config', params: { tab: 'meshtasticd' } }" class="min-w-0 leading-tight" aria-label="meshtasticd status">
+        <div class="text-2xs text-ink-3 max-sm:hidden">meshtasticd</div>
+        <NodesHealthChip :health="s.nodes" compact />
+      </RouterLink>
+
+      <div v-if="s.nodes" class="hidden h-7 w-px bg-line-soft sm:block" />
 
       <div class="w-32 leading-tight sm:w-40" :title="`TX airtime in the last ${s.airtime.window_s / 60} min against the region duty cycle`">
         <div class="flex items-baseline justify-between text-2xs text-ink-3">

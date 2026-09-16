@@ -134,13 +134,12 @@ func run(cfgPath string) error {
 		}
 	})
 
-	// Experimental multi-radio identities: join the radios; the switch applies live.
+	// The radios of the mast know each other's identities.
 	hosts := make([]*mesh.Host, 0, len(radios))
 	for _, rt := range radios {
 		hosts = append(hosts, rt.host)
 	}
-	fed := mesh.NewFederation(hosts...)
-	fed.SetEnabled(cfg.Experimental.MultiRadioIdentities)
+	mesh.JoinSite(hosts...)
 
 	// One site coordinator whenever several radios share a mast (co-channel transmit
 	// turns) or a site-wide airtime budget is set.
@@ -197,24 +196,17 @@ func run(cfgPath string) error {
 		for _, rt := range radios[1:] {
 			extra = append(extra, web.Radio{ID: rt.rc.ID, Name: rt.rc.Name, Config: rt.rc.Config, Host: rt.host, API: rt.api, UDP: rt.udp, MQTT: rt.mqtt})
 		}
+		hostings := map[string]*nodes.Hosting{}
+		for _, rt := range radios {
+			hostings[rt.rc.ID] = rt.hosting
+		}
 		key, source := resolveMapAPIKey()
 		log.Info("map tiles", "api_key", source)
 		srv, err := web.New(web.Options{Config: cfg, Host: primary.host, API: primary.api, Logs: logs, UDP: primary.udp, MQTT: primary.mqtt,
-			MapAPIKey: key, MapKeySource: source, LogLevel: level, Federation: fed, Plugins: pm,
+			MapAPIKey: key, MapKeySource: source, LogLevel: level, Plugins: pm,
 			Restart: func() { restartRequested.Store(true); stop() },
-			Hosted: func() []web.HostedInstance {
-				var out []web.HostedInstance
-				for _, rt := range radios {
-					if rt.hosting == nil {
-						continue
-					}
-					for _, hn := range rt.hosting.Nodes() {
-						out = append(out, web.HostedInstance{Radio: rt.rc.ID, Role: hn.Role, HostedStatus: hn.HostedStatus})
-					}
-				}
-				return out
-			},
-			Radios: extra, Site: st, Version: version, Log: log})
+			Hosting: hostings,
+			Radios:  extra, Site: st, Version: version, Log: log})
 		if err != nil {
 			return err
 		}
@@ -259,7 +251,7 @@ type radioRuntime struct {
 	api     *phoneapi.Manager
 	udp     *udp.Link
 	mqtt    []*mqtt.Link
-	hosting *nodes.Hosting // runs this radio's nodes on meshtasticd (nil = all in RepeaterTastic)
+	hosting *nodes.Hosting // runs this radio's nodes on meshtasticd
 }
 
 // startRadio opens a radio's modem, builds its host and identities and starts its client
@@ -399,19 +391,22 @@ func loadIdentities(ctx context.Context, cfg *config.Config, host *mesh.Host, lo
 			continue
 		}
 		if _, err := host.AddRecord(ctx, rec); err != nil {
-			return err
+			log.Error("identity not started; kept for the next start", "node", rec.LongName, "err", err)
+			host.KeepRecord(rec)
 		}
 	}
-	if host.Relay() == nil {
+	if host.Relay() == nil && !keptRelay(recs, boardRelay) {
 		relay, err := newUniqueIdentity(host, cfg.Relay.LongName, cfg.Relay.ShortName)
 		if err != nil {
 			return err
 		}
 		relay.IsRelay = true
 		if _, err := host.AddRecord(ctx, relay.Record()); err != nil {
-			return err
+			log.Error("relay persona not started; kept for the next start", "node", relay.NodeID(), "err", err)
+			host.KeepRecord(relay.Record())
+		} else {
+			log.Info("created relay persona", "node", relay.NodeID())
 		}
-		log.Info("created relay persona", "node", relay.NodeID())
 	}
 	if len(recs) == 0 {
 		for _, ci := range cfg.Identities {
@@ -421,12 +416,27 @@ func loadIdentities(ctx context.Context, cfg *config.Config, host *mesh.Host, lo
 			}
 			id.APIPort, id.APIBind = ci.APIPort, ci.APIBind
 			if _, err := host.AddRecord(ctx, id.Record()); err != nil {
-				return err
+				log.Error("identity not started; kept for the next start", "node", id.NodeID(), "err", err)
+				host.KeepRecord(id.Record())
+				continue
 			}
 			log.Info("created identity", "node", id.NodeID(), "name", ci.LongName, "api_port", ci.APIPort)
 		}
 	}
 	return host.SaveIdentities()
+}
+
+// keptRelay reports whether a saved relay persona couldn't be started (so no new one is made).
+func keptRelay(recs []mesh.IdentityRecord, boardRelay bool) bool {
+	if boardRelay {
+		return false
+	}
+	for _, r := range recs {
+		if r.IsRelay {
+			return true
+		}
+	}
+	return false
 }
 
 // newUniqueIdentity generates keys until the node's last byte is free locally and among known nodes.
@@ -527,45 +537,33 @@ func pluginCommand(cfgPath string, args []string) int {
 	return 0
 }
 
-// startHosting runs a radio's nodes on meshtasticd when the config asks for it. A modem or HAT
-// radio gets a LoRa air, and the host's hoster starts the relay persona (and, if asked, every other
-// identity) on it as their records are loaded. A board radio's air has the board as its relay, and
-// its identities always run on meshtasticd, a hop behind the board. It returns nil, leaving
-// identities in RepeaterTastic, when meshtasticd can't run.
+// startHosting runs a radio's nodes on meshtasticd. A modem or HAT radio gets a LoRa air, and the
+// host's hoster starts the relay persona and every other identity on it as their records are
+// loaded. A board radio's air has the board as its relay, and its identities run a hop behind it.
+// When meshtasticd can't run, the nodes keep trying (and the status bar says why).
 func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, relay *nodes.Node, log *slog.Logger) *nodes.Hosting {
 	hc := rc.Hosted
-	switch {
-	case relay != nil: // a board: meshtasticd only when asked for
-		if !hc.Identities {
-			return nil
-		}
-	case !hc.Persona || (rc.Radio.Driver != "kiss" && rc.Radio.Driver != "spi"):
-		return nil
-	}
 	l := nodes.LauncherFor(hc.Meshtasticd, hc.DockerImage)
-	vctx, cancel := context.WithTimeout(ctx, 90*time.Second) // docker may pull the image first
-	v, err := nodes.CheckLauncher(vctx, l)
-	cancel()
-	if err != nil {
-		if relay != nil {
-			log.Warn("identities behind the Meshtastic board stay in RepeaterTastic", "radio", rc.ID, "err", err)
-		} else {
-			log.Error("hosted nodes: keeping every identity in RepeaterTastic", "err", err)
-		}
-		return nil
-	}
 	logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.ID) }
 	relayLong, relayShort := rc.Relay.LongName, rc.Relay.ShortName
 	air := nodes.NewLoRaAir(host, logf).WithRelay(relay)
 	opts := nodes.HostingOptions{Launcher: l, Air: air, Radio: rc.ID,
-		Dir: filepath.Join(rc.StateDir, "hosted"), PortBase: hc.RadioPortBase(index), Persona: true, Identities: hc.Identities,
+		Dir: filepath.Join(rc.StateDir, "hosted"), PortBase: hc.RadioPortBase(index),
 		RelayOwner: func() (string, string) { return relayLong, relayShort }, Logf: logf}
 	if relay != nil {
-		opts.Persona, opts.Identities, opts.HopsBehind = false, true, 1
+		opts.HopsBehind = 1
 	}
 	x := nodes.NewHosting(ctx, opts)
 	host.SetHoster(x)
-	log.Info("hosted nodes run on meshtasticd", "radio", rc.ID, "version", v, "launcher", l.Describe(),
-		"identities", opts.Identities, "behind_board", relay != nil, "ports_from", hc.RadioPortBase(index))
+	vctx, cancel := context.WithTimeout(ctx, 90*time.Second) // docker may pull the image first
+	v, err := nodes.CheckLauncher(vctx, l)
+	cancel()
+	x.SetLauncherCheck(v, err)
+	if err != nil {
+		log.Error("meshtasticd can't run: identities stay off air until it can", "radio", rc.ID, "launcher", l.Describe(), "err", err)
+	} else {
+		log.Info("nodes run on meshtasticd", "radio", rc.ID, "version", v, "launcher", l.Describe(),
+			"behind_board", relay != nil, "ports_from", hc.RadioPortBase(index))
+	}
 	return x
 }

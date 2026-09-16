@@ -29,7 +29,7 @@ The web GUI uses this API, and so can scripts and integrations such as Home Assi
 - [Configuration](#configuration)
 - [Links](#links)
 - [API tokens, logs, backup and restore](#api-tokens-logs-backup-and-restore)
-- [Experimental: identities on several radios](#experimental-identities-on-several-radios)
+- [meshtasticd nodes](#meshtasticd-nodes)
 - [Plugins](#plugins)
 
 ## Setup and auth
@@ -172,6 +172,8 @@ A Radio in the list:
             "long_name": "RepeaterTastic Relay", "short_name": "RPTR"},
   "map": {"tile_url": "https://…/{z}/{x}/{y}.png"},
   "restart_reasons": [],
+  "nodes": {"state": "ok", "nodes": 4, "up": 4, "problems": [], "version": "2.8.0.47db0e3-alpha",
+            "launcher": "meshtasticd"},
   "airtime": {"window_s": 3600, "tx_ms": 147700, "rx_ms": 402000, "duty_limit_pct": 10, "tx_pct": 4.1,
               "channel_util_pct": 11.2},
   "counters": {"rx": 1203, "rx_dupe": 402, "rx_undecryptable": 77, "rx_bad": 0, "tx": 311, "tx_failed": 0,
@@ -185,6 +187,12 @@ A Radio in the list:
   `"web address"`, `"mDNS"`, `"site airtime cap"`, `"plugins"`, `"<radio> added"`,
   `"<radio> removed"`, `"<radio> modem connection"`, `"<radio> MQTT"` and `"<radio> UDP multicast"`.
   The same list decides every `restart_required` in this API.
+- `nodes` is how meshtasticd is doing: the worst state across the site's radios ([meshtasticd
+  nodes](#meshtasticd-nodes)). `state` is `ok`, `starting` (within a 90 s grace period after a
+  start), `warning` (one or more identities down past the grace period) or `error` (meshtasticd
+  can't run and nothing is up, every node is down, or a relay persona is down). `nodes` and `up`
+  count instances; `problems` lists what's wrong, prefixed with the radio's name when there's more
+  than one; `launcher` is `meshtasticd` or `docker <image>`.
 
 ### Relay role
 
@@ -226,11 +234,12 @@ Without a supervisor it stays stopped.
 ```json
 {
   "node_id": "!a1c40e07", "node_num": 2713980423, "long_name": "Base Camp", "short_name": "BASE",
-  "role": "CLIENT_MUTE", "hw_model": "HELTEC_V3", "public_key": "base64…", "is_relay": false, "enabled": true,
+  "role": "CLIENT_MUTE", "hw_model": "HELTEC_V3", "public_key": "base64…", "is_relay": false,
+  "real_node": true, "hosted": true, "enabled": true,
   "api": {"bind": "0.0.0.0", "port": 4403, "clients": 1, "listening": true},
   "outbox": 0, "airtime_ms_1h": 3200, "share_pct": 2.2, "share_limit_pct": 25, "created_at": 1757900000000,
   "last_byte": 7, "hop_limit": 0, "position": null, "position_secs": 0, "unread": 3,
-  "radio_id": "main", "radio_name": "Main", "radios": ["main"], "multi_radio": null,
+  "radio_id": "main", "radio_name": "Main",
   "channels": [
     {"index": 0, "role": "PRIMARY", "name": "", "display_name": "LongFast", "psk": "AQ==", "hash": 8,
      "uplink": false, "downlink": false, "locked": true}
@@ -239,12 +248,12 @@ Without a supervisor it stays stopped.
 ```
 
 - The relay persona is included, with `"is_relay": true` and `"api": null`.
-- `"real_node": true` marks an identity that runs on meshtasticd: its names, channels and settings
-  are written to it. `"hosted": true` means RepeaterTastic started that meshtasticd and keeps its
-  key, so `GET …/key` answers as usual.
-- A hosted identity's `role` must be `CLIENT_MUTE`, `TRACKER`, `SENSOR` or `TAK_TRACKER` (400
-  otherwise, on create and on `PATCH`), and `multi_radio` can't be set on it (409). Creating,
-  moving and deleting start and stop its meshtasticd.
+- `"real_node": true` marks an identity that is a real Meshtastic node (every identity, now): its
+  names, channels and settings are written to it. `"hosted": true` means RepeaterTastic started its
+  meshtasticd and keeps its key, so `GET …/key` answers as usual; it's `false` for the relay persona
+  of a board radio, where the board keeps its own key.
+- An identity's `role` must be `CLIENT_MUTE`, `TRACKER`, `SENSOR` or `TAK_TRACKER` (400 otherwise,
+  on create and on `PATCH`). Creating, moving and deleting start and stop its meshtasticd.
 - `share_pct` is this identity's part of the radio's transmit time in the last hour. `share_limit_pct`
   is its own limit, or `airtime.identity_share_percent`. `unread` counts unread browser-chat messages.
 - `position` is the identity's own fixed position `{"latitude", "longitude", "altitude"}`, or `null`
@@ -254,7 +263,7 @@ Without a supervisor it stays stopped.
 | --- | --- |
 | `POST /identities[?radio=<id>]` | `{"long_name", "short_name", "private_key", "api_port", "api_bind", "role", "share_limit_pct", "hop_limit", "radio_id"}` → 201 Identity |
 | `POST /identities/preview-key[?radio=<id>]` | `{"private_key"}` → `{"private_key", "public_key", "node_id", "node_num", "last_byte", "collision"}` |
-| `PATCH /identities/{node_id}` | any of `{"long_name", "short_name", "enabled", "api_port", "api_bind", "role", "share_limit_pct", "hop_limit", "position", "position_secs", "multi_radio"}` → Identity |
+| `PATCH /identities/{node_id}` | any of `{"long_name", "short_name", "enabled", "api_port", "api_bind", "role", "share_limit_pct", "hop_limit", "position", "position_secs"}` → Identity |
 | `DELETE /identities/{node_id}` | → 204 |
 | `GET /identities/{node_id}/key` | → `{"private_key", "public_key"}` (base64) |
 | `POST /identities/{node_id}/move` | `{"radio_id"}` → Identity |
@@ -293,7 +302,7 @@ position and broadcast interval, owner name and channels. Radio-wide LoRa settin
 
 | Method and path | Body → response |
 | --- | --- |
-| `PUT /identities/{node_id}/channels/{index}` | `{"name", "psk", "role", "uplink", "downlink", "radio"}` → Identity |
+| `PUT /identities/{node_id}/channels/{index}` | `{"name", "psk", "role", "uplink", "downlink"}` → Identity |
 | `GET /identities/{node_id}/channels/url` | → `{"url": "https://meshtastic.org/e/#…"}` |
 | `POST /identities/{node_id}/channels/url` | `{"url"}` → Identity |
 
@@ -301,7 +310,6 @@ position and broadcast interval, owner name and channels. Radio-wide LoRa settin
   `SECONDARY` or `DISABLED`; `DISABLED` removes the channel. Names are at most 11 characters.
 - Slot 0 is the radio's shared primary channel. Its role and name can't change (409); only its key
   can. The name is set by `mesh.primary_channel`.
-- `radio` is for [identities on several radios](#experimental-identities-on-several-radios) only.
 - Importing a URL keeps existing channels: the URL's primary channel sets slot 0's key when its name
   matches, and the others go into free slots (extras are skipped). 400 when it isn't a channel URL.
 
@@ -329,12 +337,11 @@ Every identity can chat from the browser, the relay persona included.
 ```json
 {"id": 195939341, "from": "!a1c40e07", "to": "!ffffffff", "channel": 0, "text": "hello",
  "time": 1757900000000, "direction": "out", "status": "queued", "error": "", "pki": false,
- "rssi": -92, "snr": 6.5, "hops": 1, "radio": ""}
+ "rssi": -92, "snr": 6.5, "hops": 1}
 ```
 
 `direction` is `in` or `out`. `status` is `queued`, `sent`, `acked`, `failed` or `received`. `error`
-is a Meshtastic routing error such as `NO_INTERFACE` or `MAX_RETRANSMIT`. `radio` is set for
-multi-radio identities.
+is a Meshtastic routing error such as `NO_INTERFACE` or `MAX_RETRANSMIT`.
 
 ## Nodes
 
@@ -362,12 +369,15 @@ multi-radio identities.
 | `POST /nodes/{node_id}/traceroute[?radio=<id>]` | `{"from"}` → 202 `{"status": "sent"}` |
 | `POST /nodes/{node_id}/request-nodeinfo[?radio=<id>]` | `{"from"}` → 202 `{"status": "sent"}` |
 | `DELETE /nodes/{node_id}[?radio=<id>]` | → 204 |
+| `GET /nodes/{node_id}/sightings` | → `[{"radio_id", "radio_name", "last_heard", "snr", "rssi", "hops_away", "via_mqtt"}]` |
 
 - `from` is one of the radio's identities, or empty for its relay persona (400 otherwise).
 - A traceroute answers 429 when it can't be sent: one per identity every 30 seconds, or
   `NO_INTERFACE` in monitor or off mode. The result arrives as an SSE `traceroute` event, or an event
   with `error` after 60 seconds without a reply.
 - Deleting a local identity's node answers 409.
+- `sightings` lists what every radio on this mast knows about a node, freshest first ([Several
+  radios](radios.md)).
 
 ## Packets
 
@@ -554,57 +564,32 @@ connections are edited through `PUT /config`.
   the files are staged and replace the configuration and identities when the daemon next starts.
   400 when it isn't a backup, or its configuration or identities don't validate.
 
-## Experimental: hosted nodes
+## meshtasticd nodes
 
-The relay persona of each modem or HAT radio, and its identities, can run on meshtasticd
-([Real Meshtastic nodes](meshtasticd-nodes.md)).
+The relay persona of each modem or HAT radio, and every identity, runs on meshtasticd
+([Real Meshtastic nodes](meshtasticd-nodes.md)). A board radio (`driver: meshtastic`) keeps the
+board itself as its relay; its identities still run on meshtasticd, one hop behind it.
 
 | Method and path | Body → response |
 | --- | --- |
-| `GET /hosted` | → `{"persona", "identities", "meshtasticd", "docker_image", "port_base", "min_version", "instances", "restart_required"}` |
-| `PUT /hosted` | `{"persona", "identities", "meshtasticd", "docker_image", "port_base"}` → the same as `GET` (applies at restart) |
+| `GET /hosted` | → `{"meshtasticd", "docker_image", "port_base", "min_version", "instances", "restart_required"}` |
+| `PUT /hosted` | `{"meshtasticd", "docker_image", "port_base"}` → the same as `GET` (applies at restart) |
 
 - `instances` are the meshtasticd processes running now: `{"radio", "role", "name", "launcher",
   "port", "running", "connected", "restarts", "last_error", "firmware", "node_id", "log"}`, with
   `log` the last lines meshtasticd printed. `role` is `persona` or `identity`.
-- `identities: true` runs identities on meshtasticd: on a modem or HAT radio together with
-  `persona`, and behind a board on its own. Turning `persona` or `identities` on checks meshtasticd
-  can run (400 otherwise).
 - `GET /setup/runtimes` (no token during setup) → `{"meshtasticd": {"found", "path", "version",
   "ok", "error"}, "docker": {"found", "ok", "version", "error", "image", "image_present"},
   "min_version"}`: whether meshtasticd is installed and new enough, and whether Docker answers and
   already has the image. It never downloads anything.
-- `PUT /hosted` with `persona: true` checks meshtasticd first and answers 400 when it can't run or
-  is older than `min_version`. `meshtasticd` must name a meshtasticd program (`""` = the one on
-  `PATH`); `docker_image`, when set, runs it in Docker instead.
+- `PUT /hosted` always checks meshtasticd first and answers 400 when it can't run or is older than
+  `min_version` — there's no fallback, so a node whose meshtasticd can't run just stays off air.
+  `meshtasticd` must name a meshtasticd program (`""` = the one on `PATH`); `docker_image`, when
+  set, runs it in Docker instead.
 - `POST /setup` takes the same object as `hosted`; before a password exists only
   `meshtastic/meshtasticd` images are accepted. `POST /setup/meshtasticd` checks a program or image
   the same way and always answers 200 with `ok` and `error`, except for a program that isn't
   meshtasticd (400) or, before a password exists, an image that isn't `meshtastic/meshtasticd` (400).
-
-## Experimental: identities on several radios
-
-These matter only with `multi_radio_identities` switched on and more than one radio. See
-[Several radios](radios.md#experimental-identities-on-several-radios).
-
-| Method and path | Body → response |
-| --- | --- |
-| `GET /experimental` | → `{"multi_radio_identities"}` |
-| `PUT /experimental` | `{"multi_radio_identities"}` → the same (applies live) |
-| `GET /identities/{node_id}/route?to=!node` or `?channel=N` | → `{"radios", "radio_names", "reason", "enabled"}` |
-| `GET /nodes/{node_id}/sightings` | → `[{"radio_id", "radio_name", "last_heard", "snr", "rssi", "hops_away", "via_mqtt"}]` |
-
-- `PATCH /identities/{node_id}` takes `"multi_radio"`, or `null` to clear it:
-  `{"default_radio", "dm": "auto" | "default" | "<radio id>", "fallback", "channels": {"2": "mf"}}`.
-  Slot radios are kept unless `channels` is given, which replaces them (slots 1-7). A relay persona
-  answers 400.
-- `PUT /identities/{node_id}/channels/{index}` takes `"radio"`: the radio for slots 1-7, `""` for
-  the default radio, or left out to keep it. It answers 400 with the switch off, for slot 0 or for a
-  relay persona, and 409 when an identity sharing the last byte is already on that radio.
-- Identities carry `radios` (where they're on now) and `multi_radio`. Their channels carry `radio`
-  and `radio_name`, plus `radio_pending` (the radio hasn't started yet) or `radio_removed` (the
-  radio has left).
-- `route` shows which radios a message would use and why.
 
 ## Plugins
 

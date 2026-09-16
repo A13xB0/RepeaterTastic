@@ -9,18 +9,19 @@
 
 # RepeaterTastic
 
-**Many Meshtastic nodes, one LoRa modem.** RepeaterTastic runs as many virtual Meshtastic nodes
-as you like on a Raspberry Pi (or any Linux box) with a cheap LoRa board on USB. Every virtual
-node is a real Meshtastic node to the mesh and to the apps. One of them repeats; the rest are yours
+**Many Meshtastic nodes, one LoRa modem.** RepeaterTastic runs as many Meshtastic nodes as you
+like on a Raspberry Pi (or any Linux box) with a cheap LoRa board on USB. Every node is a real
+Meshtastic node, a meshtasticd RepeaterTastic starts and shares the radio between. One of them repeats; the rest are yours
 to chat, bridge and experiment with. Built and run by [ScotMesh](https://github.com/ScotMesh) for
 Scottish mesh sites, and useful anywhere.
 
 ![The RepeaterTastic dashboard: radio status and relay switch, traffic counters, airtime against the duty cycle, noise floor, packets by port and live packets](docs/images/dashboard.png)
 
-- **Virtual nodes ("identities")** with their own key, node number, channels and app port. The
-  official Meshtastic apps, the Python CLI and the web client connect to each one as if it were a radio.
-- **A proper repeater:** one relay persona follows the firmware's flooding and next-hop rules, with
-  a shared duty-cycle budget, so ten identities never mean ten repeats. Its role is a Meshtastic device
+- **Nodes ("identities")** with their own key, node number, channels and app port, each running on
+  its own meshtasticd. The official Meshtastic apps, the Python CLI and the web client connect to
+  each one as if it were a radio.
+- **A proper repeater:** one relay persona, itself a meshtasticd, does the repeating with a shared
+  duty-cycle budget, so ten identities never mean ten repeats. Its role is a Meshtastic device
   role (client, client base, client mute, router, router late), or put the radio in Monitor (listen only) or Off from the top bar.
 - **A web GUI** for everything: identities, chat (as any identity, the relay persona included),
   channels, a live node map, packets, statistics, logs, backups and configuration.
@@ -29,12 +30,13 @@ Scottish mesh sites, and useful anywhere.
   site position, device telemetry and an optional UDP multicast link to `meshtasticd` on the LAN.
 - **Plugins** add uploaders, bots and dashboards: upload a .zip in the GUI or drop it in a folder,
   choose what each one may see, and cap how much it may send.
-- **One static binary or one container.** About 10 MB, no CGO, GUI embedded.
+- **One container, or one binary plus meshtasticd.** The image includes meshtasticd; standalone,
+  the installer sets it up. The top bar shows whether every node is running.
 
 > **Status:** running on a ScotMesh site on a Heltec V3, alongside Reticulum. Still young: expect
-> changes. Verified: byte-exact against 25 golden vectors from meshtasticd 2.7.26 and 2.8.0; PKI DMs
-> with ACKs against real meshtasticd; the official apps and CLI on the identity ports; on-air channel
-> messages and DMs; multi-radio routing in simulation.
+> changes. Needs meshtasticd 2.8.0 or newer. Verified on air with KISS modems, a CH341 stick and a
+> board on Meshtastic firmware: channel messages, PKI DMs with ACKs, local DMs between identities,
+> MQTT, and the official apps and CLI on the identity ports.
 
 ## Quick start
 
@@ -58,8 +60,8 @@ meshtasticd runs on: MeshAdv, Waveshare, RAK6421, Nebra/Zebra, PiMesh, PiTastic,
 Luckfox HATs (SX126x and LR1121), and CH341 USB sticks such as MeshStick, Meshtoad, uMesh and
 RAK19714. All of meshtasticd's board files are built in, so pick your board in the setup wizard
 (or set `radio: {driver: spi, device: MeshAdv-900M30S}`; `auto` detects USB sticks and Pi HAT+
-boards). meshtasticd must not be running on the same radio. Tested on an SX1262 over CH341 so
-far; HATs need testers: see [LoRa HATs and USB sticks](docs/spi-radio-testing.md).
+boards). meshtasticd's own service must not be running on the same radio (the installer turns it
+off). Tested on an SX1262 over CH341 so far; HATs need testers: see [LoRa HATs and USB sticks](docs/spi-radio-testing.md).
 
 ### 2a. Run it with Docker
 
@@ -78,7 +80,9 @@ docker run -d --name repeatertastic --restart unless-stopped \
   for a CH341 stick `--device /dev/bus/usb` and its udev group.
 - `--network host` lets the apps find identities over mDNS and joins the LAN multicast mesh. Without
   it, publish `-p 8080:8080 -p 4403-4410:4403-4410` instead.
-- The `/data` volume holds the config, identity keys and chats. Back it up.
+- The image includes meshtasticd 2.8, which runs every node inside the container: nothing else to
+  install. Its API ports (4500 up) stay inside; don't publish them.
+- The `/data` volume holds the config, identity keys, chats and the nodes' state. Back it up.
 - Prefer Compose? Copy [`deploy/docker-compose.example.yml`](deploy/docker-compose.example.yml).
 - The image is published to `ghcr.io` with each release. To run your own build instead, build it
   with `docker build -t repeatertastic .` and use `repeatertastic` as the image name.
@@ -97,20 +101,35 @@ The installer creates a `repeatertastic` user in `dialout`, installs the systemd
 `/etc/repeatertastic/repeatertastic.yaml`, pointing it at the first USB serial device it finds
 (check it if several boards are plugged in).
 
+It also sets up meshtasticd (2.8.0 or newer), which runs the nodes. You choose how with
+`--meshtasticd`:
+
+| Option | What it does |
+| --- | --- |
+| `auto` (default) | Uses a meshtasticd 2.8+ already on the PATH; otherwise the same as `apt` |
+| `apt` | Installs the `meshtasticd` package from Meshtastic's alpha repository (Debian 12/13, Raspberry Pi OS, Ubuntu), then turns its own service off |
+| `docker` | Pulls the meshtasticd image and lets the service use Docker (choose Docker in the setup wizard) |
+| `skip` | Leaves meshtasticd to you: build it or install it your way, then give its path in the setup wizard |
+
+For example `sudo ./deploy/install.sh --meshtasticd docker ./repeatertastic-linux-arm64`.
+
 ### 3. Set it up in the browser
 
 1. Open `http://<host>:8080` and choose the admin password.
-2. The setup wizard finds the modem (a serial port, or a HAT or USB stick from the board list), sets region and preset, and tests it.
-3. **Identities → New identity** creates a virtual node and gives it an app port.
-4. In the Meshtastic app, add a **network** device: `<host>:<port>` (for example `192.168.1.20:4404`).
+2. The setup wizard finds the modem (a serial port, a HAT or USB stick from the board list, or a
+   board on Meshtastic firmware), checks meshtasticd, sets region and preset, and tests it.
+3. The **meshtasticd** chip in the top bar turns green once the relay persona runs. Amber means an
+   identity's node is down, red means meshtasticd isn't running; click it for the details.
+4. **Identities → New identity** creates a node and gives it an app port.
+5. In the Meshtastic app, add a **network** device: `<host>:<port>` (for example `192.168.1.20:4404`).
 
 ### Build it yourself
 
 ```bash
 make ui                                  # web GUI → internal/web/dist (Node 22)
-make build                               # bin/repeatertastic, bin/kisstool
+make build                               # bin/repeatertastic, bin/kisstool (run with meshtasticd 2.8+)
 make dist                                # static binaries for Pi (arm64/armv7/armv6) and amd64
-docker build -t repeatertastic .         # container image
+docker build -t repeatertastic .         # container image, meshtasticd included
 ./firmware/build.sh Heltec_v3_kiss_modem # modem firmware (PlatformIO)
 ```
 
@@ -122,11 +141,11 @@ Docker) bakes in a default map tile key; see [Configuration](docs/configuration.
 | Guide | What's in it |
 | --- | --- |
 | [Hardware and modems](docs/hardware.md) | Supported boards, flashing Mesh KISS, stable device paths, permissions, Docker devices, `kisstool`, troubleshooting |
-| [Real Meshtastic nodes](docs/meshtasticd-nodes.md) | In progress: the relay persona and identities on meshtasticd; measured firmware behaviour |
+| [meshtasticd nodes](docs/meshtasticd-nodes.md) | How the relay persona and identities run on meshtasticd, the status indicator, and measured firmware behaviour |
 | [LoRa HATs and USB sticks](docs/spi-radio-testing.md) | Driving a Pi HAT or CH341 stick directly (`radio.driver: spi`): supported boards, setup, and how to test one |
 | [Configuration](docs/configuration.md) | The config file section by section, environment variables, what applies live, backups |
 | [Using the web GUI](docs/web-gui.md) | Identities, chat, channels, nodes and map, packets, statistics, configuration tabs |
-| [Several radios](docs/radios.md) | Running LongFast and MediumFast side by side, the site airtime cap, and the experimental identities on several radios |
+| [Several radios](docs/radios.md) | Running LongFast and MediumFast side by side, moving identities between them, and the site airtime cap |
 | [MQTT](docs/mqtt.md) | Broker connections, modes, channels, relaying and map reports |
 | [Plugins](docs/plugins.md) | Installing plugins (GUI, folder, CLI, Docker), permissions, attached plugins, and writing your own |
 | [Architecture and development](docs/architecture.md) | How it fits together, code layout, tests and interop |

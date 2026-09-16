@@ -46,29 +46,7 @@ site:
 
 Extra radios keep their identities and history in `state_dir/radios/<id>`.
 
-## Experimental: identities on several radios
-
-Off by default: **Configuration → Experimental**, or `experimental.multi_radio_identities: true`.
-With it on, one identity can use several radios:
-
-- **One radio per channel slot.** In the Channels page's slot dialog, each slot is on exactly one
-  radio. Scotland on LongFast and Scotland on MediumFast are two slots: two channels, two chats. (The
-  Meshtastic app shows both as "Scotland", in slot order; the web GUI labels them with their radio.)
-- **A default radio per identity** (identity editor; its home radio unless changed). Slot 0 is that
-  radio's primary channel, new channels start on it, channels changed from the app or a channel URL
-  import go to it, and DMs fall back to it.
-- **DMs** go on the radio where the other node was last heard best in the last day, always on the
-  default radio, or always on a fixed radio. An optional fallback retries a failed DM once on another
-  radio that heard the destination, if that radio has airtime left.
-- **Where it's on:** an identity is on its home radio, its default radio and each radio one of its
-  slots uses. On other radios it's a guest: they hear and send its slots there, deliver into its
-  chats on the home radio, and announce it on their own schedule.
-- **Replies** (ACKs, traceroutes, position and NodeInfo answers) leave on the radio the request came in on.
-- **App:** the identity keeps one app port. The app sees the home radio's LoRa settings and the nodes
-  heard on all its radios. Routing can only be changed in the web GUI.
-- **Safety:** a packet heard on two radios is delivered once, relay personas never repeat the site's
-  own identities, MQTT publishes a packet once, and turning the switch off puts everything back on
-  the home radio at once (the choices are kept for next time).
-- **Radios that haven't started** can already be chosen; those slots run on the default radio until
-  the restart. Slots whose radio was removed fall back to the default radio and are flagged on the
-  Channels page.
+Each identity lives on one radio; there's no routing an identity's channels or DMs across several.
+Radios on one mast still join into a site (`mesh.JoinSite`): an MQTT link recognises the site's own
+identities coming back from a broker on any radio, and `GET /nodes/{id}/sightings`
+([HTTP API](api.md#nodes)) shows what every radio of the site has heard of a node.

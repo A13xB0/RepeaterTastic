@@ -1,16 +1,39 @@
-# Real Meshtastic nodes (in progress)
+# Real Meshtastic nodes
 
 [← README](../README.md) · [Architecture](architecture.md) · [Hardware](hardware.md)
 
-RepeaterTastic is moving from its own Go implementation of a Meshtastic node to real Meshtastic
-firmware: the relay persona and each identity run as a radio-less `meshtasticd`
-(`Lora: Module: sim`) started by RepeaterTastic, driven through the client API (the protocol the
-apps use). Their transmissions go out through a bridge to RepeaterTastic's radio (a KISS modem or
-the `spi` driver), and everything the radio hears is fed back to them, the way Meshtasticator
-connects simulated nodes.
+RepeaterTastic doesn't run Meshtastic nodes itself: the relay persona of every radio, and every
+identity, runs as a radio-less `meshtasticd` (`Lora: Module: sim`) started by RepeaterTastic, driven
+through the client API (the protocol the apps use). Their transmissions go out through a bridge to
+RepeaterTastic's radio (a KISS modem or the `spi` driver), and everything the radio hears is fed
+back to them, the way Meshtasticator connects simulated nodes. The one exception is a radio whose
+driver is `meshtastic` (a board on stock Meshtastic firmware): the board itself is the relay, and
+identities run on meshtasticd a hop behind it.
 
-**Status:** the relay persona and identities can run on meshtasticd (`hosted.persona`,
-`hosted.identities`, see [Configuration](configuration.md#hosted-nodes-on-meshtasticd-experimental)).
+## Status
+
+Needs meshtasticd 2.8.0 or newer (see [Configuration → `hosted`](configuration.md#hosted-meshtasticd)).
+There's no fallback: an identity whose meshtasticd can't be started stays off air, retrying with
+backoff, until it can. The top bar and `GET /api/v1/status` say why.
+
+## Status in the top bar
+
+The **meshtasticd** chip (top bar, and Configuration → meshtasticd) shows the worst state across
+the site's radios:
+
+| State | Chip | Meaning |
+| --- | --- | --- |
+| `ok` | green, "OK" | Every node is up |
+| `starting` | blue, "starting" | Within the 90 s grace period after a (re)start |
+| `warning` | amber, "N of M down" | One or more identities are down past the grace period |
+| `error` | red, "meshtasticd not running" | The launcher can't run and nothing is up |
+| `error` | red, "relay down" | A relay persona is down |
+
+![The top bar with one of two nodes down](images/topbar-meshtasticd.png)
+
+Hovering the chip lists the problems; clicking it opens Configuration → meshtasticd, which shows the
+same, the installed/Docker choice, the API port base, and a table of every instance (radio, port,
+state, restarts, last error).
 
 This page records what the firmware does, as measured, so the design rests on facts. The work is
 tracked in the epic pull request, [ScotMesh/RepeaterTastic#5](https://github.com/ScotMesh/RepeaterTastic/pull/5).
@@ -175,8 +198,9 @@ other at hop limit 0, so none of them repeats a frame that went out from the sam
 ## Supervisor
 
 - `nodes.Hosting` is a radio's `mesh.Hoster`: the host hands it every identity record as it is
-  loaded, created or moved, and it starts a meshtasticd for the ones it takes (the persona on the
-  radio's first port, identities on the next 99). Records it doesn't take run in RepeaterTastic.
+  loaded, created or moved, and it starts a meshtasticd for each one (the persona on the radio's
+  first port, identities on the next 99). A record that can't be started is kept and retried; the
+  identity stays off air until it comes up.
 
 - `nodes.StartHosted` writes the instance's `config.yaml` (`Lora: Module: sim`, no UDP, no MQTT),
   runs meshtasticd with `-c`, `-d`, `-h` and `-p`, and restarts it with backoff. The last 200 lines

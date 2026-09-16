@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 	l := &tcpLauncher{nodes: map[int]*mtclienttest.Node{}}
 	base := freePortBase(t)
 	x := NewHosting(ctx, HostingOptions{Launcher: l, Air: NewLoRaAir(h, testLogf(t)), Radio: "main", Dir: t.TempDir(),
-		PortBase: base, Persona: true, Identities: true, Logf: testLogf(t),
+		PortBase: base, Logf: testLogf(t),
 		RelayOwner: func() (string, string) { return "RT Relay", "RTR" }})
 	h.SetHoster(x)
 
@@ -102,9 +103,7 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 	_ = desk.SetMaxHops(2)
 	_ = desk.SetFixedPosition(&mesh.IdentityPosition{Latitude: 55.9, Longitude: -3.1, Altitude: 12})
 	desk.Channels[1] = &pb.Channel{Index: 1, Role: pb.Channel_SECONDARY, Settings: &pb.ChannelSettings{Name: "Ops", Psk: []byte("0123456789abcdef")}}
-	roam := newID("Roamer", "ROAM")
-	roam.SetMultiRadio(&mesh.MultiRadio{DefaultRadio: "mf"})
-	for _, id := range []*mesh.Identity{relay, desk, roam} {
+	for _, id := range []*mesh.Identity{relay, desk} {
 		if _, err := h.AddRecord(ctx, id.Record()); err != nil {
 			t.Fatal(err)
 		}
@@ -116,9 +115,6 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 	}
 	if got := h.Identity(desk.NodeNum); got == nil || !got.Hosted() || got.MaxHops() != 2 {
 		t.Fatalf("desk = %+v", got)
-	}
-	if got := h.Identity(roam.NodeNum); got == nil || got.Remote() != nil {
-		t.Fatal("an identity routed across radios must stay in RepeaterTastic")
 	}
 
 	// The fresh nodes are given the saved identities.
@@ -153,11 +149,11 @@ func TestHostingRunsIdentitiesWithTheirKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	recs, err := mesh.LoadIdentityRecords(state)
-	if err != nil || len(recs) != 3 {
+	if err != nil || len(recs) != 2 {
 		t.Fatalf("saved %d identities: %v", len(recs), err)
 	}
 	for _, r := range recs {
-		if r.NodeNum() != relay.NodeNum && r.NodeNum() != desk.NodeNum && r.NodeNum() != roam.NodeNum {
+		if r.NodeNum() != relay.NodeNum && r.NodeNum() != desk.NodeNum {
 			t.Fatalf("saved %q under another key", r.LongName)
 		}
 	}
@@ -204,4 +200,92 @@ func TestCheckLauncherMissingProgram(t *testing.T) {
 	if err == nil || err.Error() != "there's no meshtasticd at /nonexistent/dir/meshtasticd" {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+// flakyLauncher runs nodes like tcpLauncher, except on broken ports; kill stops a running one.
+type flakyLauncher struct {
+	*tcpLauncher
+	mu     sync.Mutex
+	broken map[int]bool
+	stop   map[int]context.CancelFunc
+}
+
+func (l *flakyLauncher) Run(ctx context.Context, in Instance, out io.Writer) error {
+	l.mu.Lock()
+	if l.broken[in.Port] {
+		l.mu.Unlock()
+		return errors.New("exit status 1")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	l.stop[in.Port] = cancel
+	l.mu.Unlock()
+	if err := l.tcpLauncher.Run(ctx, in, out); err != nil && ctx.Err() != nil {
+		return errors.New("killed")
+	}
+	return nil
+}
+
+// kill stops the process on port and keeps it from starting again.
+func (l *flakyLauncher) kill(port int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.broken[port] = true
+	if c := l.stop[port]; c != nil {
+		c()
+	}
+}
+
+func TestHostingHealth(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h, err := mesh.NewHost(mesh.Config{Region: "EU_868", Preset: pb.Config_LoRaConfig_LONG_FAST, StateDir: t.TempDir()},
+		null.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := freePortBase(t)
+	l := &flakyLauncher{tcpLauncher: &tcpLauncher{nodes: map[int]*mtclienttest.Node{}},
+		broken: map[int]bool{base + 2: true}, stop: map[int]context.CancelFunc{}}
+	x := NewHosting(ctx, HostingOptions{Launcher: l, Air: NewLoRaAir(h, testLogf(t)), Radio: "main", Dir: t.TempDir(),
+		PortBase: base, Logf: testLogf(t)})
+	h.SetHoster(x)
+	if got := x.Health(); got.State != HealthOK || got.Nodes != 0 {
+		t.Fatalf("no nodes: %+v", got)
+	}
+	x.SetLauncherCheck("", errors.New("there's no meshtasticd at /opt/meshtasticd"))
+	if got := x.Health(); got.State != HealthError || len(got.Problems) != 1 {
+		t.Fatalf("launcher missing: %+v", got)
+	}
+	x.SetLauncherCheck("2.8.0.test", nil)
+
+	used := map[uint8]bool{}
+	add := func(long string, relay bool) {
+		for {
+			id, _ := mesh.NewIdentity(nil, long, "")
+			if b := wire.LastByte(id.NodeNum); !used[b] {
+				used[b] = true
+				id.IsRelay = relay
+				_ = id.SetRole("CLIENT_MUTE")
+				if _, err := h.AddRecord(ctx, id.Record()); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+	}
+	add("Relay", true)
+	add("Desk", false)
+	eventually(t, "all up", func() bool { hh := x.Health(); return hh.State == HealthOK && hh.Up == 2 })
+
+	add("Broken", false) // its meshtasticd exits at once
+	eventually(t, "one identity down", func() bool {
+		hh := x.Health()
+		return hh.State == HealthWarning && len(hh.Problems) == 1 && hh.Up == 2
+	})
+	if p := x.Health().Problems[0]; !strings.HasPrefix(p, "identity Broken (!") || !strings.HasSuffix(p, "): exit status 1") {
+		t.Fatalf("problem = %q", p)
+	}
+
+	l.kill(base) // the persona's meshtasticd dies too
+	eventually(t, "persona down", func() bool { return x.Health().State == HealthError })
 }

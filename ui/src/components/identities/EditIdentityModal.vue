@@ -5,13 +5,10 @@ import type { Identity } from '@/api/types'
 import Modal from '@/components/ui/Modal.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { multiRadioActive, live, refreshAllIdentities, refreshIdentities, upsertIdentity } from '@/store/live'
+import { live, refreshAllIdentities, refreshIdentities, upsertIdentity } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
-import MultiRadioSection from '@/components/identities/MultiRadioSection.vue'
 import { hostedIdentityRoles } from '@/lib/relay'
 import RadioFields from '@/components/identities/RadioFields.vue'
-import { channelSlots } from '@/lib/channels'
-import type { MultiRadio } from '@/api/types'
 import { toast } from '@/composables/toast'
 
 const props = defineProps<{ identity: Identity | null }>()
@@ -19,22 +16,6 @@ const emit = defineEmits<{ close: [] }>()
 
 const form = ref({ long_name: '', short_name: '', role: 'CLIENT_MUTE', api_port: 0, enabled: true, share_limit_pct: 25, hop_limit: 0,
   own_position: false, latitude: 0, longitude: 0, altitude: 0, position_secs: 0, radio_id: 'main', api_bind: '' })
-const multi = ref<MultiRadio | null>(null)
-// The default radio is edited next to the home radio; "" in multi_radio means "the home radio".
-const savedDefault = computed(() => props.identity?.multi_radio?.default_radio || props.identity?.radio_id || 'main')
-const defaultRadio = computed({
-  get: () => multi.value?.default_radio || props.identity?.radio_id || 'main',
-  set: (v: string) => {
-    multi.value = { ...(multi.value ?? {}), default_radio: v === (props.identity?.radio_id ?? 'main') ? '' : v }
-  },
-})
-const following = computed(() =>
-  props.identity ? channelSlots(props.identity).filter((c) => c.index > 0 && c.role !== 'DISABLED' && !props.identity!.multi_radio?.channels?.[String(c.index)]) : [],
-)
-const primaryOf = (id: string) => {
-  const r = live.radios.find((x) => x.id === id)
-  return r?.phy.primary_channel || r?.phy.preset_name || id
-}
 const saving = ref(false)
 const error = ref('')
 const allRoles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR', 'ROUTER', 'ROUTER_LATE']
@@ -45,7 +26,6 @@ watch(
   (i) => {
     if (!i) return
     refreshAllIdentities()
-    multi.value = i.multi_radio ? structuredClone(i.multi_radio) : null
     error.value = ''
     form.value = { long_name: i.long_name, short_name: i.short_name, role: i.role, api_port: i.api?.port ?? 0, enabled: i.enabled, share_limit_pct: i.share_limit_pct ?? 25, hop_limit: i.hop_limit ?? 0,
       own_position: !!i.position, latitude: i.position?.latitude ?? 0, longitude: i.position?.longitude ?? 0, altitude: i.position?.altitude ?? 0,
@@ -74,9 +54,6 @@ async function save() {
   if (f.position_secs !== (i.position_secs ?? 0)) patch.position_secs = f.position_secs
   const pos = f.own_position ? { latitude: f.latitude, longitude: f.longitude, altitude: f.altitude } : null
   if (JSON.stringify(pos) !== JSON.stringify(i.position ?? null)) patch.position = pos
-  // only the default radio and DM routing are edited here; slot radios live on the Channels page
-  const pick = (m?: MultiRadio | null) => ({ default_radio: m?.default_radio || '', dm: m?.dm || 'auto', fallback: !!m?.fallback })
-  if (JSON.stringify(pick(multi.value)) !== JSON.stringify(pick(i.multi_radio))) patch.multi_radio = pick(multi.value)
   const moving = !i.is_relay && live.radios.length > 1 && f.radio_id !== (i.radio_id ?? 'main')
   if (!Object.keys(patch).length && !moving) return emit('close')
   if (moving) {
@@ -118,10 +95,7 @@ async function save() {
         <label class="label" for="e-sn">Short name</label>
         <input id="e-sn" v-model="form.short_name" class="input mono uppercase" maxlength="4" />
       </div>
-      <RadioFields v-model:home="form.radio_id" v-model:default-radio="defaultRadio" :relay="identity.is_relay" :saved-home="identity.radio_id ?? 'main'" class="sm:col-span-2" />
-      <p v-if="defaultRadio !== savedDefault && live.multiRadioIdentities" class="hint !text-warn sm:col-span-2 !-mt-2">
-        Saving makes slot 0 {{ primaryOf(defaultRadio) }}<template v-if="following.length"> and moves {{ following.map((c) => c.display_name).join(', ') }} (they follow the default)</template>. Channels set to a radio stay where they are.
-      </p>
+      <RadioFields v-model:home="form.radio_id" :relay="identity.is_relay" :saved-home="identity.radio_id ?? 'main'" class="sm:col-span-2" />
       <div>
         <label class="label" for="e-role">Device role</label>
         <select id="e-role" v-model="form.role" class="input" :disabled="identity.is_relay">
@@ -160,8 +134,6 @@ async function save() {
           </select>
         </div>
       </div>
-      <MultiRadioSection v-if="multiRadioActive() && !identity.is_relay && !identity.hosted" v-model="multi" :identity="identity" class="sm:col-span-2" />
-      <p v-else-if="multiRadioActive() && identity.hosted" class="hint sm:col-span-2">Runs on meshtasticd, which has one radio: it can't be routed across radios.</p>
       <div class="sm:col-span-2">
         <label class="label" for="e-hops">Hop limit cap</label>
         <select id="e-hops" v-model.number="form.hop_limit" class="input">

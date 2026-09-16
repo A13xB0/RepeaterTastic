@@ -1,6 +1,7 @@
 # RepeaterTastic with Docker Compose. Copy to docker-compose.yml, set the modem device, then:
 #   docker compose up -d
-# and open http://<host>:8080 to set the admin password.
+# and open http://<host>:8080 to set the admin password. The image includes meshtasticd, which runs
+# the relay persona and every identity; its API ports (4500 up) stay inside the container.
 services:
   repeatertastic:
     image: ghcr.io/scotmesh/repeatertastic:latest
@@ -24,12 +25,7 @@ services:
       # REPEATERTASTIC_MAP_API_KEY: ...   # your own map tile key instead of the built-in one
       # REPEATERTASTIC_WEB_PORT: "8080"
     volumes:
-      - repeatertastic-data:/data     # config, identity keys and chats: back this up
-
-  # Experimental: relay and identities as real Meshtastic nodes. Build the image with meshtasticd
-  # (docker build --target meshtasticd -t repeatertastic:meshtasticd ..) and use it instead:
-  #   image: repeatertastic:meshtasticd
-  # then set hosted.persona and hosted.identities in the GUI (Configuration → Experimental).
+      - repeatertastic-data:/data     # config, identity keys, chats and node state: back this up
 
 volumes:
   repeatertastic-data:

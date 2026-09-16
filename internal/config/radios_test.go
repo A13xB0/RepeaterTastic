@@ -69,8 +69,9 @@ func TestRadioValidation(t *testing.T) {
 }
 
 func TestHostedConfig(t *testing.T) {
-	c, err := load(t, "hosted: {persona: true, meshtasticd: /usr/local/bin/meshtasticd}\n")
-	if err != nil || !c.Hosted.Persona || c.Hosted.HostedPortBase() != 4500 {
+	// persona and experimental: settings from before every node ran on meshtasticd, ignored
+	c, err := load(t, "hosted: {persona: true, identities: true, meshtasticd: /usr/local/bin/meshtasticd}\nexperimental: {multi_radio_identities: true}\n")
+	if err != nil || c.Hosted.Meshtasticd != "/usr/local/bin/meshtasticd" || c.Hosted.HostedPortBase() != 4500 {
 		t.Fatalf("hosted %+v %v", c.Hosted, err)
 	}
 	for yml, want := range map[string]string{

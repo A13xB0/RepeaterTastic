@@ -1,0 +1,1 @@
+import{et as e}from"./client-C-OlS3Oz.js";var t=e(Date.now());setInterval(()=>t.value=Date.now(),1e3);export{t};

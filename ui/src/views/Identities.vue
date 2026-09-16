@@ -23,10 +23,10 @@ const editing = ref<Identity | null>(null)
 const keyFor = ref<Identity | null>(null)
 const channelsFor = ref<string | null>(null)
 
-// With several radios the list can show this radio's identities or every radio's.
-const multiRadio = computed(() => live.radios.length > 1)
+// With more than one radio the list can show this radio's identities or every radio's.
+const severalRadios = computed(() => live.radios.length > 1)
 const scope = ref<'radio' | 'all'>('radio')
-const source = computed(() => (multiRadio.value && scope.value === 'all' ? live.allIdentities : live.identities))
+const source = computed(() => (severalRadios.value && scope.value === 'all' ? live.allIdentities : live.identities))
 const radioOrder = computed(() => new Map(live.radios.map((r, i) => [r.id, i])))
 const list = computed(() =>
   [...source.value].sort(
@@ -115,11 +115,11 @@ async function remove(i: Identity) {
       <div>
         <h2 class="page-title">Identities</h2>
         <p class="page-sub">
-          {{ source.length }} {{ source.length === 1 ? 'node' : 'nodes' }} {{ multiRadio && scope === 'all' ? `on ${live.radios.length} radios` : 'on this radio' }} · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
+          {{ source.length }} {{ source.length === 1 ? 'node' : 'nodes' }} {{ severalRadios && scope === 'all' ? `on ${live.radios.length} radios` : 'on this radio' }} · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <div v-if="multiRadio" class="tabs-pill flex rounded-lg border border-line-soft p-0.5" role="group" aria-label="Which identities">
+        <div v-if="severalRadios" class="tabs-pill flex rounded-lg border border-line-soft p-0.5" role="group" aria-label="Which identities">
           <button v-for="o in [{ v: 'radio', l: 'This radio' }, { v: 'all', l: 'All radios' }] as const" :key="o.v" type="button"
             :class="['rounded-md px-2.5 py-1 text-xs font-medium', scope === o.v ? 'bg-raised text-ink shadow-sm' : 'text-ink-3 hover:text-ink']"
             :aria-pressed="scope === o.v" @click="scope = o.v">{{ o.l }}</button>
@@ -160,9 +160,8 @@ async function remove(i: Identity) {
                       <CopyButton :text="i.node_id" label="Node id" />
                       <span>· {{ i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
                     </div>
-                    <div v-if="multiRadio" class="mt-1 flex flex-wrap gap-1">
+                    <div v-if="severalRadios" class="mt-1 flex flex-wrap gap-1">
                       <span class="chip bg-ink-3/12 text-ink-2" :title="`Home radio ${i.radio_name}`">{{ i.radio_name }}</span>
-                      <span v-if="(i.radios?.length ?? 1) > 1" class="chip bg-info/12 text-info" :title="`Also on ${i.radios!.slice(1).map((r) => live.radios.find((x) => x.id === r)?.name ?? r).join(', ')} (experimental)`">+{{ i.radios!.length - 1 }} radio{{ i.radios!.length > 2 ? 's' : '' }}</span>
                     </div>
                   </div>
                 </div>

@@ -4,9 +4,13 @@ Guidance for coding agents (and humans) working on RepeaterTastic. Read this bef
 
 ## What this is
 
-A Go daemon that hosts many virtual Meshtastic nodes ("identities") on one or more Mesh KISS LoRa
-modems, with a Vue 3 web GUI embedded in the binary. See `README.md` for the feature tour and
-`docs/api.md` for the HTTP API.
+A Go daemon that bridges one or more Mesh KISS LoRa modems (or a LoRa HAT/USB stick, or a board on
+Meshtastic firmware) to many Meshtastic nodes ("identities"), each a real `meshtasticd` instance the
+daemon starts, seeds with its key and joins to the radio. It doesn't run nodes itself: the host is
+the air bridge, transmit queue, packet log, node database, links and client API; meshtasticd does
+the encrypting, transmitting, relaying and ACKing. A Vue 3 web GUI is embedded in the binary. See
+`README.md` for the feature tour, `docs/architecture.md` for how the host and meshtasticd split the
+work, and `docs/api.md` for the HTTP API.
 
 ## Commands
 
@@ -24,10 +28,15 @@ RT_TEST_MQTT_BROKER=host:1883 go test ./internal/links/mqtt   # MQTT against a r
 
 ## Layout
 
-- `cmd/repeatertastic` daemon entry point (flags, env overrides, radio start-up, federation).
-- `internal/mesh` the stack: receive (dedupe, decrypt, deliver), send (queue, retries, ACKs),
-  relay, identities, node DB, airtime, experimental multi-radio federation (`federation.go`).
-- `internal/phoneapi` the Meshtastic client API each identity serves (TCP stream + HTTP).
+- `cmd/repeatertastic` daemon entry point (flags, env overrides, radio start-up, starting each
+  radio's meshtasticd nodes).
+- `internal/mesh` the host: identities, node DB, transmit queue and duty cycle, receive (dedupe,
+  log, feed the links), site joins for sightings across a mast (`site.go`). It no longer transmits,
+  relays, ACKs or broadcasts NodeInfo/position/telemetry itself — meshtasticd does.
+- `internal/nodes` meshtasticd: launches, seeds and bridges the relay persona and every identity
+  (`hosting.go`, `hosted.go`, `board.go`), health for the status bar (`hosting.go`'s `Health`).
+- `internal/phoneapi` the Meshtastic client API each identity serves (TCP stream + HTTP); packets
+  addressed to the identity itself, admin included, are forwarded to its meshtasticd.
 - `internal/web` REST/SSE API and auth; `server.go` registers routes (`pub`, `setup`, `priv`).
 - `internal/config` YAML config, defaults, validation, `ApplyEnv`.
 - `internal/links/mqtt`, `internal/links/udp`, `internal/site` (several radios on one host).
@@ -43,19 +52,19 @@ RT_TEST_MQTT_BROKER=host:1883 go test ./internal/links/mqtt   # MQTT against a r
   `ChannelSlotDialog.vue` for every channel slot add/edit). Extend it; don't add a second path.
 - **Controls must save.** Every GUI control maps to a config or API field that round-trips; test it
   in `internal/web/*_test.go`.
-- **Multi-radio model (experimental, `experimental.multi_radio_identities`):** every channel slot is
-  on exactly one radio; each identity has a default radio (slot 0 is its primary; new or changed
-  slots use it); DMs use best-heard/default/fixed. A different channel put in a slot resets its radio.
-  With the switch off everything behaves as a single radio. Keep these rules in `federation.go`,
-  the API validation (`handlers.go`) and the GUI in agreement.
+- **No node logic in the host.** `internal/mesh` bridges the radio and keeps the queue, packet log,
+  node DB, links and client API; only meshtasticd (`internal/nodes`) encrypts, transmits, relays or
+  answers on a node's behalf, and there's no fallback — an identity whose meshtasticd can't run
+  stays off air rather than falling back to Go code. Don't add packet-crafting logic back into
+  `internal/mesh`.
 - **Secrets:** never log or print MQTT passwords, private keys, API tokens or the map API key.
   The map key reaches builds only via `-X main.mapAPIKey` / a BuildKit secret, and at run time via
   `REPEATERTASTIC_MAP_API_KEY`. JSON uses `json:"-"` for passwords; keep it that way.
 - **Config files** are written by yaml.v3 with 4-space indentation; don't hand-edit them with
   2-space inserts. Validation lives in `config.Validate`; add new fields there and to
   `deploy/repeatertastic.example.yaml`.
-- **Locks:** don't call into another host (radio) while holding a host's `mu`/`chanMu`; the
-  federation reads identities across hosts.
+- **Locks:** don't call into another host (radio) while holding a host's `mu`/`chanMu`; `site.go`
+  reads identities and node DBs across a mast's hosts.
 - **Protobufs** in `pb` (Meshtastic) and `pluginapi/v1` (plugin API) are generated (`scripts/gen-proto.sh`, `scripts/gen-plugin-proto.sh`); don't edit by hand. Plugin work is described in `docs/plugins.md`.
 
 ## Style

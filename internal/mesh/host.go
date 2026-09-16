@@ -219,17 +219,6 @@ type ChannelRef struct {
 	PublicKey bool
 }
 
-type pendingTx struct {
-	pkt       *pb.MeshPacket // encrypted, as sent
-	origin    *Identity
-	remaining int
-	next      time.Time
-	broadcast bool
-	text      bool
-	index     int      // channel index the packet was sent on (for a fallback on another radio)
-	plain     *pb.Data // payload, for the packet log on retransmits
-}
-
 type chanMember struct {
 	id    *Identity
 	index int
@@ -269,30 +258,20 @@ type Host struct {
 	hist *History
 	txq  *TxQueue
 
-	pmu     sync.Mutex
-	pending map[pktKey]*pendingTx
-
 	linkMu sync.RWMutex
 	tapMu  sync.RWMutex
 	taps   []AirTap
 
 	appliers []ConfigApplier  // under cfgMu
 	hoster   Hoster           // runs identities as real nodes (nil = all here); under mu
-	kept     []IdentityRecord // saved identities not running (a relay persona while a board is the relay); under mu
+	kept     []IdentityRecord // saved identities not running; under mu
 	links    []Link
 
-	started       time.Time
-	nextTelemetry time.Time // run loop only
+	started time.Time
 
-	fed          *Federation // nil unless the site joins its radios (experimental)
-	guestMu      sync.Mutex
-	guestList    []*Identity
-	guestGen     uint64
-	guestOK      bool
-	guestTimers  map[uint32]*guestTimer // run loop only
-	stateDir     string
-	radioOK      atomic.Bool
-	nodeInfoAsks sync.Map // uint32 → time.Time
+	site     atomic.Pointer[Site]
+	stateDir string
+	radioOK  atomic.Bool
 
 	gateMu sync.RWMutex
 	gate   TxGate
@@ -333,7 +312,6 @@ func NewHost(cfg Config, r radio.Radio, log *slog.Logger) (*Host, error) {
 		Messages:  NewMessageStore(1000),
 		hist:      NewHistory(4096, 30*time.Minute),
 		txq:       NewTxQueue(64),
-		pending:   map[pktKey]*pendingTx{},
 		started:   time.Now(),
 		stateDir:  cfg.StateDir,
 	}, nil
@@ -431,7 +409,6 @@ func (h *Host) AddIdentity(id *Identity) error {
 		id.Channels[0].Settings.Name = primary
 		id.Channels[0].Role = pb.Channel_PRIMARY
 	}
-	id.nextNodeInfo = time.Now().Add(30*time.Second + time.Duration(len(h.ids))*20*time.Second)
 	id.mu.Unlock()
 	h.ids[id.NodeNum] = id
 	h.mu.Unlock()
@@ -505,9 +482,6 @@ func (h *Host) ChannelsChanged() {
 	h.chanMu.Lock()
 	h.chanCache = nil
 	h.chanMu.Unlock()
-	if h.fed != nil {
-		h.fed.gen.Add(1) // other radios' guest lists may include this radio's identities
-	}
 }
 
 // Channels lists every distinct channel held by this host's identities.
@@ -550,11 +524,8 @@ func (h *Host) channelGroups(hash uint8) []*chanGroup {
 	if h.chanCache == nil {
 		h.chanCache = map[uint8][]*chanGroup{}
 		display := h.presetDisplay()
-		for _, id := range append(h.Identities(), h.guests()...) {
+		for _, id := range h.Identities() {
 			for _, rc := range id.resolvedChannels(display) {
-				if !h.slotOnThisRadio(id, rc.index) {
-					continue // that slot is on another radio
-				}
 				var g *chanGroup
 				for _, x := range h.chanCache[rc.hash] {
 					if string(x.key) == string(rc.key) && x.aead == rc.aead && x.name == rc.name {
@@ -676,11 +647,6 @@ func (h *Host) timerLoop(ctx context.Context) {
 			if now.Sub(lastSave) > time.Minute {
 				h.RecordOwnPositions()
 			}
-			h.doRetransmissions(now)
-			h.periodicNodeInfo(now)
-			h.periodicPosition(now)
-			h.periodicTelemetry(now)
-			h.periodicGuests(now)
 			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
 				lastSave = now
 				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
@@ -717,7 +683,7 @@ func (h *Host) txLoop(ctx context.Context) {
 			h.Counters.DroppedDuty.Add(1)
 			if !it.relay {
 				if o := h.Identity(it.origin); o != nil {
-					h.nakLocal(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
+					h.failMessage(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
 				}
 			}
 			h.log.Warn("duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
@@ -727,7 +693,7 @@ func (h *Host) txLoop(ctx context.Context) {
 			// Monitor or off: nothing goes on air. Local senders hear why.
 			if !it.relay {
 				if o := h.Identity(it.origin); o != nil && it.plain.GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP {
-					h.nakLocal(o, it.pkt.Id, pb.Routing_NO_INTERFACE)
+					h.failMessage(o, it.pkt.Id, pb.Routing_NO_INTERFACE)
 				}
 			}
 			continue
@@ -750,7 +716,7 @@ func (h *Host) txLoop(ctx context.Context) {
 				h.Counters.DroppedDuty.Add(1)
 				if !it.relay {
 					if o := h.Identity(it.origin); o != nil {
-						h.nakLocal(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
+						h.failMessage(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
 					}
 				}
 				h.log.Warn("site duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
@@ -794,9 +760,9 @@ func (h *Host) txLoop(ctx context.Context) {
 		} else if dec := h.decode(it.pkt); dec.ok {
 			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold
 		}
-		if o := h.identityAny(it.origin); o != nil {
+		if o := h.Identity(it.origin); o != nil {
 			rec.DecodedBy = o.NodeID()
-			if m, ok := h.storeFor(o).SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
+			if m, ok := h.Messages.SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
 				h.publishMessage(o, m)
 			}
 		}
@@ -838,7 +804,7 @@ func (h *Host) SaveIdentities() error {
 }
 
 // KeepRecord keeps a saved identity that isn't running (a relay persona while a board is the
-// radio's relay) so SaveIdentities writes it back.
+// radio's relay, or one whose node couldn't be started) so SaveIdentities writes it back.
 func (h *Host) KeepRecord(r IdentityRecord) {
 	h.mu.Lock()
 	h.kept = append(h.kept, r)
@@ -981,14 +947,6 @@ func (h *Host) dropAllOutgoing(role string) {
 
 func (h *Host) DropOutgoing(num uint32, reason string) int {
 	ids := h.txq.DropOrigin(num)
-	h.pmu.Lock()
-	for k, p := range h.pending {
-		if p.origin != nil && p.origin.NodeNum == num {
-			ids = append(ids, p.pkt.GetId())
-			delete(h.pending, k)
-		}
-	}
-	h.pmu.Unlock()
 	failed := 0
 	for _, pid := range ids {
 		if m, ok := h.Messages.SetStatus(num, pid, "failed", reason); ok {

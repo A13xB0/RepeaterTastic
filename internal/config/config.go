@@ -37,11 +37,9 @@ type Config struct {
 	// top-level radio/mesh/relay/airtime/links/identities above are the "main" radio.
 	Radios []RadioInstance `yaml:"radios,omitempty" json:"radios,omitempty"`
 	Site   Site            `yaml:"site,omitempty" json:"site,omitempty"`
-	// Experimental switches features that may change or go away. All off by default.
-	Experimental Experimental `yaml:"experimental,omitempty" json:"experimental,omitempty"`
 	// Plugins are separate programs that extend RepeaterTastic (docs/plugins.md).
 	Plugins Plugins `yaml:"plugins" json:"plugins"`
-	// Hosted runs nodes as meshtasticd instances RepeaterTastic starts (docs/meshtasticd-nodes.md).
+	// Hosted says how meshtasticd runs the nodes (docs/meshtasticd-nodes.md).
 	Hosted Hosted `yaml:"hosted,omitempty" json:"hosted"`
 
 	path string
@@ -106,23 +104,9 @@ type Position struct {
 	Identities string `yaml:"identities" json:"identities"`
 }
 
-// Experimental holds opt-in features that are still being proven.
-type Experimental struct {
-	// MultiRadioIdentities lets one identity send and receive on several radios, routed by
-	// channel and destination. Set in the web GUI only.
-	MultiRadioIdentities bool `yaml:"multi_radio_identities,omitempty" json:"multi_radio_identities"`
-}
-
-// Hosted configures meshtasticd instances RepeaterTastic runs as real nodes (experimental).
+// Hosted says how RepeaterTastic runs meshtasticd: every radio's relay persona (unless the radio is
+// a Meshtastic board) and identities are meshtasticd instances.
 type Hosted struct {
-	// Persona runs each modem or HAT radio's relay persona as a hosted meshtasticd, sharing the radio
-	// through the air bridge. Board radios keep the board as their persona.
-	Persona bool `yaml:"persona,omitempty" json:"persona"`
-	// Identities runs every other identity as a hosted meshtasticd too, with its saved key, so it
-	// keeps its node number, channels and chats. On a modem or HAT radio it needs Persona (the
-	// identities join the air the persona's radio gives); behind a board it is the only switch.
-	// Identities routed across radios (experimental) stay in RepeaterTastic.
-	Identities bool `yaml:"identities,omitempty" json:"identities"`
 	// Meshtasticd is the binary to run ("" = meshtasticd on PATH). It needs version 2.8 or newer.
 	Meshtasticd string `yaml:"meshtasticd,omitempty" json:"meshtasticd"`
 	// DockerImage runs the instances in Docker from this image instead (API published on

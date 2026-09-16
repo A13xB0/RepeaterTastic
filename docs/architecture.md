@@ -4,32 +4,42 @@
 
 ## How it fits together
 
+RepeaterTastic doesn't run Meshtastic nodes itself. The **host** is an air bridge: it owns the
+radio, the transmit queue and duty cycle, the packet log and node database, browser chat, MQTT/UDP
+links and plugins, and it serves the Meshtastic client API on each identity's app port. The
+**nodes** — the relay persona and every identity — are real Meshtastic firmware: a `meshtasticd`
+RepeaterTastic starts, seeds with the identity's key, and joins to the host's air (`internal/nodes`,
+[meshtasticd nodes](meshtasticd-nodes.md)). meshtasticd does the encrypting, transmitting,
+relaying, ACKing and NodeInfo/position/telemetry broadcasting; the host never does.
+
 ```
-LoRa modem ──USB/KISS── radio driver ── receive pipeline ── mesh host ──┬── identity "Base Camp" ── :4403 (apps, CLI, web client)
-                                         (dedupe, decrypt,   (relay,     ├── identity "Ops Desk"  ── :4404
-                                          deliver)            retries,   ├── relay persona
-                                                              airtime)   └── UDP multicast link (meshtasticd LAN mesh)
-                                                   web GUI + REST/SSE API :8080
+LoRa modem ──USB/KISS── radio driver ── air bridge ── mesh host ──┬── meshtasticd "Base Camp" ── :4403 (apps, CLI, web client)
+                                        (dedupe, log,   (queue,    ├── meshtasticd "Ops Desk"  ── :4404
+                                         node DB)        duty      ├── meshtasticd relay persona
+                                                          cycle)   └── UDP multicast link (meshtasticd LAN mesh)
+                                                  web GUI + REST/SSE API :8080
 ```
 
-- **Receive:**
-  - Each frame is checked against the shared (from, id) history.
-  - DMs addressed to one of our identities are PKI-decrypted with that identity's key.
-  - Everything else is tried against every channel whose hash matches.
-  - The result goes to every identity that holds that channel, at the same time.
-- **Transmit:**
-  - Every identity's packets go through one queue.
-  - The queue uses Meshtastic's contention window, a channel-busy check before each transmission, and the region duty cycle.
-- **Relay:** only the relay persona rebroadcasts, following the firmware's flooding and next-hop rules. N identities never relay the same packet N times.
+- **Receive:** the host decodes each frame only to log it and keep the node database and links
+  current — the node that hears it, over the air bridge, does the actual decrypting, delivering,
+  ACKing and relaying.
+- **Transmit:** every joined node's packets go through one queue, which uses Meshtastic's contention
+  window, a channel-busy check before each transmission, and the region duty cycle.
+- **Relay:** only the relay persona rebroadcasts, following its firmware's flooding and next-hop
+  rules. N identities never relay the same packet N times.
   In `monitor` mode the radio transmits nothing, and in `off` mode it is ignored; sends then fail
   with `NO_INTERFACE`.
-- **Several radios:** each radio is its own mesh host (identities, node DB, queue). `internal/site`
-  makes radios on overlapping frequencies take turns and applies the site airtime cap;
-  `mesh.Federation` joins the hosts for the experimental identities on several radios.
+- **A board radio** (`driver: meshtastic`) keeps the board itself as the relay; its identities still
+  run on meshtasticd, a hop behind it, reached over the board's MQTT client proxy.
+- **Several radios:** each radio is its own mesh host (air bridge, node DB, queue) with its own
+  `nodes.Hosting`. `internal/site` makes radios on overlapping frequencies take turns and applies
+  the site airtime cap; `mesh.JoinSite` lets radios on one mast see each other's identities and node
+  sightings (`GET /nodes/{id}/sightings`).
 - **Links:** UDP multicast and MQTT connections see packets as they're received and sent, and inject
   broker packets into the receive pipeline marked `via_mqtt`.
 - **App API:** each identity listens on its own TCP port with the Meshtastic client protocol
-  (`internal/phoneapi`); the web GUI and scripts use the REST/SSE API on `:8080`.
+  (`internal/phoneapi`); packets addressed to the identity itself, admin included, are forwarded to
+  its meshtasticd. The web GUI and scripts use the REST/SSE API on `:8080`.
 - **Plugins:** separate programs, started by `internal/plugins` or attached over TCP, talk gRPC to
   the Plugin API host. They see bus events their permissions allow, and send through the same queue
   within a per-plugin budget.
@@ -44,7 +54,10 @@ cmd/repeatertastic     daemon
 cmd/kisstool           modem bench tool: info, listen, send-text
 internal/wire          16-byte header, AES-CTR channels, X25519 + AES-CCM DMs, AEAD channels
 internal/phy           regions, presets, frequency slots, airtime, contention window
-internal/mesh          host: receive, relay, reliable delivery, identities, node DB, airtime
+internal/mesh          host: identities, node DB, transmit queue and duty cycle, receive (dedupe,
+                        log, feed the links), site joins for sightings across a mast (site.go)
+internal/nodes         meshtasticd: launches, seeds and bridges the relay persona and every
+                        identity, health for the status bar (see meshtasticd-nodes.md)
 internal/phoneapi      Meshtastic client API: TCP stream + HTTP, config handshake, local admin
 internal/mtclient      Meshtastic client API, client side: drives a board or meshtasticd (see meshtasticd-nodes.md)
 internal/radio         radio interface; kiss (serial), sim (tests), null
@@ -61,8 +74,8 @@ pb/                    generated Meshtastic protobufs (scripts/gen-proto.sh; ven
 ui/                    web GUI (Vue 3 + Vite), built into internal/web/dist
 firmware/              KISS modem patch, board list, build script
 tests/interop          meshtasticd Docker harness + golden vectors
-deploy/                systemd unit, example config, install script, docker-compose example
-Dockerfile             distroless container image
+deploy/                systemd unit, example config, install script (sets up meshtasticd too), docker-compose example
+Dockerfile             container image: the official meshtasticd image, with repeatertastic added
 ```
 
 ## Development

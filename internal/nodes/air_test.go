@@ -37,7 +37,7 @@ type airRig struct {
 }
 
 // newAirRig runs a host on a sim radio whose LoRa air has one joined node (a fake hosted persona)
-// and one virtual identity, plus a second radio ("far") that stands for the rest of the mesh.
+// and one identity with no node (ops: its frames are queued by hand), plus a second radio ("far") that stands for the rest of the mesh.
 func newAirRig(t *testing.T) *airRig {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -91,6 +91,17 @@ func newAirRig(t *testing.T) *airRig {
 	}
 	eventually(t, "air bridge registered", func() bool { return len(air.snapshot()) == 1 })
 	return &airRig{ctx: ctx, air: air, personaNode: n, h: h, node: node, persona: persona, ops: ops, far: far}
+}
+
+// opsSend puts a channel text from the ops identity on air through the host's queue, as a hosted
+// node's transmission would go.
+func (r *airRig) opsSend(t *testing.T, text string) uint32 {
+	t.Helper()
+	p := channelPacket(r.ops.NodeNum, wire.RandomPacketID(), 3, text)
+	if err := r.h.QueueHosted(p, nil, r.ops.NodeNum); err != nil {
+		t.Fatal(err)
+	}
+	return p.Id
 }
 
 func channelPacket(from, id uint32, hop uint32, text string) *pb.MeshPacket {
@@ -178,10 +189,7 @@ func TestAirHostedTransmits(t *testing.T) {
 		t.Fatal("frame addressed to node 0 transmitted")
 	}
 	// Everything the host sends reaches the joined nodes at hop 0: they don't repeat it.
-	pid, err := r.h.SendText(r.ops, wire.Broadcast, 0, "from ops", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pid := r.opsSend(t, "from ops")
 	eventually(t, "persona hears ops", func() bool {
 		return len(r.injected(func(p *pb.MeshPacket, c *pb.Compressed) bool {
 			return p.Id == pid && p.HopLimit == 0 && p.HopStart == 0 && p.GetRxRssi() == loopRSSI && c.Portnum == pb.PortNum_UNKNOWN_APP
@@ -216,15 +224,7 @@ func TestAirHeardAndRelayed(t *testing.T) {
 	if env.From != neighbourNum || env.Channel != longFastHash || env.HopLimit != 3 || env.HopStart != 3 || env.GetRxRssi() == 0 || env.RxTime == nil {
 		t.Fatalf("envelope %v", env)
 	}
-	// The host's virtual identity got it too, but the host doesn't relay: the persona does.
-	eventually(t, "ops message", func() bool {
-		for _, m := range r.h.Messages.List(r.ops.NodeNum, r.ops.NodeID(), "", 0, 10) {
-			if m.Text == "from afar" {
-				return true
-			}
-		}
-		return false
-	})
+	// The host doesn't relay: the persona does.
 	// The persona relays it (decoded in its envelope, relay byte set): the original bytes go out.
 	// Like SimRadio, the relay's envelope keeps the RSSI and SNR the packet was heard with.
 	r.node.Push(simTX(&pb.MeshPacket{From: neighbourNum, To: wire.Broadcast, Id: 2001, HopLimit: 2, HopStart: 3, RelayNode: 0x01,
@@ -291,19 +291,13 @@ func eventually(t *testing.T, what string, cond func() bool) {
 
 func TestAirJoinLeave(t *testing.T) {
 	r := newAirRig(t)
-	pid, err := r.h.SendText(r.ops, wire.Broadcast, 0, "before leave", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pid := r.opsSend(t, "before leave")
 	eventually(t, "heard while joined", func() bool {
 		return len(r.injected(func(p *pb.MeshPacket, _ *pb.Compressed) bool { return p.Id == pid })) == 1
 	})
 	r.air.Leave(r.personaNode)
 	eventually(t, "node off the air", func() bool { return len(r.air.snapshot()) == 0 })
-	pid, err = r.h.SendText(r.ops, wire.Broadcast, 0, "after leave", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pid = r.opsSend(t, "after leave")
 	r.farFrame(t, func(p *pb.MeshPacket) bool { return p.Id == pid }) // it went on air...
 	if n := len(r.injected(func(p *pb.MeshPacket, _ *pb.Compressed) bool { return p.Id == pid })); n != 0 {
 		t.Fatal("...but a node that left still heard it")

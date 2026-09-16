@@ -36,8 +36,7 @@ const relayInstance = computed(() => instances.value.find((x) => x.role === 'per
 
 function runsOn(i: Identity) {
   const x = byNode.value.get(i.node_id)
-  if (!i.real_node) return { text: i.multi_radio ? 'RepeaterTastic (routed across radios)' : 'RepeaterTastic', state: '' }
-  if (!x) return { text: 'meshtasticd', state: 'starting' }
+  if (!x) return { text: 'meshtasticd', state: 'not started' }
   return { text: `meshtasticd ${x.firmware || ''}`.trim(), state: x.connected ? 'running' : x.running ? 'starting' : 'stopped' }
 }
 </script>
@@ -47,7 +46,7 @@ function runsOn(i: Identity) {
     <div>
       <div class="flex items-center justify-between gap-2">
         <span class="label !mb-0">Relay</span>
-        <span v-if="relayInstance" :class="['chip', relayInstance.connected ? 'bg-ok/14 text-ok' : 'bg-warn/15 text-warn']">{{ relayInstance.connected ? 'running' : 'starting' }}</span>
+        <span v-if="relayInstance" :class="['chip', relayInstance.connected ? 'bg-ok/14 text-ok' : relayInstance.restarts ? 'bg-bad/12 text-bad' : 'bg-warn/15 text-warn']">{{ relayInstance.connected ? 'running' : relayInstance.restarts ? 'down' : 'starting' }}</span>
       </div>
       <div v-if="relay" class="mt-1.5 rounded-xl border border-line-soft px-3.5 py-2.5 text-[13px]">
         <div class="flex flex-wrap items-baseline gap-x-2">
@@ -63,7 +62,7 @@ function runsOn(i: Identity) {
           RepeaterTastic gives it its saved key and sets its region, preset and role from this page.
           <span v-if="relayInstance.last_error" class="text-warn">Last stop: {{ relayInstance.last_error }}</span>
         </p>
-        <p v-else class="mt-1 text-xs text-ink-3">Runs inside RepeaterTastic. Configuration → Experimental can move it to meshtasticd.</p>
+        <p v-else class="mt-1 text-xs text-bad">Its meshtasticd isn't running. Configuration → meshtasticd says why.</p>
       </div>
       <div v-else-if="!loaded" class="mt-1.5 h-14 animate-pulse rounded-xl bg-sunken" />
     </div>

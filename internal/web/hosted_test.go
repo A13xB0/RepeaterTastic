@@ -31,21 +31,14 @@ func (f *fakeRemote) ApplyConfig(context.Context, mesh.Config) error {
 	return nil
 }
 
-// fakeHoster hosts every identity that isn't the relay or routed across radios.
+// fakeHoster hosts every identity on a node that takes everything.
 type fakeHoster struct {
 	mu       sync.Mutex
 	unhosted []uint32
 	remote   *fakeRemote
 }
 
-func (x *fakeHoster) Takes(rec mesh.IdentityRecord) bool {
-	return !rec.IsRelay && rec.MultiRadio == nil
-}
-
 func (x *fakeHoster) HostIdentity(_ context.Context, h *mesh.Host, rec mesh.IdentityRecord) (*mesh.Identity, error) {
-	if !x.Takes(rec) {
-		return nil, mesh.ErrRunHere
-	}
 	st, err := mesh.RecordState(rec)
 	if err != nil {
 		return nil, err
@@ -105,13 +98,10 @@ func TestHostedIdentities(t *testing.T) {
 	if hs.remote.admins == 0 {
 		t.Fatal("settings not pushed to the node")
 	}
-	if code, _, _ := call(t, srv, "PATCH", "/api/v1/identities/"+node, tok, map[string]any{"multi_radio": map[string]any{"default_radio": "mf"}}); code != 409 {
-		t.Fatalf("multi-radio routing accepted for a hosted identity: %d", code)
-	}
 
-	// Moving it to a radio without meshtasticd runs it there, with the same number.
+	// Moving it to another radio runs it on that radio's meshtasticd, with the same number.
 	code, m, _ := call(t, srv, "POST", "/api/v1/identities/"+node+"/move", tok, map[string]any{"radio_id": "mf"})
-	if code != 200 || m["node_id"] != node || m["hosted"] != false || m["hop_limit"] != float64(2) {
+	if code != 200 || m["node_id"] != node || m["hosted"] != true || m["hop_limit"] != float64(2) {
 		t.Fatalf("move %d %v", code, m)
 	}
 	if len(hs.unhosted) != 1 {
@@ -128,11 +118,11 @@ func TestHostedIdentities(t *testing.T) {
 		t.Fatalf("the node wasn't stopped on delete: %v", hs.unhosted)
 	}
 
-	// Turning identities on checks meshtasticd can run first.
-	if code, _, _ := call(t, srv, "PUT", "/api/v1/hosted", tok, map[string]any{"identities": true, "meshtasticd": "/nonexistent/meshtasticd"}); code != 400 {
-		t.Fatalf("identities without a working meshtasticd accepted: %d", code)
+	// Choosing a meshtasticd checks it can run first.
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/hosted", tok, map[string]any{"meshtasticd": "/nonexistent/meshtasticd"}); code != 400 {
+		t.Fatalf("a meshtasticd that can't run accepted: %d", code)
 	}
-	if _, h, _ := call(t, srv, "GET", "/api/v1/hosted", tok, nil); h["identities"] != false {
+	if _, h, _ := call(t, srv, "GET", "/api/v1/hosted", tok, nil); h["meshtasticd"] != "" {
 		t.Fatalf("hosted = %v", h)
 	}
 }
