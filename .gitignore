@@ -9,3 +9,6 @@
 /tests/interop/.venv/
 /ui/dist/
 /ui/node_modules/
+
+# local scratch tools
+zz-*/
