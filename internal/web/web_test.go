@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -218,5 +219,26 @@ func TestPasswordChangeKeepsThisSessionAndSignOutEverywhere(t *testing.T) {
 	}
 	if code, _, _ := call(t, srv, "GET", "/api/v1/status", fresh, nil); code != 401 {
 		t.Fatalf("session still valid after signing out everywhere: %d", code)
+	}
+}
+
+func TestSetupProbeTCP(t *testing.T) {
+	srv := testWeb(t)
+	// Nothing listens on this loopback port: the probe runs and reports the failure.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := "tcp://" + ln.Addr().String()
+	ln.Close()
+	if code, obj, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"device": dead}); code != 200 || obj["ok"] != false ||
+		!strings.Contains(obj["error"].(string), "no modem answered") {
+		t.Fatalf("loopback probe: %d %v", code, obj)
+	}
+	// Before a password is set the probe won't reach other hosts, or take a malformed address.
+	for _, dev := range []string{"tcp://192.0.2.1:4405", "tcp://127.0.0.1"} {
+		if code, obj, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"device": dev}); code != 400 {
+			t.Fatalf("%s: %d %v", dev, code, obj)
+		}
 	}
 }

@@ -1,5 +1,6 @@
 // Package kiss drives a MeshCore KISS modem (with RepeaterTastic's sync word / preamble patch)
-// as a radio.Radio over a serial link.
+// as a radio.Radio over a serial link, or over TCP when the device is tcp://host:port (meshtasticd's
+// raw modem mode speaks the same protocol).
 //
 // One reader goroutine per connection deframes everything the modem sends. SetHardware requests
 // are serialised and matched to their reply sub-command; TxDone, RxMeta and received Data frames
@@ -33,11 +34,14 @@ const firmwareHint = "flash firmware/out/Heltec_v3_kiss_modem-factory.bin (see f
 
 // Options configures Open. Zero values pick the defaults noted on each field.
 type Options struct {
-	Device string // serial device, e.g. /dev/ttyUSB0
-	Baud   int    // default 115200
+	Device string // serial device, e.g. /dev/ttyUSB0, or tcp://host:port
+	Baud   int    // default 115200; unused over TCP
 
-	// Dial opens the transport; default opens Device at Baud. Tests substitute a fake modem.
+	// Dial opens the transport; default opens Device at Baud, or connects to a tcp:// Device.
+	// Tests substitute a fake modem.
 	Dial func() (io.ReadWriteCloser, error)
+
+	DialTimeout time.Duration // TCP connect timeout, default 5s
 
 	ReconnectInterval time.Duration // default 2s
 	CommandTimeout    time.Duration // per attempt, default 1s
@@ -114,13 +118,22 @@ func Open(ctx context.Context, o Options) (*Modem, error) {
 			return nil, errors.New("kiss: no device")
 		}
 		dev, baud := o.Device, o.Baud
-		o.Dial = func() (io.ReadWriteCloser, error) { return dialSerial(dev, baud) }
+		addr, isTCP, err := TCPAddr(dev)
+		if err != nil {
+			return nil, err
+		}
+		if isTCP {
+			o.Dial = func() (io.ReadWriteCloser, error) { return dialTCP(addr, o.DialTimeout) }
+		} else {
+			o.Dial = func() (io.ReadWriteCloser, error) { return dialSerial(dev, baud) }
+		}
 	}
 	def := func(d *time.Duration, v time.Duration) {
 		if *d <= 0 {
 			*d = v
 		}
 	}
+	def(&o.DialTimeout, 5*time.Second)
 	def(&o.ReconnectInterval, 2*time.Second)
 	def(&o.CommandTimeout, time.Second)
 	def(&o.HandshakeTimeout, 5*time.Second)

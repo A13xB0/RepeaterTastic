@@ -34,7 +34,7 @@ commands:
   send-text [flags] TEXT   broadcast a text message on the preset's default channel
   boards                   list the built-in meshtasticd board files for --board
 
-common flags: --dev /dev/ttyUSB0 --baud 115200
+common flags: --dev /dev/ttyUSB0 (or tcp://host:port) --baud 115200
   or --board BOARD for a LoRa chip on SPI or a CH341 USB adapter (experimental): a meshtasticd
      board file path, a built-in board name (kisstool boards), or auto to detect
 PHY flags (listen, send-text): --region EU_868 --preset LONG_FAST --power 10
@@ -49,7 +49,7 @@ func main() {
 	cmd := os.Args[1]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	dev := fs.String("dev", "/dev/ttyUSB0", "serial device")
+	dev := fs.String("dev", "/dev/ttyUSB0", "serial device, or tcp://host:port for meshtasticd's raw modem mode")
 	baud := fs.Int("baud", 115200, "baud rate")
 	board := fs.String("board", "", "meshtasticd board (file, built-in name or auto): use a LoRa chip on SPI/CH341 instead of a KISS modem")
 	region := fs.String("region", "EU_868", "Meshtastic region")

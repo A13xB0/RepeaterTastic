@@ -58,6 +58,12 @@ func (f *fakeModem) dial() (io.ReadWriteCloser, error) {
 		return nil, errors.New("open /dev/ttyUSB0: no such file or directory")
 	}
 	host, dev := net.Pipe()
+	f.bootLocked(dev)
+	return host, nil
+}
+
+// bootLocked attaches a new connection as a freshly booted modem and serves it.
+func (f *fakeModem) bootLocked(dev net.Conn) {
 	f.conn = dev
 	f.dials++
 	f.freq, f.bw, f.sf, f.cr, f.power = 0, 0, 0, 0, 0
@@ -65,7 +71,6 @@ func (f *fakeModem) dial() (io.ReadWriteCloser, error) {
 	f.txPending = false
 	f.cmdCount = map[byte]int{}
 	go f.serve(dev)
-	return host, nil
 }
 
 func (f *fakeModem) unplug() {
@@ -535,5 +540,105 @@ func TestOpenFailsAndClose(t *testing.T) {
 	}
 	if err := m.Send(ctx, []byte{1}); !errors.Is(err, radio.ErrNotConnected) {
 		t.Fatalf("send after close: %v", err)
+	}
+}
+
+// ------------------------------------------------------------------------------------------ tcp
+
+// listenFake serves f on a loopback TCP listener (as meshtasticd's raw modem mode does), each
+// accepted connection being a fresh boot. addr "" picks a free port.
+func listenFake(t *testing.T, f *fakeModem, addr string) net.Listener {
+	t.Helper()
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			f.mu.Lock()
+			f.bootLocked(c)
+			f.mu.Unlock()
+		}
+	}()
+	return ln
+}
+
+func TestTCP(t *testing.T) {
+	f := newFake()
+	ln := listenFake(t, f, "")
+	dev := "tcp://" + ln.Addr().String()
+	m := openFake(t, f, func(o *Options) { o.Device, o.Dial = dev, nil })
+	if in := m.Info(); in.Device != dev || in.Firmware != "Mesh KISS v2" {
+		t.Fatalf("info %+v", in)
+	}
+	if err := m.Configure(ctx, longFast); err != nil {
+		t.Fatal(err)
+	}
+	f.receive([]byte{0xC0, 0xDB, 0x01}, true, -8, -100)
+	if fr := nextFrame(t, m); !bytes.Equal(fr.Data, []byte{0xC0, 0xDB, 0x01}) || fr.SNR != -2 || fr.RSSI != -100 {
+		t.Fatalf("frame %+v", fr)
+	}
+	if err := m.Send(ctx, []byte{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+
+	// meshtasticd restarts: the connection drops and the port refuses until it is back.
+	addr := ln.Addr().String()
+	ln.Close()
+	f.get(func() { f.conn.Close() })
+	waitFor(t, "disconnect", func() bool { return !m.Stats(ctx).Connected })
+	time.Sleep(60 * time.Millisecond) // a few refused dials
+	listenFake(t, f, addr)
+	waitFor(t, "reconnect", func() bool { st := m.Stats(ctx); return st.Connected && st.Reconnects == 1 })
+	f.get(func() {
+		if f.dials != 2 || f.sync != 0x2B || f.preamble != 16 || f.freq != longFast.FrequencyHz {
+			t.Fatalf("config not re-applied: %+v", f)
+		}
+	})
+}
+
+func TestTCPAddr(t *testing.T) {
+	for dev, want := range map[string]string{
+		"tcp://127.0.0.1:4405": "127.0.0.1:4405",
+		"tcp://[::1]:4405":     "[::1]:4405",
+		"tcp://pi.local:4405":  "pi.local:4405",
+	} {
+		if got, ok, err := TCPAddr(dev); !ok || err != nil || got != want {
+			t.Errorf("TCPAddr(%q) = %q %v %v", dev, got, ok, err)
+		}
+	}
+	for _, dev := range []string{"tcp://127.0.0.1", "tcp://:4405", "tcp://"} {
+		if _, ok, err := TCPAddr(dev); !ok || err == nil {
+			t.Errorf("TCPAddr(%q) accepted", dev)
+		}
+		if _, err := Open(ctx, Options{Device: dev}); err == nil {
+			t.Errorf("Open(%q) accepted", dev)
+		}
+	}
+	if _, ok, _ := TCPAddr("/dev/ttyUSB0"); ok {
+		t.Error("serial path taken for tcp")
+	}
+}
+
+// FESC FESC TFEND: the second FESC is an invalid escaped byte and is dropped, and TFEND is then a
+// literal 0xDC, matching the modem firmware's deframer.
+func TestDecoderConsecutiveFESC(t *testing.T) {
+	var d decoder
+	var got []byte
+	for _, b := range []byte{fend, 0x00, fesc, fesc, tfend, fend} {
+		if f := d.feed(b); f != nil {
+			got = append([]byte(nil), f...)
+		}
+	}
+	if string(got) != "\x00\xdc" {
+		t.Fatalf("decoded %x, want 00dc", got)
 	}
 }
