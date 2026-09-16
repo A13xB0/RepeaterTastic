@@ -122,7 +122,6 @@ Docker) bakes in a default map tile key; see [Configuration](docs/configuration.
 | Guide | What's in it |
 | --- | --- |
 | [Hardware and modems](docs/hardware.md) | Supported boards, flashing Mesh KISS, stable device paths, permissions, Docker devices, `kisstool`, troubleshooting |
-| [meshtasticd as the modem](docs/meshtasticd-raw-modem.md) | Using a radio through meshtasticd's raw modem mode (`device: tcp://…`); behind an experimental switch until that mode lands upstream |
 | [LoRa HATs and USB sticks](docs/spi-radio-testing.md) | Driving a Pi HAT or CH341 stick directly (`radio.driver: spi`): supported boards, setup, and how to test one |
 | [Configuration](docs/configuration.md) | The config file section by section, environment variables, what applies live, backups |
 | [Using the web GUI](docs/web-gui.md) | Identities, chat, channels, nodes and map, packets, statistics, configuration tabs |

@@ -37,7 +37,6 @@ export const live = reactive({
   allIdentities: [] as Identity[],
   /** Experimental: identities on several radios is switched on. */
   multiRadioIdentities: false,
-  meshtasticdRawModem: false,
   /** Radios added in the config that start at the next restart. */
   pendingRadios: [] as { id: string; name: string; preset?: string }[],
 })
@@ -88,9 +87,8 @@ export async function refreshRadios() {
     live.radios = r.radios
     live.site = r.site
     live.pendingRadios = (r.pending ?? []).filter((p) => p.action === 'start').map((p) => ({ id: p.id, name: p.name, preset: p.preset }))
-    api.get<{ multi_radio_identities: boolean; meshtasticd_raw_modem: boolean }>('/experimental').then((x) => {
+    api.get<{ multi_radio_identities: boolean }>('/experimental').then((x) => {
       live.multiRadioIdentities = x.multi_radio_identities
-      live.meshtasticdRawModem = x.meshtasticd_raw_modem
     }, () => {})
     // A remembered radio that no longer exists falls back to the main one.
     if (radio.value !== 'main' && !r.radios.some((x) => x.id === radio.value)) setRadio('main')

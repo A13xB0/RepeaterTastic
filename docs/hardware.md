@@ -10,8 +10,7 @@ dumb modem: it sends and receives frames, and all the Meshtastic logic runs on t
 
 A Linux LoRa HAT or CH341 USB stick can be the radio too, with no modem board: RepeaterTastic
 drives the chip itself (`radio.driver: spi`), see [LoRa HATs and USB sticks](#lora-hats-and-usb-sticks)
-below. The same hardware can also be reached through meshtasticd's raw modem mode, behind an
-experimental switch until that mode is merged upstream: [meshtasticd as the modem](meshtasticd-raw-modem.md).
+below.
 
 ## Boards
 

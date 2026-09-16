@@ -2,7 +2,7 @@
 // Setup wizard: modem → radio → relay → admin password → review.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Check, CircleAlert, CircuitBoard, CircleCheck, RefreshCw, Server, Usb } from '@lucide/vue'
+import { Check, CircleAlert, CircuitBoard, CircleCheck, RefreshCw, Usb } from '@lucide/vue'
 import { request, setToken } from '@/api/client'
 import type { Board, Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/types'
 import BoardSelect from '@/components/config/BoardSelect.vue'
@@ -89,23 +89,9 @@ function pickManual() {
   device.value = manualPort.value.trim()
 }
 watch(device, (v) => {
-  // picking a listed port, meshtasticd or a board leaves manual mode
+  // picking a listed port or a board leaves manual mode
   if (usingManual.value && v !== manualPort.value.trim()) usingManual.value = false
 })
-
-// meshtasticd's radio served as a raw KISS modem over TCP (General: RawModemPort).
-const mtdAllowed = ref(false) // experimental.meshtasticd_raw_modem, read from /setup
-const mtdHost = ref('127.0.0.1')
-const mtdPort = ref(4405)
-const mtdDevice = computed(() => `tcp://${mtdHost.value.trim()}:${mtdPort.value}`)
-const usingMtd = computed(() => device.value.startsWith('tcp://'))
-watch(mtdDevice, (v) => {
-  if (usingMtd.value) device.value = v
-})
-function pickMtd() {
-  driver.value = 'kiss'
-  device.value = mtdDevice.value
-}
 
 let previewSeq = 0
 async function preview() {
@@ -122,9 +108,6 @@ watch([region, preset, primary], preview)
 
 onMounted(async () => {
   loadPorts()
-  get<{ meshtasticd_raw_modem: boolean }>('/setup')
-    .then((x) => (mtdAllowed.value = x.meshtasticd_raw_modem))
-    .catch(() => {})
   get<Board[]>('/boards')
     .then((b) => (boards.value = b))
     .catch(() => {
@@ -220,7 +203,7 @@ async function finish() {
           <section v-if="step === 0">
             <h2 class="text-base font-semibold tracking-tight">Connect the modem</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch){{ mtdAllowed ? ", meshtasticd's radio served as a raw modem," : '' }} or a LoRa board RepeaterTastic drives itself. We'll ping it and check it accepts sync word 0x2B.
+              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch) or a LoRa board RepeaterTastic drives itself. We'll ping it and check it accepts sync word 0x2B.
             </p>
             <div class="mt-4 space-y-2">
               <label
@@ -248,20 +231,6 @@ async function finish() {
                   </div>
                 </label>
                 <input v-if="usingManual" id="setup-serial" v-model="manualPort" class="input h-8 mono mt-2.5 ml-7 w-[calc(100%-1.75rem)] text-xs" placeholder="/dev/ttyUSB0" spellcheck="false" aria-label="Serial port" />
-              </div>
-              <div v-if="mtdAllowed" :class="['rounded-xl border px-3.5 py-3 transition-colors', usingMtd ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
-                <label class="flex cursor-pointer items-center gap-3">
-                  <input type="radio" :checked="usingMtd" class="accent-[var(--brand)]" @change="pickMtd" />
-                  <Server class="size-4 shrink-0 text-ink-3" />
-                  <div class="min-w-0">
-                    <div class="text-[13px] font-medium">meshtasticd raw modem</div>
-                    <div class="text-2xs text-ink-3">A Pi HAT or USB stick run by meshtasticd with <span class="mono">RawModemPort</span> set</div>
-                  </div>
-                </label>
-                <div v-if="usingMtd" class="mt-2.5 grid grid-cols-[1fr_6rem] gap-2 pl-7">
-                  <input v-model="mtdHost" class="input h-8 mono text-xs" aria-label="meshtasticd host" placeholder="127.0.0.1" spellcheck="false" />
-                  <input v-model.number="mtdPort" type="number" min="1" max="65535" class="input h-8 mono text-xs" aria-label="Raw modem port" />
-                </div>
               </div>
               <div :class="['rounded-xl border px-3.5 py-3 transition-colors', usingBoard ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
                 <label class="flex cursor-pointer items-center gap-3">
@@ -292,7 +261,7 @@ async function finish() {
                 </ul>
               </div>
               <div v-else>
-                <div class="font-medium">{{ usingBoard ? 'The board didn’t answer' : usingMtd ? 'meshtasticd didn’t answer as a raw modem' : 'No modem on this port' }}</div>
+                <div class="font-medium">{{ usingBoard ? 'The board didn’t answer' : 'No modem on this port' }}</div>
                 <div class="text-ink-2">{{ probe.error }}</div>
               </div>
             </div>

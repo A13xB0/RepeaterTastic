@@ -479,21 +479,8 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, res)
 		return
 	}
-	if addr, isTCP, err := kiss.TCPAddr(req.Device); isTCP {
-		s.cfgMu.Lock()
-		allowed := s.cfg.Experimental.MeshtasticdRawModem
-		s.cfgMu.Unlock()
-		if !allowed {
-			writeError(w, http.StatusBadRequest, "meshtasticd as the modem is off: turn on experimental.meshtasticd_raw_modem first")
-			return
-		}
-		// meshtasticd in raw modem mode. Before a password exists, don't let the probe reach other hosts.
-		if err != nil || (s.auth.SetupNeeded() && !loopbackAddr(addr)) {
-			writeError(w, http.StatusBadRequest, "device must be tcp://host:port, and on this machine until a password is set")
-			return
-		}
-	} else if !serialPath(req.Device) {
-		writeError(w, http.StatusBadRequest, "device must be a serial port such as /dev/ttyUSB0 or /dev/serial/by-id/…, or tcp://host:port")
+	if !serialPath(req.Device) {
+		writeError(w, http.StatusBadRequest, "device must be a serial port such as /dev/ttyUSB0 or /dev/serial/by-id/…")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -968,19 +955,6 @@ func (s *Server) mapKeySource() string {
 		return "none"
 	}
 	return s.opt.MapKeySource
-}
-
-// loopbackAddr reports whether host:port names this machine.
-func loopbackAddr(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // serialPath limits the setup probe (reachable before a password is set) to serial devices.

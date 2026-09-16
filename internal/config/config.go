@@ -15,7 +15,6 @@ import (
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
-	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
@@ -108,9 +107,6 @@ type Experimental struct {
 	// MultiRadioIdentities lets one identity send and receive on several radios, routed by
 	// channel and destination. Set in the web GUI only.
 	MultiRadioIdentities bool `yaml:"multi_radio_identities,omitempty" json:"multi_radio_identities"`
-	// MeshtasticdRawModem allows radio.device tcp://host:port: meshtasticd serving its radio as a
-	// raw modem. Off until that mode lands upstream (meshtastic/firmware#11863).
-	MeshtasticdRawModem bool `yaml:"meshtasticd_raw_modem,omitempty" json:"meshtasticd_raw_modem"`
 }
 
 // Site holds settings shared by every radio on the mast.
@@ -214,9 +210,7 @@ func (c *Config) validateRadios() error {
 		}
 		if (rc.Radio.Driver == "kiss" || rc.Radio.Driver == "spi") && rc.Radio.Device != "" {
 			dev := rc.Radio.Device
-			if addr, ok, _ := kiss.TCPAddr(dev); ok {
-				dev = kiss.TCPScheme + strings.ToLower(addr) // one meshtasticd serves one client
-			} else if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
+			if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
 				dev = real
 			}
 			if other, ok := seenDev[dev]; ok {
@@ -625,15 +619,6 @@ func (c *Config) validateOne() error {
 		}
 	default:
 		return fmt.Errorf("radio.driver must be kiss, spi or none, not %q", c.Radio.Driver)
-	}
-	if c.Radio.Driver == "kiss" {
-		_, isTCP, err := kiss.TCPAddr(c.Radio.Device)
-		if err != nil {
-			return fmt.Errorf("radio.device: %w", err)
-		}
-		if isTCP && !c.Experimental.MeshtasticdRawModem {
-			return errors.New("radio.device tcp://… (meshtasticd as the modem) needs experimental.meshtasticd_raw_modem: true")
-		}
 	}
 	if name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel)); name != "" && name != "AUTO" {
 		if _, ok := pb.HardwareModel_value[name]; !ok {
