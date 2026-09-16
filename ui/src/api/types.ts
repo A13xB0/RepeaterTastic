@@ -297,6 +297,8 @@ export interface Region {
 
 /** GET /boards: a LoRa board the experimental spi driver can run; `id` goes in radio.device. */
 export interface Board {
+  host: string
+  file: string
   id: string
   name: string
   module: string

@@ -28,7 +28,10 @@ var errAutoModule = errors.New("Lora.Module is auto")
 // Board is a LoRa radio wired to a Linux board, described the way meshtasticd describes it in
 // /etc/meshtasticd/config.d/lora-*.yaml.
 type Board struct {
-	Name     string  // Meta.name
+	Name string // Meta.name
+	// Hosts is Meta.compatible: the computers this file is for (raspberry-pi, luckfox-lyra-zero-w,
+	// usb…). The same HAT has one file per host, so this is what tells them apart.
+	Hosts    []string
 	Module   string  // one of the Module* constants
 	SPIDev   string  // spidev0.0 (the /dev/ prefix is optional); unused for USB
 	SPISpeed uint32  // Hz, default 2 MHz
@@ -135,6 +138,13 @@ func ParseBoard(data []byte) (Board, error) {
 	b := Board{SPIDev: "spidev0.0", SPISpeed: 2_000_000}
 	if n, ok := doc.Meta["name"]; ok {
 		b.Name = n.Value
+	}
+	if n, ok := doc.Meta["compatible"]; ok && n.Kind == yaml.SequenceNode {
+		for _, item := range n.Content {
+			if v := strings.TrimSpace(item.Value); v != "" {
+				b.Hosts = append(b.Hosts, v)
+			}
+		}
 	}
 	str := func(key string) string {
 		n, ok := doc.Lora[key]

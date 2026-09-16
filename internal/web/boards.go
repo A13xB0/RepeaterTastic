@@ -18,6 +18,8 @@ type boardEntry struct {
 	Name      string `json:"name"`
 	Module    string `json:"module"`
 	Bus       string `json:"bus"`    // spidev0.0, usb
+	Host      string `json:"host"`   // the computer the file is for: Raspberry Pi, Luckfox Lyra Zero W, USB…
+	File      string `json:"file"`   // the board file name
 	Source    string `json:"source"` // auto, config.d, available.d, built-in
 	Supported bool   `json:"supported"`
 	Error     string `json:"error"`
@@ -48,7 +50,7 @@ func listBoards() []boardEntry {
 }
 
 func boardEntryFor(id, file, source string, b spi.Board, err error) boardEntry {
-	e := boardEntry{ID: id, Name: b.Name, Module: b.Module, Source: source, Supported: err == nil}
+	e := boardEntry{ID: id, Name: b.Name, Module: b.Module, Source: source, Supported: err == nil, File: file, Host: hostLabel(b.Hosts)}
 	if e.Name == "" {
 		e.Name = strings.TrimSuffix(strings.TrimPrefix(file, "lora-"), ".yaml")
 	}
@@ -77,4 +79,24 @@ func boardRef(device string) bool {
 		}
 	}
 	return false
+}
+
+// hostLabel turns Meta.compatible slugs into a label: raspberry-pi → Raspberry Pi, usb → USB.
+func hostLabel(hosts []string) string {
+	var out []string
+	for _, h := range hosts {
+		words := strings.Split(h, "-")
+		for i, w := range words {
+			switch strings.ToLower(w) {
+			case "usb", "pge", "w":
+				words[i] = strings.ToUpper(w)
+			default:
+				if w != "" {
+					words[i] = strings.ToUpper(w[:1]) + w[1:]
+				}
+			}
+		}
+		out = append(out, strings.Join(words, " "))
+	}
+	return strings.Join(out, ", ")
 }
