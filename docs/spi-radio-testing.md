@@ -144,9 +144,10 @@ EOF
 ~/repeatertastic-linux-arm64 -config config.yaml      # wherever you downloaded it
 ```
 
-Open `http://<pi>:8080` and go through setup. The first step asks for a serial port: pick any, and
-skip "Test modem" (it only knows USB modems). An `spi` radio keeps the board file from
-`config.yaml`. Then check:
+Open `http://<pi>:8080` and go through setup. In the first step choose "LoRa board on SPI or a
+USB stick" and pick your board (or leave it on "Detect automatically"); "Test modem" opens the
+board and shows the chip's version and mode. Once set up, the same choice is under Configuration
+→ Radios → Edit radio. Then check:
 
 - the top bar shows `spi · MeshAdv-900M30S` (your board);
 - nodes appear on the Nodes page within about 15 minutes;

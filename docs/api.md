@@ -50,21 +50,32 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
 | Method and path | Auth | Body → response |
 | --- | --- | --- |
 | `GET /setup` | none | → `{"needed": true}` while no admin password exists |
-| `POST /setup` | none | `{"password", "region", "preset", "primary_channel", "device", "relay_role"}` → `{"token", "expires", "restart_required"}` |
+| `POST /setup` | none | `{"password", "region", "preset", "primary_channel", "driver", "device", "relay_role"}` → `{"token", "expires", "restart_required"}` |
 | `POST /auth/login` | none | `{"password"}` → `{"token", "expires"}` |
 | `PUT /auth/password` | token | `{"current", "new"}` → `{"token", "expires"}` |
 | `POST /auth/logout-all` | token | → 204 |
 | `GET /serial-ports` | setup | → `[{"path", "description", "device"}]` |
+| `GET /boards` | setup | → `[{"id", "name", "module", "bus", "source", "supported", "error"}]` |
 | `GET /regions` | setup | → `[{"name", "presets": ["LONG_FAST", …], "duty_cycle_pct", "power_limit_dbm", "start_mhz", "end_mhz"}]` |
 | `POST /phy/preview` | setup | `{"region", "preset", "primary_channel", "tx_power_dbm"}` → a [`phy`](#status-and-relay) object |
-| `POST /setup/probe` | setup | `{"device"}` → `{"ok", "driver", "firmware", "name", "sync_word_ok", "error"}` |
+| `POST /setup/probe` | setup | `{"device", "driver"}` → `{"ok", "driver", "firmware", "name", "sync_word_ok", "error", "details"}` |
 
 "Setup" means no token is needed while `GET /setup` reports `needed: true`; after that a token is.
 
 - `POST /setup` answers 409 once setup is done, and 400 when the password is under 8 characters or
   the settings don't validate. Nothing is saved on a 400, so setup can be tried again. Empty fields
-  keep their defaults; `primary_channel` `""` means the preset's name. A modem that hasn't opened
-  yet switches to the chosen `device` at once, so `restart_required` is normally false.
+  keep their defaults; `primary_channel` `""` means the preset's name. `driver` is `kiss` (a USB
+  modem on the serial port `device`) or `spi` (a LoRa board: `device` is a board id from
+  `GET /boards`); without `driver`, `device` is taken as a serial port and left alone when the
+  config already has an `spi` radio. A modem that hasn't opened yet switches to the chosen
+  `device` at once, so `restart_required` is normally false; a change of driver needs a restart.
+- `GET /boards` lists the boards the experimental `spi` driver knows: `auto` first (detect a
+  CH341 stick, a Pi HAT+ or a RAK EEPROM), then meshtasticd's own board files in
+  `/etc/meshtasticd/config.d` and `available.d`, then the built-in copies by name. `id` is what
+  to put in `radio.device` (a file path, or a built-in file name such as
+  `lora-MeshAdv-900M30S.yaml`); `bus` is `spidev0.0` or `usb`; `source` is `auto`, `config.d`,
+  `available.d` or `built-in`; `supported: false` with `error` marks a board file this driver
+  can't use yet.
 - `POST /auth/login` answers 401 `wrong password`. After 5 failures from one address, it answers
   429 for a minute.
 - `PUT /auth/password` answers 400 when `current` is wrong or `new` is under 8 characters. Every
@@ -72,7 +83,12 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
 - `POST /setup/probe` always answers 200. It pings the modem, reads its version and checks it
   accepts Meshtastic's sync word. `ok: false` and `error` explain a failure. An empty `device`, or
   the running modem's own device, reports the running modem without opening the port again. A
-  device that isn't a serial port answers 400.
+  device that isn't a serial port answers 400. With `driver: "spi"` it resolves `device` (a board
+  id from `GET /boards`), opens the board, reads the chip and closes it again: `firmware` is the
+  LoRa module, `name` the board, `sync_word_ok` true, and `details` the chip's diagnostic lines
+  (the SX126x/SX127x/SX128x/LR11x0 version, mode and error flags). A board a running radio
+  already drives is reported without being opened. A board file outside `/etc/meshtasticd`
+  answers 400.
 - `POST /phy/preview` answers 400 for an unknown preset or region. `tx_power_dbm` is clamped to the
   region limit in the reply.
 
@@ -113,7 +129,8 @@ A Radio in the list:
   `{"id", "name", "device", "driver", "region", "preset", "tx_power_dbm", "relay_role", "action": "start"}`
   for an added radio, `{"id", "name", "device", "action": "remove"}` for a removed one.
 - `POST /radios` writes the radio to `radios:`; it starts at the next restart. `driver` defaults
-  to `kiss`, `preset` to `LONG_FAST`, and `copy_position` (default true) copies the main site
+  to `kiss` (`device` a serial port); with `spi` (experimental), `device` is a board id from
+  `GET /boards`. `preset` defaults to `LONG_FAST`, and `copy_position` (default true) copies the main site
   position. 400 when the id is missing or the config doesn't validate.
 - `PATCH /radios/{id}` renames any radio, the main one included (saved as `site.main_radio_name`).
   Names are at most 40 characters; an empty name goes back to the default. 404 for an unknown radio.

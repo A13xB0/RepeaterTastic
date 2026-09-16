@@ -19,6 +19,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 )
 
@@ -447,8 +448,19 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Device string `json:"device"`
+		Driver string `json:"driver"` // kiss (default) or spi
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	req.Device = strings.TrimSpace(req.Device)
+	switch req.Driver {
+	case "", "kiss":
+	case "spi":
+		s.probeSPI(w, r, req.Device)
+		return
+	default:
+		writeError(w, http.StatusBadRequest, "driver must be kiss or spi")
 		return
 	}
 	res := map[string]any{"ok": false, "driver": "kiss", "firmware": "", "name": "", "sync_word_ok": false, "error": ""}
@@ -486,6 +498,59 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	if m.Version() < kiss.PatchedVersion {
 		res["error"] = "stock MeshCore KISS firmware can't use Meshtastic's sync word: flash the RepeaterTastic build"
 	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// probeSPI is the setup probe for driver spi: it opens the board, reads the chip's diagnostics
+// and closes it again. A board a running radio already drives is reported, not opened twice.
+func (s *Server) probeSPI(w http.ResponseWriter, r *http.Request, device string) {
+	res := map[string]any{"ok": false, "driver": "spi", "firmware": "", "name": "", "sync_word_ok": false, "error": "", "details": []string{}}
+	for _, rc := range s.radios {
+		c := s.radioConfig(rc).Radio
+		if c.Driver != "spi" || (device != "" && c.Device != device) {
+			continue
+		}
+		info := rc.host.Radio().Info()
+		st := rc.stats(r.Context())
+		res["firmware"], res["name"] = info.Firmware, info.Name
+		res["ok"], res["sync_word_ok"] = st.Connected, st.Connected
+		if !st.Connected {
+			res["error"] = "the board isn't answering: " + c.Device
+		} else if d, ok := rc.host.Radio().(interface{ Diagnostics() []string }); ok {
+			res["details"] = d.Diagnostics()
+		}
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
+	if device == "" {
+		writeError(w, http.StatusBadRequest, "device must be a board name, a board file under /etc/meshtasticd, or auto")
+		return
+	}
+	if !boardRef(device) {
+		writeError(w, http.StatusBadRequest, "a board file must be under /etc/meshtasticd/config.d or available.d (or give the board's name)")
+		return
+	}
+	b, src, err := spi.Resolve(device)
+	if err != nil {
+		res["error"] = err.Error()
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
+	res["firmware"], res["name"] = b.Module, b.Name
+	if b.Name == "" {
+		res["name"] = b.Module
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	rad, err := spi.Open(ctx, b, func(string, ...any) {})
+	if err != nil {
+		res["error"] = "the board didn't answer (" + src + "): " + err.Error()
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
+	defer rad.Close()
+	res["ok"], res["sync_word_ok"] = true, true
+	res["details"] = append([]string{"board " + src + ": " + b.Summary()}, rad.Diagnostics()...)
 	writeJSON(w, http.StatusOK, res)
 }
 

@@ -43,6 +43,7 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		Password  string `json:"password"`
 		Region    string `json:"region"`
 		Preset    string `json:"preset"`
+		Driver    string `json:"driver"` // kiss or spi; empty keeps the config's driver
 		Device    string `json:"device"`
 		RelayRole string `json:"relay_role"`
 		// PrimaryChannel names the primary channel ("" = the preset's name), which picks the slot.
@@ -70,9 +71,28 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	if req.PrimaryChannel != nil {
 		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
 	}
-	// The wizard picks serial ports; an SPI radio's device is its board file, set in the config.
-	if req.Device != "" && next.Radio.Driver != "spi" {
-		next.Radio.Device = req.Device
+	req.Device = strings.TrimSpace(req.Device)
+	switch req.Driver {
+	case "kiss", "spi":
+		if req.Driver == "spi" && req.Device == "" {
+			// Don't let a serial port left in the config pass as a board.
+			s.cfgMu.Unlock()
+			writeError(w, http.StatusBadRequest, "driver spi needs a device: a board from GET /boards, or auto")
+			return
+		}
+		next.Radio.Driver = req.Driver
+		if req.Device != "" {
+			next.Radio.Device = req.Device
+		}
+	case "":
+		// An older wizard only picks serial ports: don't write one over an SPI radio's board.
+		if req.Device != "" && next.Radio.Driver != "spi" {
+			next.Radio.Device = req.Device
+		}
+	default:
+		s.cfgMu.Unlock()
+		writeError(w, http.StatusBadRequest, "driver must be kiss or spi")
+		return
 	}
 	if err := next.Validate(); err != nil {
 		s.cfgMu.Unlock()

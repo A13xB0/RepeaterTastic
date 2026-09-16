@@ -64,7 +64,8 @@ a Linux SPI bus or a CH341 USB stick. `device` is the board:
 - a board file path, e.g. `/etc/meshtasticd/config.d/lora-MeshAdv-900M30S.yaml`;
 - `auto`, to detect a CH341 stick, a Pi HAT+ or a RAK board EEPROM.
 
-See [Testing the SPI radio driver](spi-radio-testing.md).
+The setup wizard and Configuration → Radios offer the same choices under "Board". See
+[Testing the SPI radio driver](spi-radio-testing.md).
 
 ### `mesh`: how the radio joins the mesh
 

@@ -236,6 +236,7 @@ func (s *Server) routes() {
 	pub("POST /api/v1/auth/login", s.login)
 	setup := func(pattern string, h http.HandlerFunc) { s.mux.HandleFunc(pattern, s.setupOrAuth(h)) }
 	setup("GET /api/v1/serial-ports", s.serialPorts)
+	setup("GET /api/v1/boards", s.boards)
 	setup("GET /api/v1/regions", s.regions)
 	setup("POST /api/v1/phy/preview", s.phyPreview)
 	setup("POST /api/v1/setup/probe", s.probe)
