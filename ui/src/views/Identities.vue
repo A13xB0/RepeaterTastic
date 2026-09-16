@@ -105,9 +105,6 @@ async function remove(i: Identity) {
     toastError(e)
   }
 }
-
-// A node radio's only identity is the node: no more can be added there.
-const nodeRadio = computed(() => scope.value !== 'all' && source.value.some((i) => i.real_node))
 </script>
 
 <template>
@@ -125,8 +122,8 @@ const nodeRadio = computed(() => scope.value !== 'all' && source.value.some((i) 
             :class="['rounded-md px-2.5 py-1 text-xs font-medium', scope === o.v ? 'bg-raised text-ink shadow-sm' : 'text-ink-3 hover:text-ink']"
             :aria-pressed="scope === o.v" @click="scope = o.v">{{ o.l }}</button>
         </div>
-        <button class="btn" :disabled="nodeRadio" @click="createMode = 'import'"><Import class="size-4" />Import key</button>
-        <button class="btn btn-primary" :disabled="nodeRadio" :title="nodeRadio ? 'A Meshtastic node radio has one identity: the node itself' : undefined" @click="createMode = 'create'"><Plus class="size-4" />New identity</button>
+        <button class="btn" @click="createMode = 'import'"><Import class="size-4" />Import key</button>
+        <button class="btn btn-primary" @click="createMode = 'create'"><Plus class="size-4" />New identity</button>
       </div>
     </div>
 
@@ -153,12 +150,12 @@ const nodeRadio = computed(() => scope.value !== 'all' && source.value.some((i) 
                   <div class="min-w-0 leading-tight">
                     <div class="flex items-center gap-1.5 truncate text-[13px] font-semibold">
                       {{ i.long_name }}
-                      <span v-if="i.real_node" class="chip bg-brand/12 text-brand" title="A node running Meshtastic firmware: names and channels are written to it">Meshtastic node</span>
+                      <span v-if="i.real_node" class="chip bg-brand/12 text-brand" title="Runs on meshtasticd: names and channels are written to it">meshtasticd</span>
                     </div>
                     <div class="flex items-center gap-1 text-xs text-ink-3">
                       <span class="mono">{{ i.node_id }}</span>
                       <CopyButton :text="i.node_id" label="Node id" />
-                      <span>· {{ i.real_node ? roleLabel(i.role) : i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
+                      <span>· {{ i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
                     </div>
                     <div v-if="multiRadio" class="mt-1 flex flex-wrap gap-1">
                       <span class="chip bg-ink-3/12 text-ink-2" :title="`Home radio ${i.radio_name}`">{{ i.radio_name }}</span>

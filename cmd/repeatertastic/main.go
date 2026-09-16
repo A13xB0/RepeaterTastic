@@ -22,7 +22,6 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/logbuf"
 	"github.com/ScotMesh/RepeaterTastic/internal/mdns"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
-	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phoneapi"
 	"github.com/ScotMesh/RepeaterTastic/internal/plugins"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
@@ -202,12 +201,6 @@ func run(cfgPath string) error {
 		if err != nil {
 			return err
 		}
-		for _, rt := range radios {
-			if rt.attached != nil {
-				id := rt.rc.ID
-				rt.attached.OnConfig(func(mc mesh.Config) { srv.MirrorNodeConfig(id, mc) })
-			}
-		}
 		go func() {
 			if err := srv.Run(ctx); err != nil {
 				log.Error("web server stopped", "err", err)
@@ -243,13 +236,12 @@ func run(cfgPath string) error {
 
 // radioRuntime is one radio's running stack.
 type radioRuntime struct {
-	rc       config.RadioConfig
-	radio    radio.Radio
-	host     *mesh.Host
-	api      *phoneapi.Manager
-	udp      *udp.Link
-	mqtt     []*mqtt.Link
-	attached *nodes.Attached // a board running Meshtastic firmware (driver meshtastic)
+	rc    config.RadioConfig
+	radio radio.Radio
+	host  *mesh.Host
+	api   *phoneapi.Manager
+	udp   *udp.Link
+	mqtt  []*mqtt.Link
 }
 
 // startRadio opens a radio's modem, builds its host and identities and starts its client
@@ -259,17 +251,7 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 		return nil, fmt.Errorf("state dir: %w", err)
 	}
 	var r radio.Radio
-	var attached *nodes.Attached
 	switch rc.Radio.Driver {
-	case nodes.Driver:
-		// A board running Meshtastic firmware, or a meshtasticd elsewhere: the node is the radio and
-		// the one identity.
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...)) }
-		var err error
-		if attached, err = nodes.OpenAttached(ctx, rc.Radio.Device, rc.StateDir, logf); err != nil {
-			return nil, err
-		}
-		r = attached
 	case "kiss", "spi":
 		// One lazy radio for both drivers, so first-time setup can switch driver as well as device
 		// before anything has opened (see web.followUnopenedDevices).
@@ -303,27 +285,14 @@ func startRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger, up
 		r.Close()
 		return nil, err
 	}
-	if attached != nil {
-		id, err := attached.Identity(ctx, 10*time.Second)
-		if err == nil {
-			if len(rc.Identities) > 0 {
-				id.APIPort, id.APIBind = rc.Identities[0].APIPort, rc.Identities[0].APIBind
-			}
-			err = host.AddIdentity(id)
-		}
-		if err != nil {
-			r.Close()
-			return nil, err
-		}
-		go attached.Bind(ctx, host, id)
-	} else if err := loadIdentities(rc.Config, host, log); err != nil {
+	if err := loadIdentities(rc.Config, host, log); err != nil {
 		r.Close()
 		return nil, err
 	}
 	api := phoneapi.NewManager(host, log)
 	go api.Run(ctx)
 
-	rt := &radioRuntime{rc: rc, radio: r, host: host, api: api, attached: attached}
+	rt := &radioRuntime{rc: rc, radio: r, host: host, api: api}
 	if rc.Links.UDPMulticast.Enabled {
 		var groups []string
 		if g := rc.Links.UDPMulticast.Group; g != "" && !strings.Contains(g, ":") {

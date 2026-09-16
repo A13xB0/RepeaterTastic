@@ -17,7 +17,6 @@ import (
 
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
-	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
@@ -449,7 +448,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Device string `json:"device"`
-		Driver string `json:"driver"` // kiss (default), spi or meshtastic
+		Driver string `json:"driver"` // kiss (default) or spi
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -460,11 +459,8 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	case "spi":
 		s.probeSPI(w, r, req.Device)
 		return
-	case nodes.Driver:
-		s.probeNode(w, r, req.Device)
-		return
 	default:
-		writeError(w, http.StatusBadRequest, "driver must be kiss, spi or meshtastic")
+		writeError(w, http.StatusBadRequest, "driver must be kiss or spi")
 		return
 	}
 	res := map[string]any{"ok": false, "driver": "kiss", "firmware": "", "name": "", "sync_word_ok": false, "error": ""}
