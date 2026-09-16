@@ -82,7 +82,7 @@ func (s *Server) putHosted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Check a launcher that will run: better to say so now than after the restart.
-	if req.Persona {
+	if req.Persona || req.Identities {
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
 		if _, err := nodes.CheckLauncher(ctx, nodes.LauncherFor(req.Meshtasticd, req.DockerImage)); err != nil {
@@ -238,4 +238,13 @@ func lanAddr(ctx context.Context, addr string) bool {
 		}
 	}
 	return true
+}
+
+// runtimes reports what this machine can run hosted nodes with: an installed meshtasticd and
+// Docker (with whether the image is already downloaded), for the configured program and image.
+func (s *Server) runtimes(w http.ResponseWriter, r *http.Request) {
+	s.cfgMu.Lock()
+	hc := s.cfg.Hosted
+	s.cfgMu.Unlock()
+	writeJSON(w, http.StatusOK, nodes.DetectRuntimes(r.Context(), hc.Meshtasticd, hc.DockerImage))
 }

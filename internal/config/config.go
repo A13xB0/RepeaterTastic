@@ -118,8 +118,9 @@ type Hosted struct {
 	// through the air bridge. Board radios keep the board as their persona.
 	Persona bool `yaml:"persona,omitempty" json:"persona"`
 	// Identities runs every other identity as a hosted meshtasticd too, with its saved key, so it
-	// keeps its node number, channels and chats. Needs Persona. Identities routed across radios
-	// (experimental) stay in RepeaterTastic.
+	// keeps its node number, channels and chats. On a modem or HAT radio it needs Persona (the
+	// identities join the air the persona's radio gives); behind a board it is the only switch.
+	// Identities routed across radios (experimental) stay in RepeaterTastic.
 	Identities bool `yaml:"identities,omitempty" json:"identities"`
 	// Meshtasticd is the binary to run ("" = meshtasticd on PATH). It needs version 2.8 or newer.
 	Meshtasticd string `yaml:"meshtasticd,omitempty" json:"meshtasticd"`
@@ -674,9 +675,6 @@ func (c *Config) validateOne() error {
 	}
 	if c.Hosted.RadioPortBase(len(c.Radios)+1) > 65536 {
 		return errors.New("hosted.port_base is too high for this many radios (each takes 100 ports)")
-	}
-	if c.Hosted.Identities && !c.Hosted.Persona {
-		return errors.New("hosted.identities needs hosted.persona: identities join the air the persona's radio gives")
 	}
 	if b := c.Hosted.Meshtasticd; b != "" && filepath.Base(b) != "meshtasticd" {
 		return errors.New("hosted.meshtasticd must be a meshtasticd program (a path ending in /meshtasticd)")

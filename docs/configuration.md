@@ -196,7 +196,7 @@ account menu) and stored in the state folder, not in this file.
 ```yaml
 hosted:
     persona: true                    # the relay of each modem or HAT radio runs on meshtasticd
-    identities: true                 # and every identity too (needs persona)
+    identities: true                 # and every identity too (with persona; behind a board, on its own)
     meshtasticd: /usr/bin/meshtasticd   # "" = meshtasticd on PATH; must be 2.8.0 or newer
     docker_image: ""                 # or run it in Docker, e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian
     port_base: 4500                  # client API ports: radio n (0 = main) uses 100 ports from port_base + 100·n
@@ -229,10 +229,12 @@ hosted:
   3 MB of memory.
 - Takes effect at the next restart. Configuration → Experimental has the same settings.
 
-The setup wizard offers it as an optional step, Configuration → Experimental lists every
+The setup wizard offers it as an optional step. It shows whether meshtasticd is installed and new
+enough, and whether Docker answers and already has the image, then picks the one that works.
+Configuration → Experimental shows the same and lists every
 instance, and Edit on a radio shows where the relay and each identity run:
 
-![Setup: run nodes on meshtasticd](images/setup-hosted-relay.png)
+![Setup: run nodes on meshtasticd](images/setup-runtimes.png)
 
 ![Configuration → Experimental with hosted identities](images/hosted-identities.png)
 

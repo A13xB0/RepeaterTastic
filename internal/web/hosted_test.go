@@ -128,9 +128,9 @@ func TestHostedIdentities(t *testing.T) {
 		t.Fatalf("the node wasn't stopped on delete: %v", hs.unhosted)
 	}
 
-	// Hosted identities need a hosted persona.
-	if code, _, _ := call(t, srv, "PUT", "/api/v1/hosted", tok, map[string]any{"identities": true}); code != 400 {
-		t.Fatalf("identities without a persona accepted: %d", code)
+	// Turning identities on checks meshtasticd can run first.
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/hosted", tok, map[string]any{"identities": true, "meshtasticd": "/nonexistent/meshtasticd"}); code != 400 {
+		t.Fatalf("identities without a working meshtasticd accepted: %d", code)
 	}
 	if _, h, _ := call(t, srv, "GET", "/api/v1/hosted", tok, nil); h["identities"] != false {
 		t.Fatalf("hosted = %v", h)
@@ -170,5 +170,21 @@ func TestDetectNeedsASerialPort(t *testing.T) {
 	code, res, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "auto", "device": "/dev/ttyUSB-none"})
 	if code != 200 || res["ok"] != false || len(res["details"].([]any)) != 2 {
 		t.Fatalf("detect on a missing port: %d %v", code, res)
+	}
+}
+
+func TestRuntimesDuringSetup(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	code, res, _ := call(t, srv, "GET", "/api/v1/setup/runtimes", "", nil)
+	if code != 200 || res["min_version"] != "2.8.0" {
+		t.Fatalf("runtimes %d %v", code, res)
+	}
+	m, d := res["meshtasticd"].(map[string]any), res["docker"].(map[string]any)
+	if _, ok := m["found"].(bool); !ok || d["image"] == "" {
+		t.Fatalf("runtimes %v", res)
+	}
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	if code, _, _ := call(t, srv, "GET", "/api/v1/setup/runtimes", "", nil); code != 401 {
+		t.Fatalf("runtimes without a token after setup: %d", code)
 	}
 }

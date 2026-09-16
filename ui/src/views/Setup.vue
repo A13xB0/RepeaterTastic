@@ -4,7 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Check, CircleAlert, CircuitBoard, CircleCheck, RadioTower, RefreshCw, Server, Usb } from '@lucide/vue'
 import { request, setToken } from '@/api/client'
-import type { Board, Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/types'
+import type { Board, Phy, ProbeResult, RelayRole, Region, Runtimes, SerialPort } from '@/api/types'
 import BoardSelect from '@/components/config/BoardSelect.vue'
 import Logo from '@/components/ui/Logo.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -32,6 +32,27 @@ const hostedVia = ref<'exec' | 'docker'>('exec')
 const hostedBinary = ref('')
 const hostedImage = ref(DEFAULT_IMAGE)
 const hostedPortBase = ref(4500)
+
+// What this machine has to run meshtasticd with: looked up when the step opens.
+const runtimes = ref<Runtimes | null>(null)
+const loadingRuntimes = ref(false)
+const canInstalled = computed(() => !!runtimes.value?.meshtasticd.ok)
+const canDocker = computed(() => !!runtimes.value?.docker.ok)
+const noRuntime = computed(() => !!runtimes.value && !canInstalled.value && !canDocker.value)
+async function loadRuntimes() {
+  loadingRuntimes.value = true
+  try {
+    runtimes.value = await get<Runtimes>('/setup/runtimes')
+    // Pick what works: the installed program, else Docker.
+    if (canInstalled.value) hostedVia.value = 'exec'
+    else if (canDocker.value) hostedVia.value = 'docker'
+    if (runtimes.value.meshtasticd.path && !hostedBinary.value) hostedBinary.value = runtimes.value.meshtasticd.path
+  } catch {
+    runtimes.value = null
+  } finally {
+    loadingRuntimes.value = false
+  }
+}
 const hostedCheck = ref<{ ok: boolean; version: string; min_version: string; launcher: string; error: string } | null>(null)
 const checkingHosted = ref(false)
 async function checkHosted() {
@@ -46,11 +67,18 @@ async function checkHosted() {
   }
 }
 watch([hostedVia, hostedBinary, hostedImage], () => (hostedCheck.value = null))
+watch(stepId, (id) => {
+  if (id === 'nodes' && !runtimes.value && !loadingRuntimes.value) loadRuntimes()
+})
+// Ticking the box checks the chosen way at once (Docker may download the image first).
+watch(hosted, (on) => {
+  if (on && !hostedCheck.value && !checkingHosted.value && (canInstalled.value || canDocker.value)) checkHosted()
+})
 function hostedSettings() {
   // Behind a board the board is the relay, and identities use meshtasticd whenever it can run.
   return {
     persona: hosted.value && !usingNode.value,
-    identities: hosted.value && hostedIdentities.value && !usingNode.value,
+    identities: hosted.value && (usingNode.value || hostedIdentities.value),
     meshtasticd: hostedVia.value === 'exec' ? hostedBinary.value.trim() : '',
     docker_image: hostedVia.value === 'docker' ? hostedImage.value.trim() : '',
     port_base: hostedPortBase.value,
@@ -441,9 +469,42 @@ async function finish() {
               <template v-if="!usingNode">They still transmit on this radio themselves, at zero hops.</template>
             </p>
             <p v-if="usingNode" class="mt-2 text-[13px] text-ink-3">Your board is the relay, so only your identities can run here. Each gets its own meshtasticd, one hop behind the board.</p>
-            <div :class="['mt-4 rounded-xl border px-3.5 py-3', hosted ? 'border-brand/60 bg-brand/6' : 'border-line']">
-              <label class="flex cursor-pointer items-center gap-3">
-                <input id="setup-hosted" v-model="hosted" type="checkbox" class="accent-[var(--brand)]" />
+            <div class="mt-4 rounded-xl border border-line-soft px-3.5 py-3">
+              <div class="flex items-center justify-between gap-2">
+                <div class="eyebrow">Found on this machine</div>
+                <button class="btn btn-sm" :disabled="loadingRuntimes" @click="loadRuntimes"><RefreshCw :class="['size-3.5', loadingRuntimes && 'animate-spin']" />Look again</button>
+              </div>
+              <div v-if="!runtimes" class="mt-2 flex items-center gap-2 text-[13px] text-ink-3"><Spinner v-if="loadingRuntimes" />{{ loadingRuntimes ? 'Looking for meshtasticd and Docker…' : 'Couldn’t check this machine.' }}</div>
+              <ul v-else class="mt-2 space-y-1.5 text-[13px]">
+                <li id="setup-runtime-installed" class="flex items-start gap-2">
+                  <CircleCheck v-if="runtimes.meshtasticd.ok" class="mt-0.5 size-4 shrink-0 text-ok" />
+                  <CircleAlert v-else :class="['mt-0.5 size-4 shrink-0', runtimes.meshtasticd.found ? 'text-warn' : 'text-ink-3']" />
+                  <div class="min-w-0">
+                    <span class="font-medium">Installed meshtasticd</span>
+                    <span v-if="runtimes.meshtasticd.ok" class="text-ink-2"> · {{ runtimes.meshtasticd.version }} <span class="mono text-2xs text-ink-3">{{ runtimes.meshtasticd.path }}</span></span>
+                    <span v-else class="text-ink-3"> · {{ runtimes.meshtasticd.error }}</span>
+                  </div>
+                </li>
+                <li id="setup-runtime-docker" class="flex items-start gap-2">
+                  <CircleCheck v-if="runtimes.docker.ok" class="mt-0.5 size-4 shrink-0 text-ok" />
+                  <CircleAlert v-else :class="['mt-0.5 size-4 shrink-0', runtimes.docker.found ? 'text-warn' : 'text-ink-3']" />
+                  <div class="min-w-0">
+                    <span class="font-medium">Docker</span>
+                    <template v-if="runtimes.docker.ok">
+                      <span class="text-ink-2"> · {{ runtimes.docker.version }}</span>
+                      <span class="block text-2xs text-ink-3">{{ runtimes.docker.image_present ? 'The meshtasticd image is already downloaded.' : 'The meshtasticd image (about 600 MB on disk) downloads the first time it is used.' }}</span>
+                    </template>
+                    <span v-else class="text-ink-3"> · {{ runtimes.docker.error }}</span>
+                  </div>
+                </li>
+              </ul>
+              <p v-if="noRuntime" class="mt-2 text-2xs text-ink-3">
+                Neither is available, so this stays off. Install the meshtasticd package ({{ runtimes?.min_version }} or newer) or Docker, then look again.<template v-if="usingNode"> Your identities run in RepeaterTastic behind the board meanwhile.</template>
+              </p>
+            </div>
+            <div :class="['mt-3 rounded-xl border px-3.5 py-3', hosted ? 'border-brand/60 bg-brand/6' : 'border-line', noRuntime && 'opacity-60']">
+              <label :class="['flex items-center gap-3', noRuntime ? 'cursor-not-allowed' : 'cursor-pointer']">
+                <input id="setup-hosted" v-model="hosted" type="checkbox" class="accent-[var(--brand)]" :disabled="noRuntime && !hosted" />
                 <Server class="size-4 shrink-0 text-ink-3" />
                 <div class="min-w-0">
                   <div class="text-[13px] font-medium">{{ usingNode ? 'Run identities on meshtasticd' : 'Run the relay on meshtasticd' }}</div>
@@ -453,8 +514,8 @@ async function finish() {
               <div v-if="hosted" class="mt-3 space-y-3 pl-7">
                 <div class="flex flex-wrap items-center gap-2">
                   <div class="seg" role="group" aria-label="How to run meshtasticd">
-                    <button type="button" :aria-pressed="hostedVia === 'exec'" @click="hostedVia = 'exec'">Installed</button>
-                    <button type="button" :aria-pressed="hostedVia === 'docker'" @click="hostedVia = 'docker'">Docker</button>
+                    <button type="button" :aria-pressed="hostedVia === 'exec'" :disabled="!!runtimes && !canInstalled" :title="runtimes && !canInstalled ? runtimes.meshtasticd.error : ''" @click="hostedVia = 'exec'">Installed</button>
+                    <button type="button" :aria-pressed="hostedVia === 'docker'" :disabled="!!runtimes && !canDocker" :title="runtimes && !canDocker ? runtimes.docker.error : ''" @click="hostedVia = 'docker'">Docker</button>
                   </div>
                   <input v-if="hostedVia === 'exec'" id="setup-hosted-bin" v-model="hostedBinary" class="input h-8 mono min-w-0 flex-1 text-xs" placeholder="meshtasticd (on PATH) or /usr/bin/meshtasticd" spellcheck="false" aria-label="meshtasticd program" />
                   <input v-else id="setup-hosted-image" v-model="hostedImage" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />

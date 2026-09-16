@@ -547,6 +547,13 @@ export interface HostedInstance {
   node_id?: string
 }
 
+/** What this machine can run hosted nodes with (GET /setup/runtimes). */
+export interface Runtimes {
+  meshtasticd: { found: boolean; path?: string; version?: string; ok: boolean; error?: string }
+  docker: { found: boolean; ok: boolean; version?: string; error?: string; image: string; image_present: boolean }
+  min_version: string
+}
+
 export interface HostedSettings {
   persona: boolean
   /** Identities run on meshtasticd too (needs persona). */
