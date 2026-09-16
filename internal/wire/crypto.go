@@ -105,7 +105,26 @@ func GeneratePrivateKey() []byte {
 	if err != nil {
 		panic(err)
 	}
-	return k.Bytes()
+	return ClampPrivateKey(k.Bytes())
+}
+
+// ClampPrivateKey returns the X25519 private key in clamped form. The public key (and so the node
+// number) is the same; meshtasticd 2.8 replaces an unclamped saved key with a new one when it
+// boots.
+func ClampPrivateKey(priv []byte) []byte {
+	if len(priv) != 32 {
+		return priv
+	}
+	k := append([]byte(nil), priv...)
+	k[0] &= 248
+	k[31] &= 127
+	k[31] |= 64
+	return k
+}
+
+// Clamped reports whether an X25519 private key is in clamped form.
+func Clamped(priv []byte) bool {
+	return len(priv) == 32 && priv[0]&7 == 0 && priv[31]&128 == 0 && priv[31]&64 != 0
 }
 
 // PublicKey derives the X25519 public key.

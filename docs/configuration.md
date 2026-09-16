@@ -191,27 +191,47 @@ account menu) and stored in the state folder, not in this file.
 ```yaml
 hosted:
     persona: true                    # the relay of each modem or HAT radio runs on meshtasticd
+    identities: true                 # and every identity too (needs persona)
     meshtasticd: /usr/bin/meshtasticd   # "" = meshtasticd on PATH; must be 2.8.0 or newer
     docker_image: ""                 # or run it in Docker, e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian
-    port_base: 4500                  # client API ports: radio n (0 = main) uses port_base + 20·n onwards
+    port_base: 4500                  # client API ports: radio n (0 = main) uses 100 ports from port_base + 100·n
 ```
 
-- The relay becomes a real Meshtastic node: a meshtasticd on a simulated radio that RepeaterTastic
-  starts, sets up (names from `relay`, region, preset, role) and restarts. It still transmits on
-  this radio, at zero hops, and hears your identities without repeating them.
-- If meshtasticd can't run or is too old, the relay stays in RepeaterTastic and the log says why.
-- An installed meshtasticd listens on every interface: firewall the ports on a shared network, or
-  use `docker_image`, which publishes them on 127.0.0.1 only.
-- The relay gets a new node number on meshtasticd. The RepeaterTastic persona is kept and comes
-  back when `persona` is switched off.
+- **Real nodes.** The relay, and with `identities` every identity, becomes a meshtasticd on a
+  simulated radio that RepeaterTastic starts, sets up and restarts. They still transmit on this
+  radio, at zero hops, and the relay hears the identities without repeating them.
+- **Same node numbers.** RepeaterTastic keeps each identity's key and gives it to its meshtasticd,
+  so node numbers, chats and app pairings stay. A meshtasticd that loses or changes its key gets it
+  back at the next connect; one that won't keep it after three tries stays off air.
+- **What RepeaterTastic sets on each node:** region, preset, frequency, power and the primary
+  channel name from the radio; hop limit, transmitter (on unless the identity is disabled, or the
+  radio is in monitor or off), fixed position and position interval from the identity; the role
+  and rebroadcast mode from `relay` for the persona; NodeInfo interval; device telemetry for the
+  persona only. A fresh node also gets the identity's names and channels. After that the node
+  keeps them, and edits in the GUI are written to it.
+- **Roles.** A hosted identity never repeats: its role is `CLIENT_MUTE`, `TRACKER`, `SENSOR` or
+  `TAK_TRACKER` (the last three with rebroadcasting off). Any other role becomes `CLIENT_MUTE`.
+- **One radio each.** Identities routed across radios (experimental) stay in RepeaterTastic, and a
+  hosted identity can't be routed across radios.
+- **Apps connect as before**, to the identity's own app port. The meshtasticd API ports are
+  RepeaterTastic's.
+- **Moving and deleting.** Moving an identity to another radio starts it there, on meshtasticd if
+  that radio hosts identities. Deleting one stops its meshtasticd and removes its state.
+- **Fallback.** If meshtasticd can't run or is too old, everything stays in RepeaterTastic and
+  the log says why.
+- **Ports.** An installed meshtasticd listens on every interface: firewall the ports on a shared
+  network, or use `docker_image`, which publishes them on 127.0.0.1 only. Each node takes about
+  3 MB of memory.
 - Takes effect at the next restart. Configuration → Experimental has the same settings.
 
-The setup wizard offers it as an optional step, and Edit on a radio shows where the relay and each
-identity run:
+The setup wizard offers it as an optional step, Configuration → Experimental lists every
+instance, and Edit on a radio shows where the relay and each identity run:
 
-![Setup: run the relay on meshtasticd](images/setup-hosted-relay.png)
+![Setup: run nodes on meshtasticd](images/setup-hosted-relay.png)
 
-![Radio settings with a hosted relay](images/radio-settings-hosted-relay.png)
+![Configuration → Experimental with hosted identities](images/hosted-identities.png)
+
+![Radio settings with hosted nodes](images/radio-settings-hosted-relay.png)
 
 ### `radios`, `site` and `experimental`
 

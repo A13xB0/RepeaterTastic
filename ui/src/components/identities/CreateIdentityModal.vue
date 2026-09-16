@@ -3,7 +3,8 @@
 import { computed, ref, watch } from 'vue'
 import { RefreshCw, TriangleAlert, CircleCheck } from '@lucide/vue'
 import { api, radio } from '@/api/client'
-import type { Identity, KeyPreview } from '@/api/types'
+import type { HostedSettings, Identity, KeyPreview } from '@/api/types'
+import { hostedIdentityRoles, hostsIdentities } from '@/lib/relay'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import RadioFields from '@/components/identities/RadioFields.vue'
@@ -35,7 +36,11 @@ const acceptClash = ref(false)
 const saving = ref(false)
 const error = ref('')
 
-const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR']
+const allRoles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR']
+// Whether the chosen radio runs new identities on meshtasticd (they can't take a repeating role).
+const hostedSettings = ref<HostedSettings | null>(null)
+const onMeshtasticd = computed(() => hostsIdentities(hostedSettings.value, radioId.value) && !defaultRadio.value)
+const roles = computed(() => (onMeshtasticd.value ? hostedIdentityRoles : allRoles))
 
 function nextPort() {
   const used = new Set((live.allIdentities.length ? live.allIdentities : live.identities).map((i) => i.api?.port).filter(Boolean))
@@ -49,6 +54,7 @@ watch(
   (o) => {
     if (!o) return
     refreshAllIdentities()
+    api.get<HostedSettings>('/hosted').then((s) => (hostedSettings.value = s)).catch(() => (hostedSettings.value = null))
     longName.value = ''
     shortName.value = ''
     shortTouched.value = false
@@ -161,6 +167,7 @@ async function save() {
         <select id="role" v-model="role" class="input">
           <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
         </select>
+        <p v-if="onMeshtasticd" class="hint">Runs on meshtasticd {{ hostedSettings?.instances.find((x) => x.role === 'persona' && x.radio === radioId)?.firmware ?? '' }}, keeping the key RepeaterTastic generates.</p>
       </div>
       <RadioFields v-model:home="radioId" v-model:default-radio="defaultRadio" creating class="sm:col-span-2" />
       <div>

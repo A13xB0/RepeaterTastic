@@ -33,7 +33,7 @@ const relayInstance = computed(() => instances.value.find((x) => x.role === 'per
 
 function runsOn(i: Identity) {
   const x = byNode.value.get(i.node_id)
-  if (!i.real_node) return { text: 'RepeaterTastic', state: '' }
+  if (!i.real_node) return { text: i.multi_radio ? 'RepeaterTastic (routed across radios)' : 'RepeaterTastic', state: '' }
   if (!x) return { text: 'meshtasticd', state: 'starting' }
   return { text: `meshtasticd ${x.firmware || ''}`.trim(), state: x.connected ? 'running' : x.running ? 'starting' : 'stopped' }
 }
@@ -53,7 +53,7 @@ function runsOn(i: Identity) {
         </div>
         <p v-if="relayInstance" class="mt-1 text-xs text-ink-3">
           Runs on meshtasticd {{ relayInstance.firmware || '' }} ({{ relayInstance.launcher }}, port {{ relayInstance.port }}<template v-if="relayInstance.restarts">, {{ relayInstance.restarts }} restarts</template>).
-          RepeaterTastic sets its region, preset and role from this page.
+          RepeaterTastic gives it its saved key and sets its region, preset and role from this page.
           <span v-if="relayInstance.last_error" class="text-warn">Last stop: {{ relayInstance.last_error }}</span>
         </p>
         <p v-else class="mt-1 text-xs text-ink-3">Runs inside RepeaterTastic. Configuration → Experimental can move it to meshtasticd.</p>

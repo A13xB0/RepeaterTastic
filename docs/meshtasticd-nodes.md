@@ -9,11 +9,26 @@ apps use). Their transmissions go out through a bridge to RepeaterTastic's radio
 the `spi` driver), and everything the radio hears is fed back to them, the way Meshtasticator
 connects simulated nodes.
 
-**Status:** the relay persona can run on meshtasticd (`hosted.persona`, see
-[Configuration](configuration.md#hosted-nodes-on-meshtasticd-experimental)); identities follow.
+**Status:** the relay persona and identities can run on meshtasticd (`hosted.persona`,
+`hosted.identities`, see [Configuration](configuration.md#hosted-nodes-on-meshtasticd-experimental)).
 
 This page records what the firmware does, as measured, so the design rests on facts. The work is
 tracked in the epic pull request, [ScotMesh/RepeaterTastic#5](https://github.com/ScotMesh/RepeaterTastic/pull/5).
+
+## Keys and node numbers
+
+- 2.8 takes its node number from its public key (crc32), as RepeaterTastic always has, so an
+  identity keeps its number when its meshtasticd is given its key: `set_config security` with the
+  private and public key.
+- **The private key must be clamped** (X25519: `k[0] &= 248; k[31] &= 127; k[31] |= 64`). 2.8
+  accepts an unclamped key, but replaces it with a new one at the next boot. Clamping doesn't change
+  the public key.
+- The node takes the new key (and number) straight away, inside the edit transaction: admin
+  messages still addressed to the old number are then treated as another node's, and their
+  answers go out over the radio. The key is therefore the last change before
+  `commit_edit_settings`, whose answer may be lost.
+- A fresh node generates its own key at first boot; RepeaterTastic replaces it on first connect,
+  and doesn't let the node transmit until it holds the saved key.
 
 ## The client API (`internal/mtclient`)
 
@@ -55,8 +70,9 @@ Consequences:
 - **Hosted nodes need meshtasticd 2.8 or newer.** 2.7 can't take a PKI DM back in.
 - **Provision in one edit transaction** (`begin_edit_settings` … `commit_edit_settings`) so a node
   reboots at most once.
-- **Identities must be `CLIENT_MUTE`:** a co-located `CLIENT` instance rebroadcasts every packet
-  another instance sends, as a real client would.
+- **Identities must not repeat:** a co-located `CLIENT` instance rebroadcasts every packet another
+  instance sends, as a real client would. Hosted identities are `CLIENT_MUTE`, or `TRACKER`,
+  `SENSOR` or `TAK_TRACKER` with rebroadcast mode `NONE` (the only roles 2.8 allows it for).
 - **Drop frames addressed to node 0.** The firmware transmits the routing error for a failed
   client DM to `!00000000`.
 - **An instance only decrypts a DM once it knows the sender's key,** so instances must hear each
@@ -110,6 +126,10 @@ other at hop limit 0, so none of them repeats a frame that went out from the sam
   sit one hop behind it.
 
 ## Supervisor
+
+- `nodes.Hosting` is a radio's `mesh.Hoster`: the host hands it every identity record as it is
+  loaded, created or moved, and it starts a meshtasticd for the ones it takes (the persona on the
+  radio's first port, identities on the next 99). Records it doesn't take run in RepeaterTastic.
 
 - `nodes.StartHosted` writes the instance's `config.yaml` (`Lora: Module: sim`, no UDP, no MQTT),
   runs meshtasticd with `-c`, `-d`, `-h` and `-p`, and restarts it with backoff. The last 200 lines

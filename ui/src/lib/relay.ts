@@ -32,6 +32,14 @@ export const rebroadcastModes: { id: RebroadcastMode; label: string; title: stri
   { id: 'none', label: 'None', title: 'Never rebroadcast (like client mute)' },
 ]
 
+/** Device roles an identity on meshtasticd can have: none of them repeats. */
+export const hostedIdentityRoles = ['CLIENT_MUTE', 'TRACKER', 'SENSOR', 'TAK_TRACKER']
+
+/** Whether a radio's new identities run on meshtasticd: identities are hosted and the radio's persona runs there. */
+export function hostsIdentities(s: { identities: boolean; instances: { radio: string; role: string }[] } | null, radio: string) {
+  return !!s?.identities && s.instances.some((x) => x.radio === radio && x.role === 'persona')
+}
+
 /** The relay never repeats in this mode. */
 export const muted = (role: string | undefined) => role === 'client_mute' || role === 'mute'
 

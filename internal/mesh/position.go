@@ -102,6 +102,9 @@ func hardwareFromModem(name string) pb.HardwareModel {
 	return pb.HardwareModel_PORTDUINO
 }
 
+// PositionFor is the position an identity broadcasts (see positionFor).
+func (h *Host) PositionFor(id *Identity) (FixedPosition, bool) { return h.positionFor(id) }
+
 // positionFor is the position an identity broadcasts: its own fixed position if it has one,
 // otherwise the radio's site position when the site policy covers it.
 func (h *Host) positionFor(id *Identity) (FixedPosition, bool) {

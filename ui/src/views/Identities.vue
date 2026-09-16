@@ -151,7 +151,7 @@ async function remove(i: Identity) {
                   <div class="min-w-0 leading-tight">
                     <div class="flex items-center gap-1.5 truncate text-[13px] font-semibold">
                       {{ i.long_name }}
-                      <span v-if="i.real_node" class="chip bg-brand/12 text-brand" title="Runs on meshtasticd: names and channels are written to it">meshtasticd</span>
+                      <span v-if="i.real_node" class="chip bg-brand/12 text-brand" title="Runs on meshtasticd with the key RepeaterTastic keeps: settings, names and channels are written to it">meshtasticd</span>
                     </div>
                     <div class="flex items-center gap-1 text-xs text-ink-3">
                       <span class="mono">{{ i.node_id }}</span>
@@ -208,7 +208,7 @@ async function remove(i: Identity) {
                   <RouterLink :to="`/chat/${i.node_id}`" class="icon-btn" :title="i.is_relay ? 'Chat as the relay persona' : 'Open chat'"><MessagesSquare class="size-4" /></RouterLink>
                   <button class="icon-btn" title="Edit" @click="editing = i"><Pencil class="size-4" /></button>
                   <button class="icon-btn lg:hidden" title="Channels" @click="channelsFor = i.node_id"><Layers class="size-4" /></button>
-                  <button v-if="!i.real_node" class="icon-btn" title="Show key" @click="keyFor = i"><KeyRound class="size-4" /></button>
+                  <button v-if="!i.real_node || i.hosted" class="icon-btn" title="Show key" @click="keyFor = i"><KeyRound class="size-4" /></button>
                   <button v-if="i.api" class="icon-btn max-sm:hidden" title="Restart API server" :disabled="!i.enabled" @click="restartApi(i)"><RotateCcw class="size-4" /></button>
                   <button v-if="!i.is_relay" class="icon-btn hover:!text-bad" title="Delete" @click="remove(i)"><Trash class="size-4" /></button>
                 </div>

@@ -8,6 +8,7 @@ import Spinner from '@/components/ui/Spinner.vue'
 import { multiRadioActive, live, refreshAllIdentities, refreshIdentities, upsertIdentity } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import MultiRadioSection from '@/components/identities/MultiRadioSection.vue'
+import { hostedIdentityRoles } from '@/lib/relay'
 import RadioFields from '@/components/identities/RadioFields.vue'
 import { channelSlots } from '@/lib/channels'
 import type { MultiRadio } from '@/api/types'
@@ -36,7 +37,8 @@ const primaryOf = (id: string) => {
 }
 const saving = ref(false)
 const error = ref('')
-const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR', 'ROUTER', 'ROUTER_LATE']
+const allRoles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR', 'ROUTER', 'ROUTER_LATE']
+const roles = computed(() => (props.identity?.hosted ? hostedIdentityRoles : allRoles))
 
 watch(
   () => props.identity,
@@ -125,6 +127,7 @@ async function save() {
         <select id="e-role" v-model="form.role" class="input" :disabled="identity.is_relay">
           <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
         </select>
+        <p v-if="identity.hosted" class="hint">Runs on meshtasticd, so it never repeats: the relay does.</p>
       </div>
       <div v-if="identity.api">
         <label class="label" for="e-port">API port</label>
@@ -157,7 +160,8 @@ async function save() {
           </select>
         </div>
       </div>
-      <MultiRadioSection v-if="multiRadioActive() && !identity.is_relay" v-model="multi" :identity="identity" class="sm:col-span-2" />
+      <MultiRadioSection v-if="multiRadioActive() && !identity.is_relay && !identity.hosted" v-model="multi" :identity="identity" class="sm:col-span-2" />
+      <p v-else-if="multiRadioActive() && identity.hosted" class="hint sm:col-span-2">Runs on meshtasticd, which has one radio: it can't be routed across radios.</p>
       <div class="sm:col-span-2">
         <label class="label" for="e-hops">Hop limit cap</label>
         <select id="e-hops" v-model.number="form.hop_limit" class="input">

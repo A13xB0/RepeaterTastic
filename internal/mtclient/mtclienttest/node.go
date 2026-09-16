@@ -3,7 +3,10 @@
 package mtclienttest
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"net"
 	"strings"
@@ -13,6 +16,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
@@ -30,6 +34,8 @@ type Node struct {
 	modules  *pb.LocalModuleConfig
 	channels []*pb.Channel
 	others   []*pb.NodeInfo
+	position *pb.Position // fixed position (set_fixed_position)
+	newKey   []byte       // public key set in the open edit, applied at commit
 	noise    bool
 	silent   bool
 	reboot   bool
@@ -54,8 +60,9 @@ func New(num uint32) *Node {
 			Device:   &pb.Config_DeviceConfig{Role: pb.Config_DeviceConfig_CLIENT},
 			Lora:     &pb.Config_LoRaConfig{Region: pb.Config_LoRaConfig_EU_868, UsePreset: true, ModemPreset: pb.Config_LoRaConfig_LONG_FAST, HopLimit: 3, TxEnabled: true},
 			Security: &pb.Config_SecurityConfig{PublicKey: make([]byte, 32)},
+			Position: &pb.Config_PositionConfig{PositionBroadcastSecs: 900, PositionBroadcastSmartEnabled: true},
 		},
-		modules: &pb.LocalModuleConfig{Mqtt: &pb.ModuleConfig_MQTTConfig{}},
+		modules: &pb.LocalModuleConfig{Mqtt: &pb.ModuleConfig_MQTTConfig{}, Telemetry: &pb.ModuleConfig_TelemetryConfig{DeviceUpdateInterval: 1800, DeviceTelemetryEnabled: true}},
 		channels: []*pb.Channel{
 			{Index: 0, Role: pb.Channel_PRIMARY, Settings: &pb.ChannelSettings{Psk: []byte{1}}},
 			{Index: 1, Role: pb.Channel_DISABLED, Settings: &pb.ChannelSettings{}},
@@ -112,6 +119,45 @@ func (n *Node) Dial(context.Context) (io.ReadWriteCloser, error) {
 	n.mu.Unlock()
 	go n.serve(node)
 	return host, nil
+}
+
+// Serve accepts client API connections on l (a meshtasticd's TCP port) until l is closed.
+func (n *Node) Serve(l net.Listener) {
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		n.mu.Lock()
+		n.dials++
+		n.conn = c
+		n.mu.Unlock()
+		go n.serve(c)
+	}
+}
+
+// Position is the node's fixed position, or nil.
+func (n *Node) Position() *pb.Position {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.position == nil {
+		return nil
+	}
+	return proto.Clone(n.position).(*pb.Position)
+}
+
+// Owner is a copy of the node's user.
+func (n *Node) Owner() *pb.User {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return proto.Clone(n.owner).(*pb.User)
+}
+
+// Modules is a copy of the node's module configuration.
+func (n *Node) Modules() *pb.LocalModuleConfig {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return proto.Clone(n.modules).(*pb.LocalModuleConfig)
 }
 
 // Dials counts connections.
@@ -213,7 +259,7 @@ func (n *Node) handshake(nonce uint32) []*pb.FromRadio {
 		{PayloadVariant: &pb.FromRadio_ConfigCompleteId{ConfigCompleteId: nonce + 1}},
 		{PayloadVariant: &pb.FromRadio_MyInfo{MyInfo: &pb.MyNodeInfo{MyNodeNum: n.num}}},
 		{PayloadVariant: &pb.FromRadio_Metadata{Metadata: proto.Clone(n.metadata).(*pb.DeviceMetadata)}},
-		{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: &pb.NodeInfo{Num: n.num, User: owner}}},
+		{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: &pb.NodeInfo{Num: n.num, User: owner, Position: proto.Clone(n.position).(*pb.Position)}}},
 	}
 	for _, o := range n.others {
 		out = append(out, &pb.FromRadio{PayloadVariant: &pb.FromRadio_NodeInfo{NodeInfo: proto.Clone(o).(*pb.NodeInfo)}})
@@ -288,7 +334,31 @@ func (n *Node) answer(conn io.Writer, p *pb.MeshPacket) bool {
 		ack(pb.Routing_NONE)
 	case *pb.AdminMessage_SetConfig:
 		n.mu.Lock()
+		if sec := v.SetConfig.GetSecurity(); sec != nil && !bytes.Equal(sec.GetPublicKey(), n.config.GetSecurity().GetPublicKey()) {
+			n.newKey = sec.GetPublicKey() // the node number follows the key (2.8)
+			if !wire.Clamped(sec.GetPrivateKey()) {
+				// 2.8 replaces an unclamped key with a new one when it boots.
+				n.newKey = []byte(fmt.Sprintf("regenerated key %d", n.dials))
+			}
+		}
 		mergeConfig(n.config, v.SetConfig)
+		n.mu.Unlock()
+		ack(pb.Routing_NONE)
+	case *pb.AdminMessage_SetModuleConfig:
+		n.mu.Lock()
+		mergeModule(n.modules, v.SetModuleConfig)
+		n.mu.Unlock()
+		ack(pb.Routing_NONE)
+	case *pb.AdminMessage_SetFixedPosition:
+		n.mu.Lock()
+		n.position = v.SetFixedPosition
+		n.config.Position.FixedPosition = true
+		n.mu.Unlock()
+		ack(pb.Routing_NONE)
+	case *pb.AdminMessage_RemoveFixedPosition:
+		n.mu.Lock()
+		n.position = nil
+		n.config.Position.FixedPosition = false
 		n.mu.Unlock()
 		ack(pb.Routing_NONE)
 	case *pb.AdminMessage_SetChannel:
@@ -306,6 +376,11 @@ func (n *Node) answer(conn io.Writer, p *pb.MeshPacket) bool {
 		ack(pb.Routing_NONE)
 		n.mu.Lock()
 		reboot := n.reboot
+		if n.newKey != nil {
+			n.num = crc32.ChecksumIEEE(n.newKey)
+			n.owner.PublicKey, n.owner.Id = n.newKey, fmt.Sprintf("!%08x", n.num)
+			n.newKey, reboot = nil, true
+		}
 		n.mu.Unlock()
 		return !reboot
 	case *pb.AdminMessage_RebootSeconds:
@@ -319,6 +394,17 @@ func (n *Node) answer(conn io.Writer, p *pb.MeshPacket) bool {
 		ack(pb.Routing_NONE)
 	}
 	return true
+}
+
+func mergeModule(dst *pb.LocalModuleConfig, c *pb.ModuleConfig) {
+	cr := c.ProtoReflect()
+	f := cr.WhichOneof(cr.Descriptor().Oneofs().ByName("payload_variant"))
+	if f == nil {
+		return
+	}
+	if df := dst.ProtoReflect().Descriptor().Fields().ByName(f.Name()); df != nil {
+		dst.ProtoReflect().Set(df, protoreflect.ValueOfMessage(proto.Clone(cr.Get(f).Message().Interface()).ProtoReflect()))
+	}
 }
 
 func mergeConfig(dst *pb.LocalConfig, c *pb.Config) {

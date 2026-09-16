@@ -27,6 +27,7 @@ const stepId = computed(() => stepList[step.value].id)
 // Hosted nodes (experimental): the relay persona runs on meshtasticd.
 const DEFAULT_IMAGE = 'meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian'
 const hosted = ref(false)
+const hostedIdentities = ref(true)
 const hostedVia = ref<'exec' | 'docker'>('exec')
 const hostedBinary = ref('')
 const hostedImage = ref(DEFAULT_IMAGE)
@@ -48,6 +49,7 @@ watch([hostedVia, hostedBinary, hostedImage], () => (hostedCheck.value = null))
 function hostedSettings() {
   return {
     persona: hosted.value,
+    identities: hosted.value && hostedIdentities.value,
     meshtasticd: hostedVia.value === 'exec' ? hostedBinary.value.trim() : '',
     docker_image: hostedVia.value === 'docker' ? hostedImage.value.trim() : '',
     port_base: hostedPortBase.value,
@@ -334,8 +336,8 @@ async function finish() {
           <section v-else-if="stepId === 'nodes'">
             <h2 class="text-base font-semibold tracking-tight">Run nodes on meshtasticd</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Experimental: the relay persona can be a real Meshtastic node, a meshtasticd on a simulated radio that RepeaterTastic starts, sets up and restarts.
-              It still transmits on this radio itself, at zero hops.
+              Experimental: the relay persona and your identities can be real Meshtastic nodes, each a meshtasticd on a simulated radio that RepeaterTastic starts, sets up and restarts.
+              They still transmit on this radio themselves, at zero hops.
             </p>
             <div :class="['mt-4 rounded-xl border px-3.5 py-3', hosted ? 'border-brand/60 bg-brand/6' : 'border-line']">
               <label class="flex cursor-pointer items-center gap-3">
@@ -343,7 +345,7 @@ async function finish() {
                 <Server class="size-4 shrink-0 text-ink-3" />
                 <div class="min-w-0">
                   <div class="text-[13px] font-medium">Run the relay on meshtasticd</div>
-                  <div class="text-2xs text-ink-3">Needs meshtasticd 2.8.0 or newer, installed or in Docker. Your identities stay in RepeaterTastic for now.</div>
+                  <div class="text-2xs text-ink-3">Needs meshtasticd 2.8.0 or newer, installed or in Docker.</div>
                 </div>
               </label>
               <div v-if="hosted" class="mt-3 space-y-3 pl-7">
@@ -362,12 +364,16 @@ async function finish() {
                   <div v-if="hostedCheck.ok"><div class="font-medium">meshtasticd {{ hostedCheck.version }} found</div><div class="text-ink-2">{{ hostedCheck.min_version }} or newer is needed · {{ hostedCheck.launcher }}</div></div>
                   <div v-else><div class="font-medium">meshtasticd can't host nodes</div><div class="text-ink-2">{{ hostedCheck.error }}</div></div>
                 </div>
+                <label class="flex cursor-pointer items-start gap-2.5 text-[13px]">
+                  <input id="setup-hosted-identities" v-model="hostedIdentities" type="checkbox" class="mt-0.5 accent-[var(--brand)]" />
+                  <span><span class="font-medium">Identities on meshtasticd too</span><span class="block text-2xs text-ink-3">Each identity you create gets its own meshtasticd and keeps its app port. They never repeat: the relay does.</span></span>
+                </label>
                 <div class="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label class="label" for="setup-hosted-port">API ports from</label>
                     <input id="setup-hosted-port" v-model.number="hostedPortBase" type="number" min="1024" max="64000" class="input h-8 text-xs" />
                   </div>
-                  <p class="hint self-end">About 3 MB of memory per node. <template v-if="hostedVia === 'exec'">meshtasticd listens on every interface: firewall ports {{ hostedPortBase }}–{{ hostedPortBase + 19 }} on a shared network, or use Docker.</template><template v-else>Docker keeps the ports on this machine.</template></p>
+                  <p class="hint self-end">About 3 MB of memory per node. <template v-if="hostedVia === 'exec'">meshtasticd listens on every interface: firewall ports {{ hostedPortBase }}–{{ hostedPortBase + 99 }} on a shared network, or use Docker.</template><template v-else>Docker keeps the ports on this machine.</template></p>
                 </div>
               </div>
             </div>
@@ -379,7 +385,7 @@ async function finish() {
               <table class="mt-2 w-full text-xs">
                 <tbody>
                   <tr class="border-b border-line-soft"><td class="py-1.5 font-medium">Relay persona</td><td class="py-1.5 text-ink-3">{{ hosted ? (hostedCheck?.ok ? `meshtasticd ${hostedCheck.version}` : 'meshtasticd') : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
-                  <tr><td class="py-1.5 font-medium">Your identities</td><td class="py-1.5 text-ink-3">RepeaterTastic</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
+                  <tr><td class="py-1.5 font-medium">Your identities</td><td class="py-1.5 text-ink-3">{{ hosted && hostedIdentities ? 'meshtasticd, one each' : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
                 </tbody>
               </table>
               <p class="mt-2 text-2xs text-ink-3">Everything on this radio transmits from here. The relay hears your identities but never repeats them: they already went out from this mast.</p>
@@ -490,6 +496,7 @@ async function finish() {
               <dt>Radio</dt><dd class="mono truncate">{{ usingBoard ? `board · ${device}` : device }}</dd>
               <dt>Region</dt><dd>{{ region }} · {{ phy?.preset_name }} · {{ phy?.frequency_mhz.toFixed(3) }} MHz</dd>
               <dt>Relay role</dt><dd class="capitalize">{{ role }}</dd>
+              <dt>Identities run on</dt><dd>{{ hosted && hostedIdentities ? 'meshtasticd, one each' : 'RepeaterTastic' }}</dd>
               <dt>Relay runs on</dt><dd>{{ hosted ? `meshtasticd ${hostedCheck?.version ?? ''} (${hostedVia === 'docker' ? 'Docker' : 'installed'})` : 'RepeaterTastic' }}</dd>
               <dt>Admin password</dt><dd>{{ '•'.repeat(Math.min(password.length, 16)) }}</dd>
             </dl>

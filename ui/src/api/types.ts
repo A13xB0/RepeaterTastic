@@ -126,6 +126,8 @@ export interface Identity {
   is_relay: boolean
   /** Runs on meshtasticd rather than in RepeaterTastic. */
   real_node?: boolean
+  /** Runs on a meshtasticd RepeaterTastic starts, with the key RepeaterTastic keeps. */
+  hosted?: boolean
   enabled: boolean
   api: { bind: string; port: number; clients: number } | null
   outbox: number
@@ -543,6 +545,8 @@ export interface HostedInstance {
 
 export interface HostedSettings {
   persona: boolean
+  /** Identities run on meshtasticd too (needs persona). */
+  identities: boolean
   meshtasticd: string
   docker_image: string
   port_base: number

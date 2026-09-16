@@ -165,6 +165,9 @@ type Hosted struct {
 	*Node
 	inst     Instance
 	launcher Launcher
+	ctx      context.Context // ends when the instance is stopped
+	stop     context.CancelFunc
+	done     chan struct{} // closed when the process has stopped for good
 
 	mu       sync.Mutex
 	restarts int
@@ -185,12 +188,17 @@ func StartHosted(ctx context.Context, l Launcher, in Instance, logf func(string,
 	if err := os.WriteFile(in.ConfigPath(), []byte(instanceConfig), 0o600); err != nil {
 		return nil, err
 	}
+	ctx, stop := context.WithCancel(ctx)
 	addr := fmt.Sprintf("127.0.0.1:%d", in.Port)
 	c := mtclient.New(mtclient.Options{Address: addr, Logf: func(string, ...any) {}, ReconnectInterval: 500 * time.Millisecond,
 		ConfigTimeout: 30 * time.Second})
-	h := &Hosted{Node: newNode(addr, in.Dir, c, logf), inst: in, launcher: l}
-	go h.supervise(ctx)
+	h := &Hosted{Node: newNode(addr, in.Dir, c, logf), inst: in, launcher: l, ctx: ctx, stop: stop, done: make(chan struct{})}
+	go func() {
+		defer close(h.done)
+		h.supervise(ctx)
+	}()
 	if err := c.Start(ctx); err != nil {
+		stop()
 		return nil, err
 	}
 	return h, nil
@@ -284,6 +292,16 @@ func (h *Hosted) collect(r io.Reader) {
 
 // Close stops the client; the process stops with the context StartHosted was given.
 func (h *Hosted) Close() error { return h.client.Close() }
+
+// Context ends when the instance stops.
+func (h *Hosted) Context() context.Context { return h.ctx }
+
+// Stop stops the process and the client and waits for the process to end.
+func (h *Hosted) Stop() {
+	h.stop()
+	_ = h.client.Close()
+	<-h.done
+}
 
 var _ mesh.ConfigApplier = (*Hosted)(nil)
 

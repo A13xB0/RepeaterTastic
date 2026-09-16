@@ -288,26 +288,55 @@ func (id *Identity) Record() IdentityRecord {
 	return r
 }
 
-func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
+// Key is the record's private key.
+func (r IdentityRecord) Key() ([]byte, error) {
 	priv, err := base64.StdEncoding.DecodeString(r.PrivateKey)
 	if err != nil || len(priv) != 32 {
 		return nil, fmt.Errorf("bad private key for %q", r.LongName)
 	}
-	id, err := NewIdentity(priv, r.LongName, r.ShortName)
+	return priv, nil
+}
+
+// NodeNum is the node number the record's key gives.
+func (r IdentityRecord) NodeNum() uint32 {
+	priv, err := r.Key()
 	if err != nil {
-		return nil, err
+		return 0
 	}
+	pub, err := wire.PublicKey(priv)
+	if err != nil {
+		return 0
+	}
+	return wire.NodeNumFromPublicKey(pub)
+}
+
+// applyRecordSettings takes the settings the host keeps for an identity from a record.
+func (id *Identity) applyRecordSettings(r IdentityRecord) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
 	id.IsRelay, id.Enabled, id.APIBind, id.APIPort = r.IsRelay, r.Enabled, r.APIBind, r.APIPort
 	id.ShareLimitPct = r.ShareLimit
 	id.HopLimit = r.HopLimit
 	id.OwnPosition, id.PositionSecs = r.Position, r.PositionSecs
 	id.multiRadio = r.MultiRadio.clone()
+	if r.CreatedAt > 0 {
+		id.CreatedAt = time.UnixMilli(r.CreatedAt)
+	}
+}
+
+func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
+	priv, err := r.Key()
+	if err != nil {
+		return nil, err
+	}
+	id, err := NewIdentity(priv, r.LongName, r.ShortName)
+	if err != nil {
+		return nil, err
+	}
+	id.applyRecordSettings(r)
 	defer id.convertLegacy() // after the channels below are loaded
 	if v, ok := pb.Config_DeviceConfig_Role_value[r.Role]; ok {
 		id.User.Role = pb.Config_DeviceConfig_Role(v)
-	}
-	if r.CreatedAt > 0 {
-		id.CreatedAt = time.UnixMilli(r.CreatedAt)
 	}
 	for i, s := range r.Channels {
 		if i >= MaxChannels {
@@ -473,4 +502,11 @@ func (id *Identity) SetSettings(fn func(*IdentitySettings)) {
 	x := IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct}
 	fn(&x)
 	id.Enabled, id.APIPort, id.APIBind, id.ShareLimitPct = x.Enabled, x.APIPort, x.APIBind, x.ShareLimitPct
+}
+
+// Settings reads Enabled, APIPort, APIBind and ShareLimitPct under the identity's lock.
+func (id *Identity) Settings() IdentitySettings {
+	id.mu.RLock()
+	defer id.mu.RUnlock()
+	return IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct}
 }
