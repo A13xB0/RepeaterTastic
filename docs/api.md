@@ -118,7 +118,7 @@ A Radio in the list:
 ```json
 {"id": "main", "name": "Main", "main": true, "device": "/dev/ttyUSB0", "driver": "kiss",
  "firmware": "Mesh KISS v2", "connected": true, "configured": true, "noise_floor_dbm": -111,
- "phy": {"…": "as status.phy"}, "relay": {"role": "mute", "node_id": "!be77562b", "long_name": "Relay"},
+ "phy": {"…": "as status.phy"}, "relay": {"role": "client_mute", "node_id": "!be77562b", "long_name": "Relay"},
  "identities": 3, "tx_pct": 0.1, "channel_util_pct": 6.2, "overlaps": ["mf"]}
 ```
 
@@ -177,13 +177,19 @@ A Radio in the list:
 
 ### Relay role
 
-`PUT /relay[?radio=<id>]` `{"role": "client" | "router" | "mute" | "monitor" | "off"}` → `status.relay`
+`PUT /relay[?radio=<id>]` `{"role": "client" | "client_base" | "client_mute" | "router" | "router_late" | "monitor" | "off"}` → `status.relay`
+
+The roles are Meshtastic's device roles plus two radio modes. `"mute"` is still accepted and read as
+`client_mute`. The rebroadcast mode is `relay.rebroadcast` in `PUT /config`
+([Configuration](configuration.md#relay-the-relay-persona)); `GET /config` reports `"all"` when unset.
 
 | Role | Relay persona | Radio |
 | --- | --- | --- |
 | `client` | Repeats like a normal node: after routers, and cancels if another node relays first | Sends and receives |
-| `router` | Repeats first | Sends and receives |
-| `mute` | Never repeats | Sends and receives; identities still send |
+| `client_base` | A client that repeats for its favourited nodes with router priority | Sends and receives |
+| `client_mute` | Never repeats | Sends and receives; identities still send |
+| `router` | Always repeats, first | Sends and receives |
+| `router_late` | Always repeats, after everyone else | Sends and receives |
 | `monitor` | Never repeats | Listens only: nothing is transmitted (no messages, ACKs, NodeInfo or telemetry) |
 | `off` | Never repeats | Ignored: nothing is received or sent |
 

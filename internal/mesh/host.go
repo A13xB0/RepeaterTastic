@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,24 +26,72 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
-// Relay roles for the host's relay persona. Monitor and off are radio modes: monitor listens and
-// never transmits anything (no relaying, no identity traffic, no ACKs); off ignores the radio
-// altogether (nothing received, nothing sent).
+// Relay roles for the host's relay persona: Meshtastic's device roles that make sense for a
+// relay, plus two radio modes. Monitor listens and never transmits anything (no relaying, no
+// identity traffic, no ACKs); off ignores the radio altogether (nothing received, nothing sent).
 const (
-	RoleClient  = "client"
-	RoleRouter  = "router"
-	RoleMute    = "mute"
-	RoleMonitor = "monitor"
-	RoleOff     = "off"
+	RoleClient     = "client"
+	RoleClientBase = "client_base"
+	RoleClientMute = "client_mute"
+	RoleRouter     = "router"
+	RoleRouterLate = "router_late"
+	RoleMonitor    = "monitor"
+	RoleOff        = "off"
 )
 
-// ValidRelayRole reports whether role is one of the relay roles.
+// NormalizeRelayRole folds a relay role to its current name ("mute" was client_mute's old name).
+func NormalizeRelayRole(role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "mute" {
+		return RoleClientMute
+	}
+	return role
+}
+
+// ValidRelayRole reports whether role is one of the relay roles (old names included).
 func ValidRelayRole(role string) bool {
-	switch role {
-	case RoleClient, RoleRouter, RoleMute, RoleMonitor, RoleOff:
+	switch NormalizeRelayRole(role) {
+	case RoleClient, RoleClientBase, RoleClientMute, RoleRouter, RoleRouterLate, RoleMonitor, RoleOff:
 		return true
 	}
 	return false
+}
+
+// DeviceRole is the Meshtastic device role a relay role stands for. Monitor and off keep the
+// device role given: they only switch the transmitter off.
+func DeviceRole(role string, keep pb.Config_DeviceConfig_Role) pb.Config_DeviceConfig_Role {
+	switch NormalizeRelayRole(role) {
+	case RoleClient:
+		return pb.Config_DeviceConfig_CLIENT
+	case RoleClientBase:
+		return pb.Config_DeviceConfig_CLIENT_BASE
+	case RoleClientMute:
+		return pb.Config_DeviceConfig_CLIENT_MUTE
+	case RoleRouter:
+		return pb.Config_DeviceConfig_ROUTER
+	case RoleRouterLate:
+		return pb.Config_DeviceConfig_ROUTER_LATE
+	}
+	return keep
+}
+
+// routerRole reports whether a relay role rebroadcasts with router priority and never cancels.
+func routerRole(role string) bool { return role == RoleRouter || role == RoleRouterLate }
+
+// Rebroadcast modes (Meshtastic's DeviceConfig.RebroadcastMode), lower case.
+var rebroadcastModes = map[string]pb.Config_DeviceConfig_RebroadcastMode{
+	"all": pb.Config_DeviceConfig_ALL, "all_skip_decoding": pb.Config_DeviceConfig_ALL_SKIP_DECODING,
+	"local_only": pb.Config_DeviceConfig_LOCAL_ONLY, "known_only": pb.Config_DeviceConfig_KNOWN_ONLY,
+	"none": pb.Config_DeviceConfig_NONE, "core_portnums_only": pb.Config_DeviceConfig_CORE_PORTNUMS_ONLY,
+}
+
+// RebroadcastMode resolves a rebroadcast mode name ("" = all).
+func RebroadcastMode(name string) (pb.Config_DeviceConfig_RebroadcastMode, bool) {
+	if name == "" {
+		return pb.Config_DeviceConfig_ALL, true
+	}
+	m, ok := rebroadcastModes[strings.ToLower(name)]
+	return m, ok
 }
 
 // ErrNotTransmitting is returned for sends while the radio is in monitor or off mode.
@@ -62,15 +111,18 @@ const (
 
 // Config is the host-wide mesh configuration.
 type Config struct {
-	Region            string
-	Preset            phy.Preset
-	PrimaryChannel    string // shared by all identities; "" = preset name
-	ChannelNum        int
-	OverrideFreqMHz   float64
-	FreqOffsetMHz     float64
-	TxPowerDBm        int
-	HopLimit          uint32
-	RelayRole         string
+	Region          string
+	Preset          phy.Preset
+	PrimaryChannel  string // shared by all identities; "" = preset name
+	ChannelNum      int
+	OverrideFreqMHz float64
+	FreqOffsetMHz   float64
+	TxPowerDBm      int
+	HopLimit        uint32
+	RelayRole       string
+	// Rebroadcast is the relay's rebroadcast mode ("" = all). A hosted relay applies it as set;
+	// the built-in relay only honours none.
+	Rebroadcast       string
 	DutyCyclePct      float64 // 0 = region default
 	OverrideDutyCycle bool
 	NodeInfoInterval  time.Duration
@@ -224,6 +276,7 @@ func NewHost(cfg Config, r radio.Radio, log *slog.Logger) (*Host, error) {
 	if cfg.HopLimit == 0 || cfg.HopLimit > wire.HopMax {
 		cfg.HopLimit = defaultHopLimit
 	}
+	cfg.RelayRole = NormalizeRelayRole(cfg.RelayRole)
 	if cfg.RelayRole == "" {
 		cfg.RelayRole = RoleClient
 	}
@@ -294,6 +347,7 @@ func (h *Host) Started() time.Time { return h.started }
 
 // SetRelayRole changes the relay persona role at runtime.
 func (h *Host) SetRelayRole(role string) error {
+	role = NormalizeRelayRole(role)
 	if !ValidRelayRole(role) {
 		return fmt.Errorf("unknown relay role %q", role)
 	}
@@ -306,14 +360,7 @@ func (h *Host) SetRelayRole(role string) error {
 	}
 	if r := h.Relay(); r != nil {
 		r.mu.Lock()
-		switch role {
-		case RoleRouter:
-			r.User.Role = pb.Config_DeviceConfig_ROUTER
-		case RoleMute, RoleMonitor, RoleOff:
-			r.User.Role = pb.Config_DeviceConfig_CLIENT_MUTE
-		default:
-			r.User.Role = pb.Config_DeviceConfig_CLIENT
-		}
+		r.User.Role = DeviceRole(role, pb.Config_DeviceConfig_CLIENT_MUTE)
 		r.mu.Unlock()
 	}
 	return nil
@@ -818,6 +865,7 @@ func (h *Host) PushConfig(ctx context.Context) error {
 
 // setConfig applies a host configuration.
 func (h *Host) setConfig(ctx context.Context, cfg Config) error {
+	cfg.RelayRole = NormalizeRelayRole(cfg.RelayRole)
 	if cfg.HopLimit == 0 || cfg.HopLimit > wire.HopMax {
 		cfg.HopLimit = defaultHopLimit
 	}

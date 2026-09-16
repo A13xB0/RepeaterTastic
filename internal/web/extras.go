@@ -168,10 +168,11 @@ type configDTO struct {
 		OverrideFreqMHz    float64 `json:"override_frequency_mhz"` // 0 = from the region and preset
 	} `json:"radio"`
 	Relay struct {
-		Role      string `json:"role"`
-		LongName  string `json:"long_name"`
-		ShortName string `json:"short_name"`
-		LocalDM   string `json:"local_dm"`
+		Role        string `json:"role"`
+		Rebroadcast string `json:"rebroadcast"`
+		LongName    string `json:"long_name"`
+		ShortName   string `json:"short_name"`
+		LocalDM     string `json:"local_dm"`
 	} `json:"relay"`
 	Airtime struct {
 		DutyCyclePercent     float64 `json:"duty_cycle_percent"`
@@ -217,6 +218,10 @@ func toDTO(c *config.Config, h *mesh.Host) configDTO {
 	d.Radio.Baud, d.Radio.HopLimit, d.Radio.ChannelNum, d.Radio.OverrideFreqMHz = c.Radio.Baud, c.Mesh.HopLimit, c.Mesh.ChannelNum, c.Mesh.OverrideFreqMHz
 	if d.Radio.HopLimit == 0 {
 		d.Radio.HopLimit = 3
+	}
+	d.Relay.Rebroadcast = c.Relay.Rebroadcast
+	if d.Relay.Rebroadcast == "" {
+		d.Relay.Rebroadcast = "all"
 	}
 	d.Relay.Role, d.Relay.LongName, d.Relay.ShortName = c.Relay.Role, c.Relay.LongName, c.Relay.ShortName
 	if r := h.Relay(); r != nil {
@@ -371,7 +376,11 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		next.Airtime.TelemetryInterval = iv
 	}
-	next.Relay.Role, next.Relay.LongName, next.Relay.ShortName = d.Relay.Role, d.Relay.LongName, d.Relay.ShortName
+	next.Relay.Rebroadcast = strings.ToLower(d.Relay.Rebroadcast)
+	if next.Relay.Rebroadcast == "all" {
+		next.Relay.Rebroadcast = "" // the default: keep it out of the file
+	}
+	next.Relay.Role, next.Relay.LongName, next.Relay.ShortName = mesh.NormalizeRelayRole(d.Relay.Role), d.Relay.LongName, d.Relay.ShortName
 	next.Links.LocalDMOverRF = d.Relay.LocalDM == "also_rf"
 	next.Airtime.DutyCyclePct = d.Airtime.DutyCyclePercent
 	if d.Airtime.DutyCyclePercent == rc.host.RadioParams().Region.DutyCyclePct {

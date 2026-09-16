@@ -72,7 +72,7 @@ export const state = {
   password: 'meshtastic',
   sessions: new Set<string>(),
   startedAt: now() - 5234_000,
-  relayRole: 'client' as 'client' | 'router' | 'mute' | 'monitor' | 'off',
+  relayRole: 'client' as import('../src/api/types').RelayRole,
   identities: [] as Identity[],
   nodes: new Map<string, MeshNode>(),
   packets: [] as Packet[],
@@ -637,7 +637,7 @@ export function identityStats(w: StatsWindow): IdentityStat[] {
 
 state.config = {
   radio: { type: 'kiss', port: '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0', region: 'EU_868', preset: 'LONG_FAST', primary_channel: '', tx_power_dbm: 27, frequency_offset_mhz: 0, baud: 115200, hop_limit: 3, channel_num: 0, override_frequency_mhz: 0 },
-  relay: { role: 'client', long_name: 'RepeaterTastic Relay', short_name: 'RPTR', local_dm: 'software' },
+  relay: { role: 'client', rebroadcast: 'all', long_name: 'RepeaterTastic Relay', short_name: 'RPTR', local_dm: 'software' },
   airtime: { duty_cycle_percent: 10, identity_share_percent: 25, nodeinfo_interval: '3h', telemetry_interval: 'off', override_duty_cycle: false, cw_min: 3, cw_max: 8 },
   web: { bind: '0.0.0.0', port: 8080, session_ttl: '24h', map_tile_url: '', map_key_source: 'built in', mdns: true, log_level: 'info' },
   position: { latitude: 55.9533, longitude: -3.1883, altitude: 47, precision_bits: 32, interval: '3h', identities: 'relay' },

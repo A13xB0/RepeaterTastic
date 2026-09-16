@@ -15,7 +15,7 @@ import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { num, relTime } from '@/lib/format'
-import { relayModes } from '@/lib/relay'
+import { rebroadcastModes, relayModes } from '@/lib/relay'
 
 type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
@@ -245,7 +245,14 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             <div class="seg">
               <button v-for="r in relayModes" :key="r.id" :title="r.title" :aria-pressed="form.relay.role === r.id" @click="form.relay.role = r.id">{{ r.label }}</button>
             </div>
-            <p class="hint">Same switch as in the top bar. Router rebroadcasts first; client waits and cancels if someone else relays; mute never relays. Monitor only listens (nothing is transmitted); off ignores the radio.</p>
+            <p class="hint">Meshtastic device roles, the same switch as in the top bar, applied to the relay's meshtasticd. Router always repeats and router late does so last; client repeats after routers and client base also favours its favourites; client mute never repeats. Monitor only listens (nothing is transmitted); off ignores the radio.</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="label" for="c-rebroadcast">Rebroadcast mode</label>
+            <select id="c-rebroadcast" v-model="form.relay.rebroadcast" class="input">
+              <option v-for="m in rebroadcastModes" :key="m.id" :value="m.id" :title="m.title">{{ m.label }}</option>
+            </select>
+            <p class="hint">{{ rebroadcastModes.find((m) => m.id === form?.relay.rebroadcast)?.title }}. Meshtastic's device.rebroadcast_mode on the relay.</p>
           </div>
           <div>
             <label class="label" for="c-rln">Relay long name</label>

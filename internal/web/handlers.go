@@ -69,7 +69,7 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		next.Mesh.Preset = strings.ToUpper(req.Preset)
 	}
 	if req.RelayRole != "" {
-		next.Relay.Role = req.RelayRole
+		next.Relay.Role = mesh.NormalizeRelayRole(req.RelayRole)
 	}
 	if req.PrimaryChannel != nil {
 		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
@@ -227,7 +227,7 @@ func (s *Server) putRelay(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfgMu.Lock()
 	next := *s.cfg
-	next.Relay.Role = req.Role
+	next.Relay.Role = mesh.NormalizeRelayRole(req.Role)
 	s.cfgMu.Unlock()
 	if err := s.applyConfig(r, &next); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

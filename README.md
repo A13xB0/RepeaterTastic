@@ -20,8 +20,8 @@ Scottish mesh sites, and useful anywhere.
 - **Virtual nodes ("identities")** with their own key, node number, channels and app port. The
   official Meshtastic apps, the Python CLI and the web client connect to each one as if it were a radio.
 - **A proper repeater:** one relay persona follows the firmware's flooding and next-hop rules, with
-  a shared duty-cycle budget, so ten identities never mean ten repeats. Switch it between client,
-  router and mute, or put the radio in Monitor (listen only) or Off from the top bar.
+  a shared duty-cycle budget, so ten identities never mean ten repeats. Its role is a Meshtastic device
+  role (client, client base, client mute, router, router late), or put the radio in Monitor (listen only) or Off from the top bar.
 - **A web GUI** for everything: identities, chat (as any identity, the relay persona included),
   channels, a live node map, packets, statistics, logs, backups and configuration.
 - **Several radios on one host** (LongFast, MediumFast, …) that take turns on shared frequencies.

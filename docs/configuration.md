@@ -84,11 +84,14 @@ GUI: **Configuration → Radios → Edit**.
 
 ### `relay`: the relay persona
 
-Each radio has one relay persona, the only identity that repeats other nodes' packets.
+Each radio has one relay persona, the only identity that repeats other nodes' packets. Its role is
+a Meshtastic device role, and meshtasticd applies it as-is when the relay runs there
+([hosted relay](#hosted-nodes-on-meshtasticd-experimental)).
 
 ```yaml
 relay:
-    role: client          # client · router · mute · monitor · off
+    role: client          # client · client_base · client_mute · router · router_late · monitor · off
+    rebroadcast: all      # all · all_skip_decoding · local_only · known_only · none · core_portnums_only
     long_name: RepeaterTastic Relay
     short_name: RPTR
 ```
@@ -96,13 +99,22 @@ relay:
 | Role | The relay persona | Identities |
 | --- | --- | --- |
 | `client` | Repeats like a normal node: after routers, and cancels if another node relays first | Send and receive |
-| `router` | Repeats first; for a well-placed site the mesh relies on | Send and receive |
-| `mute` | Never repeats | Send and receive |
+| `client_base` | A client that repeats for its favourited nodes with router priority | Send and receive |
+| `client_mute` | Never repeats. `mute`, the old name, still loads and is saved as `client_mute` | Send and receive |
+| `router` | Always repeats, with priority; for a well-placed site the mesh relies on | Send and receive |
+| `router_late` | Always repeats, but only after other nodes had their chance | Send and receive |
 | `monitor` | Never repeats | Receive only: **nothing is transmitted** (no messages, ACKs, NodeInfo or telemetry); sends fail |
 | `off` | The radio is ignored: nothing received or sent (the modem stays powered) | Local DMs, links and apps still work |
 
 Switching to monitor or off fails anything still queued. GUI: **Configuration → Relay**, or the
 switch in the top bar.
+
+`rebroadcast` is Meshtastic's rebroadcast mode (`device.rebroadcast_mode`) and defaults to `all`.
+A relay on meshtasticd honours every mode. The built-in relay only honours `none`; it treats
+`client_base` as `client` and `router_late` as `router`. Repeater, tracker, sensor and TAK roles
+aren't offered: they make no sense for a relay persona.
+
+![Configuration → Relay: Meshtastic roles and the rebroadcast mode](images/relay-roles.png)
 
 ### `airtime`: duty cycle and background traffic
 

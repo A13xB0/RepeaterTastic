@@ -141,7 +141,7 @@ mesh:
     preset: LONG_FAST
     tx_power_dbm: 10
 relay:
-    role: mute        # listen and answer as its own node, but don't repeat others yet
+    role: client_mute # listen and answer as its own node, but don't repeat others yet
 EOF
 ~/repeatertastic-linux-arm64 -config config.yaml      # wherever you downloaded it
 ```

@@ -31,7 +31,7 @@ async function load() {
 onMounted(() => load().catch(toastError))
 
 const presetLabel = (p: string) => p.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join('')
-const roleLabel: Record<string, string> = { mute: 'mute (never repeats)', client: 'client (repeats)', router: 'router', monitor: 'monitor (listens only)', off: 'off' }
+const roleLabel: Record<string, string> = { client_mute: 'client mute (never repeats)', client: 'client (repeats)', client_base: 'client base', router: 'router', router_late: 'router late', monitor: 'monitor (listens only)', off: 'off' }
 const usedDevices = computed(() => new Set([...(data.value?.radios ?? []).map((r) => r.device), ...(data.value?.pending ?? []).map((p) => p.device)]))
 
 // ---- rename
@@ -94,7 +94,7 @@ const adding = ref(false)
 /** Set when the form edits a radio that hasn't started yet. */
 const editingId = ref<string | null>(null)
 const busy = ref(false)
-const form = ref({ id: '', name: '', driver: 'kiss', device: '', region: 'EU_868', preset: 'MEDIUM_FAST', tx_power_dbm: 22, relay_role: 'mute', copy_position: true })
+const form = ref({ id: '', name: '', driver: 'kiss', device: '', region: 'EU_868', preset: 'MEDIUM_FAST', tx_power_dbm: 22, relay_role: 'client_mute', copy_position: true })
 const addError = ref('')
 const preview = ref<Phy | null>(null)
 const region = computed(() => props.regions.find((r) => r.name === form.value.region))
@@ -102,7 +102,7 @@ function openAdd() {
   const main = data.value?.radios[0]
   const taken = new Set([...(data.value?.radios ?? []).map((r) => r.phy.preset), ...(data.value?.pending ?? []).map((p) => p.preset)])
   const preset = (region.value?.presets ?? ['MEDIUM_FAST']).find((p) => !taken.has(p)) ?? 'MEDIUM_FAST'
-  form.value = { id: '', name: '', driver: 'kiss', device: '', region: main?.phy.region ?? 'EU_868', preset, tx_power_dbm: main?.phy.tx_power_dbm ?? 22, relay_role: 'mute', copy_position: true }
+  form.value = { id: '', name: '', driver: 'kiss', device: '', region: main?.phy.region ?? 'EU_868', preset, tx_power_dbm: main?.phy.tx_power_dbm ?? 22, relay_role: 'client_mute', copy_position: true }
   addError.value = ''
   idTouched.value = false
   editingId.value = null
@@ -114,7 +114,7 @@ function openEditPending(p: RadiosResponse['pending'][number]) {
   const main = data.value?.radios[0]
   form.value = {
     id: p.id, name: p.name || '', driver: p.driver || 'kiss', device: p.device || '', region: p.region || main?.phy.region || 'EU_868', preset: p.preset || 'LONG_FAST',
-    tx_power_dbm: p.tx_power_dbm || main?.phy.tx_power_dbm || 22, relay_role: p.relay_role || 'mute', copy_position: true,
+    tx_power_dbm: p.tx_power_dbm || main?.phy.tx_power_dbm || 22, relay_role: p.relay_role || 'client_mute', copy_position: true,
   }
   addError.value = ''
   idTouched.value = true // keep the id and name as they are

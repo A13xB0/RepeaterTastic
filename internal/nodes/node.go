@@ -246,20 +246,6 @@ func remoteState(s mtclient.Snapshot) mesh.RemoteState {
 	return st
 }
 
-// relayRoleOf maps a node's device role onto the host's relay roles.
-func relayRoleOf(role pb.Config_DeviceConfig_Role, txEnabled bool) string {
-	if !txEnabled {
-		return mesh.RoleMonitor
-	}
-	switch role {
-	case pb.Config_DeviceConfig_ROUTER, pb.Config_DeviceConfig_ROUTER_LATE, pb.Config_DeviceConfig_REPEATER:
-		return mesh.RoleRouter
-	case pb.Config_DeviceConfig_CLIENT_MUTE:
-		return mesh.RoleMute
-	}
-	return mesh.RoleClient
-}
-
 // Current is the host identity the node stands for now (nil before Bind).
 func (n *Node) Current() *mesh.Identity {
 	n.mu.Lock()
@@ -309,10 +295,12 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 		msgs = append(msgs, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetConfig{SetConfig: &pb.Config{PayloadVariant: &pb.Config_Lora{Lora: lora}}}})
 	}
 	if dev := s.Config.GetDevice(); dev != nil {
-		role := deviceRole(cfg.RelayRole, dev.GetRole())
-		if role != dev.GetRole() {
-			d := proto.Clone(dev).(*pb.Config_DeviceConfig)
-			d.Role = role
+		d := proto.Clone(dev).(*pb.Config_DeviceConfig)
+		d.Role = mesh.DeviceRole(cfg.RelayRole, dev.GetRole())
+		if mode, ok := mesh.RebroadcastMode(cfg.Rebroadcast); ok {
+			d.RebroadcastMode = mode
+		}
+		if !proto.Equal(d, dev) {
 			msgs = append(msgs, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetConfig{SetConfig: &pb.Config{PayloadVariant: &pb.Config_Device{Device: d}}}})
 		}
 	}
@@ -390,26 +378,6 @@ wait:
 			return nil // it comes back on its own; the next change waits for it
 		}
 	}
-}
-
-// deviceRole picks the node role for a host relay role, keeping the node's own choice where the
-// host role doesn't say otherwise (a ROUTER_LATE stays one while the host asks for router).
-func deviceRole(relay string, cur pb.Config_DeviceConfig_Role) pb.Config_DeviceConfig_Role {
-	switch relay {
-	case mesh.RoleRouter:
-		if relayRoleOf(cur, true) == mesh.RoleRouter {
-			return cur
-		}
-		return pb.Config_DeviceConfig_ROUTER
-	case mesh.RoleMute:
-		return pb.Config_DeviceConfig_CLIENT_MUTE
-	case mesh.RoleClient:
-		if relayRoleOf(cur, true) == mesh.RoleClient {
-			return cur
-		}
-		return pb.Config_DeviceConfig_CLIENT
-	}
-	return cur // monitor and off only switch the transmitter off
 }
 
 func newNode(addr, stateDir string, c *mtclient.Client, logf func(string, ...any)) *Node {

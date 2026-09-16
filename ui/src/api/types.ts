@@ -1,7 +1,10 @@
 // Types for the RepeaterTastic HTTP API — see docs/api.md (including "Proposed additions").
 // Shared by the SPA and the dev mock, so keep this file free of runtime imports.
 
-export type RelayRole = 'client' | 'router' | 'mute' | 'monitor' | 'off'
+/** Meshtastic device roles the relay can take, plus monitor (listen only) and off. */
+export type RelayRole = 'client' | 'client_base' | 'client_mute' | 'router' | 'router_late' | 'monitor' | 'off'
+/** Meshtastic rebroadcast modes ('' = all). */
+export type RebroadcastMode = '' | 'all' | 'all_skip_decoding' | 'local_only' | 'known_only' | 'none' | 'core_portnums_only'
 export type ChannelRole = 'PRIMARY' | 'SECONDARY' | 'DISABLED'
 export type PacketKind = 'ours' | 'relayed' | 'dup' | 'undecryptable' | 'delivered' | 'local'
 export type MessageStatus = 'queued' | 'sent' | 'acked' | 'failed' | 'received'
@@ -419,7 +422,7 @@ export interface Config {
     channel_num: number
     override_frequency_mhz: number
   }
-  relay: { role: RelayRole; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
+  relay: { role: RelayRole; rebroadcast: RebroadcastMode; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
   airtime: {
     duty_cycle_percent: number
     identity_share_percent: number
