@@ -564,7 +564,13 @@ The relay persona of each modem or HAT radio, and its identities, can run on mes
 - `instances` are the meshtasticd processes running now: `{"radio", "role", "name", "launcher",
   "port", "running", "connected", "restarts", "last_error", "firmware", "node_id", "log"}`, with
   `log` the last lines meshtasticd printed. `role` is `persona` or `identity`.
-- `identities: true` needs `persona: true` (400 otherwise).
+- `identities: true` runs identities on meshtasticd: on a modem or HAT radio together with
+  `persona`, and behind a board on its own. Turning `persona` or `identities` on checks meshtasticd
+  can run (400 otherwise).
+- `GET /setup/runtimes` (no token during setup) → `{"meshtasticd": {"found", "path", "version",
+  "ok", "error"}, "docker": {"found", "ok", "version", "error", "image", "image_present"},
+  "min_version"}`: whether meshtasticd is installed and new enough, and whether Docker answers and
+  already has the image. It never downloads anything.
 - `PUT /hosted` with `persona: true` checks meshtasticd first and answers 400 when it can't run or
   is older than `min_version`. `meshtasticd` must name a meshtasticd program (`""` = the one on
   `PATH`); `docker_image`, when set, runs it in Docker instead.

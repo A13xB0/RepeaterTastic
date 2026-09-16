@@ -526,7 +526,10 @@ func pluginCommand(cfgPath string, args []string) int {
 func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, relay *nodes.Node, log *slog.Logger) *nodes.Hosting {
 	hc := rc.Hosted
 	switch {
-	case relay != nil: // a board
+	case relay != nil: // a board: meshtasticd only when asked for
+		if !hc.Identities {
+			return nil
+		}
 	case !hc.Persona || (rc.Radio.Driver != "kiss" && rc.Radio.Driver != "spi"):
 		return nil
 	}

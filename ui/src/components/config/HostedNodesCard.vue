@@ -2,7 +2,7 @@
 // Configuration → Experimental: run the relay persona on meshtasticd, and see what runs.
 import { onMounted, ref } from 'vue'
 import { api } from '@/api/client'
-import type { HostedSettings } from '@/api/types'
+import type { HostedSettings, Runtimes } from '@/api/types'
 import Spinner from '@/components/ui/Spinner.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import { refreshStatus } from '@/store/live'
@@ -16,6 +16,7 @@ const portBase = ref(4500)
 const persona = ref(false)
 const identities = ref(false)
 const busy = ref(false)
+const runtimes = ref<Runtimes | null>(null)
 const error = ref('')
 
 function load(s: HostedSettings) {
@@ -31,6 +32,10 @@ function load(s: HostedSettings) {
 onMounted(async () => {
   try {
     load(await api.get<HostedSettings>('/hosted'))
+    api.get<Runtimes>('/setup/runtimes').then((r) => {
+      runtimes.value = r
+      if (!state.value?.persona && !state.value?.identities && !r.meshtasticd.ok && r.docker.ok) via.value = 'docker'
+    }).catch(() => {})
   } catch (e) {
     toastError(e)
   }
@@ -42,7 +47,7 @@ async function save() {
   try {
     const s = await api.put<HostedSettings>('/hosted', {
       persona: persona.value,
-      identities: persona.value && identities.value,
+      identities: identities.value,
       meshtasticd: via.value === 'exec' ? binary.value : '',
       docker_image: via.value === 'docker' ? image.value : '',
       port_base: portBase.value,
@@ -74,7 +79,11 @@ async function save() {
       </div>
       <Toggle :model-value="persona" :disabled="busy" label="Relay persona on meshtasticd" @update:model-value="persona = $event" />
     </div>
-    <div v-if="persona" class="mt-3 space-y-3">
+    <p v-if="runtimes" class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-2xs">
+      <span :class="runtimes.meshtasticd.ok ? 'text-ok' : 'text-ink-3'">Installed meshtasticd: {{ runtimes.meshtasticd.ok ? `${runtimes.meshtasticd.version} (${runtimes.meshtasticd.path})` : runtimes.meshtasticd.error }}</span>
+      <span :class="runtimes.docker.ok ? 'text-ok' : 'text-ink-3'">Docker: {{ runtimes.docker.ok ? `${runtimes.docker.version}, image ${runtimes.docker.image_present ? 'downloaded' : 'not downloaded yet'}` : runtimes.docker.error }}</span>
+    </p>
+    <div class="mt-3 space-y-3">
       <div class="flex items-start justify-between gap-4 border-t border-line-soft pt-3">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2 text-[13px] font-medium">
@@ -84,14 +93,16 @@ async function save() {
           <p class="mt-1 text-xs text-ink-3">
             Every identity becomes a meshtasticd of its own, with its saved key: node numbers, channels and chats stay. Each keeps its app port.
             Identities routed across radios stay in RepeaterTastic, and hosted identities can only take roles that never repeat.
+            On a modem or HAT radio this needs the relay on meshtasticd too; behind a board running Meshtastic firmware it works on its own.
           </p>
         </div>
         <Toggle :model-value="identities" :disabled="busy" label="Identities on meshtasticd" @update:model-value="identities = $event" />
       </div>
+      <template v-if="persona || identities">
       <div class="flex flex-wrap items-center gap-2">
         <div class="seg" role="group" aria-label="How to run meshtasticd">
-          <button type="button" :aria-pressed="via === 'exec'" @click="via = 'exec'">Installed</button>
-          <button type="button" :aria-pressed="via === 'docker'" @click="via = 'docker'">Docker</button>
+          <button type="button" :aria-pressed="via === 'exec'" :disabled="!!runtimes && !runtimes.meshtasticd.ok" @click="via = 'exec'">Installed</button>
+          <button type="button" :aria-pressed="via === 'docker'" :disabled="!!runtimes && !runtimes.docker.ok" @click="via = 'docker'">Docker</button>
         </div>
         <input v-if="via === 'exec'" id="hosted-bin" v-model="binary" class="input h-8 mono min-w-0 flex-1 text-xs" placeholder="meshtasticd (on PATH) or /usr/bin/meshtasticd" spellcheck="false" aria-label="meshtasticd program" />
         <input v-else id="hosted-image" v-model="image" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />
@@ -103,6 +114,7 @@ async function save() {
         </div>
         <p class="hint mb-1 flex-1"><template v-if="via === 'exec'">meshtasticd listens on every interface: firewall ports {{ portBase }}–{{ portBase + 99 }} (100 per radio) on a shared network, or use Docker.</template><template v-else>Docker keeps the ports on this machine.</template></p>
       </div>
+    </template>
     </div>
     <div v-if="state.instances.length" class="scroll-thin mt-3 overflow-x-auto rounded-lg border border-line-soft">
       <table class="tbl text-xs">
