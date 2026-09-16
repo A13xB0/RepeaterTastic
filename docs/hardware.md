@@ -152,6 +152,7 @@ step-by-step test guide, and reports are welcome.
 A board running stock Meshtastic firmware (Heltec, T-Beam, RAK, T-Echo and the like) can be a
 radio too, over USB or its network API: `driver: meshtastic`, or **A board running Meshtastic
 firmware** in the setup wizard, or the **Meshtastic firmware** tab under Configuration → Radios.
+Picking its serial port in the wizard detects the firmware and switches to this option.
 
 ![Setup: a board on Meshtastic firmware](images/setup-meshtastic-board.png)
 

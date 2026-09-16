@@ -170,22 +170,25 @@ func (s *Server) probeBoard(w http.ResponseWriter, r *http.Request, device strin
 			return
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	s.boardProbe(r.Context(), device, res, 15*time.Second)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// boardProbe connects to a board, reads its settings into res and disconnects.
+func (s *Server) boardProbe(ctx context.Context, device string, res map[string]any, wait time.Duration) {
+	ctx, cancel := context.WithTimeout(ctx, wait+5*time.Second)
 	defer cancel()
-	c := mtclient.New(mtclient.Options{Address: device, ConfigTimeout: 15 * time.Second, Logf: func(string, ...any) {}})
+	c := mtclient.New(mtclient.Options{Address: device, ConfigTimeout: wait, Logf: func(string, ...any) {}})
 	if err := c.Start(ctx); err != nil {
 		res["error"] = err.Error()
-		writeJSON(w, http.StatusOK, res)
 		return
 	}
 	defer c.Close()
 	if err := c.Wait(ctx); err != nil {
 		res["error"] = "no Meshtastic board answered on " + device + ": " + err.Error()
-		writeJSON(w, http.StatusOK, res)
 		return
 	}
 	fillBoardProbe(res, c.Snapshot())
-	writeJSON(w, http.StatusOK, res)
 }
 
 func fillBoardProbe(res map[string]any, s mtclient.Snapshot) {
