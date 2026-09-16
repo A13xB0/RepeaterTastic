@@ -12,8 +12,8 @@ import (
 )
 
 type Radio struct {
-	open  func(ctx context.Context, device string) (radio.Radio, error)
-	info  radio.Info // info.Device is the device being tried
+	open  func(ctx context.Context, driver, device string) (radio.Radio, error)
+	info  radio.Info // info.Driver and info.Device are what's being tried
 	logf  func(string, ...any)
 	every time.Duration
 	wake  chan struct{}
@@ -28,8 +28,9 @@ type Radio struct {
 	done   chan struct{}
 }
 
-// New starts opening info.Device in the background. info describes the radio until it is open.
-func New(open func(ctx context.Context, device string) (radio.Radio, error), info radio.Info, every time.Duration,
+// New starts opening info.Device with info.Driver in the background. info describes the radio
+// until it is open.
+func New(open func(ctx context.Context, driver, device string) (radio.Radio, error), info radio.Info, every time.Duration,
 	logf func(string, ...any)) *Radio {
 	r := &Radio{open: open, info: info, logf: logf, every: every, frames: make(chan radio.Frame, 64),
 		done: make(chan struct{}), wake: make(chan struct{}, 1)}
@@ -42,9 +43,9 @@ func (r *Radio) loop() {
 	defer close(r.done)
 	for {
 		r.mu.Lock()
-		device := r.info.Device
+		driver, device := r.info.Driver, r.info.Device
 		r.mu.Unlock()
-		inner, err := r.open(r.ctx, device)
+		inner, err := r.open(r.ctx, driver, device)
 		if err == nil {
 			r.mu.Lock()
 			r.inner, r.lastErr = inner, nil
@@ -73,20 +74,20 @@ func (r *Radio) loop() {
 	}
 }
 
-// Retarget switches to another device while the radio still isn't open, and tries it at once.
-// It reports false once a device is open: changing it then needs a restart.
-func (r *Radio) Retarget(device string) bool {
+// Retarget switches to another driver or device while the radio still isn't open, and tries it at
+// once. It reports false once a device is open: changing it then needs a restart.
+func (r *Radio) Retarget(driver, device string) bool {
 	r.mu.Lock()
 	if r.inner != nil {
 		r.mu.Unlock()
 		return false
 	}
-	changed := r.info.Device != device
-	r.info.Device = device
+	changed := r.info.Driver != driver || r.info.Device != device
+	r.info.Driver, r.info.Device = driver, device
 	r.lastErr = nil // log the next failure: it's about the new device
 	r.mu.Unlock()
 	if changed {
-		r.logf("trying radio on %s", device)
+		r.logf("trying %s radio on %s", driver, device)
 		select {
 		case r.wake <- struct{}{}:
 		default:

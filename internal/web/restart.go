@@ -25,7 +25,9 @@ func cloneConfig(c *config.Config) *config.Config {
 // away, so choosing the port (in setup or Configuration) needs no restart until a modem has
 // connected.
 func (s *Server) followUnopenedDevices() {
-	type retargeter interface{ Retarget(device string) bool }
+	type retargeter interface {
+		Retarget(driver, device string) bool
+	}
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	if s.booted == nil {
@@ -50,11 +52,11 @@ func (s *Server) followUnopenedDevices() {
 				}
 			}
 		}
-		if was == nil || was.Device == cur.Radio.Device || was.Driver != cur.Radio.Driver || was.Baud != cur.Radio.Baud {
+		if was == nil || (was.Device == cur.Radio.Device && was.Driver == cur.Radio.Driver) || was.Baud != cur.Radio.Baud {
 			continue
 		}
-		if rt.Retarget(cur.Radio.Device) {
-			was.Device = cur.Radio.Device
+		if rt.Retarget(cur.Radio.Driver, cur.Radio.Device) {
+			was.Driver, was.Device = cur.Radio.Driver, cur.Radio.Device
 		}
 	}
 }
