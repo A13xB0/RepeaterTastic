@@ -7,6 +7,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '@/api/client'
 import type { Board, SerialPort } from '@/api/types'
 import BoardSelect from '@/components/config/BoardSelect.vue'
+import BoardMqttNotice from '@/components/config/BoardMqttNotice.vue'
 
 const props = withDefaults(defineProps<{ id: string; ports: SerialPort[]; label?: string; restartHint?: boolean }>(), {
   label: 'Modem',
@@ -134,6 +135,7 @@ onMounted(async () => {
         Identities reach the air through it, one hop behind, over its MQTT client proxy (its own MQTT connection stops).
         <template v-if="restartHint"> Changing it needs a restart.</template>
       </p>
+      <BoardMqttNotice compact class="mt-2" />
     </template>
   </div>
 </template>

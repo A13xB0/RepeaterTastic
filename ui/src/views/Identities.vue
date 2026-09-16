@@ -11,6 +11,7 @@ import Toggle from '@/components/ui/Toggle.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import CreateIdentityModal from '@/components/identities/CreateIdentityModal.vue'
 import EditIdentityModal from '@/components/identities/EditIdentityModal.vue'
+import BoardMqttNotice from '@/components/config/BoardMqttNotice.vue'
 import KeyModal from '@/components/identities/KeyModal.vue'
 import ChannelsDrawer from '@/components/identities/ChannelsDrawer.vue'
 import { confirmDialog } from '@/composables/confirm'
@@ -128,6 +129,7 @@ async function remove(i: Identity) {
       </div>
     </div>
 
+    <BoardMqttNotice v-if="live.status?.radio.driver === 'meshtastic'" class="mb-3" />
     <section class="card overflow-hidden">
       <div class="scroll-thin overflow-x-auto">
         <table class="tbl">

@@ -164,6 +164,10 @@ Picking its serial port in the wizard detects the firmware and switches to this 
   when meshtasticd can't run. Their packets go to the board through its **MQTT client proxy**. The
   board repeats them onto the air one hop lower, so identities get a hop limit one higher. Everything
   the board hears comes back the same way, with the RSSI and SNR it measured.
+- **Identities show as MQTT traffic.** The firmware marks everything it takes in over MQTT as
+  "via MQTT" and keeps that flag when it repeats it on air. Apps and other nodes show your
+  identities' packets as sent via MQTT, and nodes with "ignore MQTT" set drop them. The board's own
+  packets are unaffected. The GUI says so wherever a board radio is chosen or shown.
 - **The board must repeat.** A role like Client or Router works; Client mute or rebroadcast mode
   None keeps identities off the air.
 - **Its MQTT module is taken over.** RepeaterTastic turns on the client proxy with encryption,

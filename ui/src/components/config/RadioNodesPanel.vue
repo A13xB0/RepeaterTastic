@@ -5,6 +5,7 @@
 import { computed, ref, watch } from 'vue'
 import { api, enc } from '@/api/client'
 import type { HostedInstance, HostedSettings, Identity } from '@/api/types'
+import BoardMqttNotice from '@/components/config/BoardMqttNotice.vue'
 
 const props = defineProps<{ radioId: string; board?: boolean }>()
 const hops = computed(() => (props.board ? 1 : 0))
@@ -89,6 +90,7 @@ function runsOn(i: Identity) {
           </tbody>
         </table>
       </div>
+      <BoardMqttNotice v-if="board" compact class="mt-2" />
       <p v-if="board" class="hint">The board repeats each identity's packets onto the air, so the mesh hears them one hop away. Identities get a hop limit one higher to make up for it.</p>
       <p v-else class="hint">Each identity transmits on this radio itself, beside the relay. The relay hears them but never repeats them: they already went out from this mast.</p>
     </div>

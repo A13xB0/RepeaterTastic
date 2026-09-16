@@ -133,7 +133,12 @@ other at hop limit 0, so none of them repeats a frame that went out from the sam
   - A frame the host sends goes to the board as an MQTT downlink (`MqttClientProxyMessage` with a
     `ServiceEnvelope`: the encrypted packet, the channel's MQTT id or `PKI`, and the sender as
     gateway). The board takes it as heard via MQTT and floods it onto LoRa with the hop limit one
-    lower (checked on 2.8.0: `Rebroadcast msg`, `HopLim=2 hopStart=3`).
+    lower (checked on 2.8.0: `Rebroadcast msg`, `HopLim=2 hopStart=3`). It keeps `via_mqtt`, which
+    is part of the LoRa header (`PACKET_FLAGS_VIA_MQTT_MASK`), so receivers see the packet as
+    MQTT-borne and nodes with `ignore_mqtt` drop it. Stock firmware has no clean way round this: a
+    client's packets are always sent as the board's own. A board on Wi-Fi or Ethernet takes mesh
+    packets over UDP multicast without the flag; firmware built with
+    `MESHTASTIC_ENABLE_FRAME_INJECTION` (off in official builds) takes a client frame as heard.
   - What the board hears comes back as uplinks and becomes received frames with its RSSI and SNR.
   - The board doesn't uplink what came from MQTT, and 2.8 resends a broadcast it never hears
     repeated (twice, 7.3 s apart) and then reports it failed. So when the board's role repeats,
