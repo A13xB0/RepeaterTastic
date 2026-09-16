@@ -332,6 +332,9 @@ func LauncherFor(binary, image string) Launcher {
 // CheckLauncher reports the meshtasticd version l runs, or why it can't host nodes.
 func CheckLauncher(ctx context.Context, l Launcher) (string, error) {
 	v, err := l.Version(ctx)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound) {
+		return "", fmt.Errorf("there's no meshtasticd at %s", l.Describe())
+	}
 	if err != nil {
 		return "", fmt.Errorf("%s can't run: %w", l.Describe(), err)
 	}

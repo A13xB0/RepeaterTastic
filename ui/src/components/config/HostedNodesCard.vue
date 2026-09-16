@@ -101,10 +101,10 @@ async function save() {
       <template v-if="persona || identities">
       <div class="flex flex-wrap items-center gap-2">
         <div class="seg" role="group" aria-label="How to run meshtasticd">
-          <button type="button" :aria-pressed="via === 'exec'" :disabled="!!runtimes && !runtimes.meshtasticd.ok" @click="via = 'exec'">Installed</button>
+          <button type="button" :aria-pressed="via === 'exec'" @click="via = 'exec'">Installed</button>
           <button type="button" :aria-pressed="via === 'docker'" :disabled="!!runtimes && !runtimes.docker.ok" @click="via = 'docker'">Docker</button>
         </div>
-        <input v-if="via === 'exec'" id="hosted-bin" v-model="binary" class="input h-8 mono min-w-0 flex-1 text-xs" placeholder="meshtasticd (on PATH) or /usr/bin/meshtasticd" spellcheck="false" aria-label="meshtasticd program" />
+        <input v-if="via === 'exec'" id="hosted-bin" v-model="binary" class="input h-8 mono min-w-0 flex-1 text-xs" :placeholder="runtimes && !runtimes.meshtasticd.found ? 'not on the PATH: enter where it is' : 'meshtasticd (on PATH) or /usr/bin/meshtasticd'" spellcheck="false" aria-label="meshtasticd program" />
         <input v-else id="hosted-image" v-model="image" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />
       </div>
       <div class="flex flex-wrap items-end gap-3">

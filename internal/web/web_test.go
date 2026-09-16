@@ -235,7 +235,7 @@ func TestSetupMeshtasticdCheck(t *testing.T) {
 		t.Fatalf("unofficial image: %d", code)
 	}
 	code, obj := check(map[string]any{"meshtasticd": "/nonexistent/meshtasticd"})
-	if code != 200 || obj["ok"] != false || !strings.Contains(obj["error"].(string), "can't run") || obj["min_version"] != "2.8.0" {
+	if code != 200 || obj["ok"] != false || !strings.Contains(obj["error"].(string), "no meshtasticd at") || obj["min_version"] != "2.8.0" {
 		t.Fatalf("missing program: %d %v", code, obj)
 	}
 	code, obj, _ = call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse",

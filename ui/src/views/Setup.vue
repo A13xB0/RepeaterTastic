@@ -499,12 +499,12 @@ async function finish() {
                 </li>
               </ul>
               <p v-if="noRuntime" class="mt-2 text-2xs text-ink-3">
-                Neither is available, so this stays off. Install the meshtasticd package ({{ runtimes?.min_version }} or newer) or Docker, then look again.<template v-if="usingNode"> Your identities run in RepeaterTastic behind the board meanwhile.</template>
+                Neither was found. If meshtasticd ({{ runtimes?.min_version }} or newer) is installed somewhere unusual, tick the box and enter where it is. Otherwise install it or Docker, then look again.<template v-if="usingNode"> Left off, your identities run in RepeaterTastic behind the board.</template>
               </p>
             </div>
-            <div :class="['mt-3 rounded-xl border px-3.5 py-3', hosted ? 'border-brand/60 bg-brand/6' : 'border-line', noRuntime && 'opacity-60']">
-              <label :class="['flex items-center gap-3', noRuntime ? 'cursor-not-allowed' : 'cursor-pointer']">
-                <input id="setup-hosted" v-model="hosted" type="checkbox" class="accent-[var(--brand)]" :disabled="noRuntime && !hosted" />
+            <div :class="['mt-3 rounded-xl border px-3.5 py-3', hosted ? 'border-brand/60 bg-brand/6' : 'border-line']">
+              <label class="flex cursor-pointer items-center gap-3">
+                <input id="setup-hosted" v-model="hosted" type="checkbox" class="accent-[var(--brand)]" />
                 <Server class="size-4 shrink-0 text-ink-3" />
                 <div class="min-w-0">
                   <div class="text-[13px] font-medium">{{ usingNode ? 'Run identities on meshtasticd' : 'Run the relay on meshtasticd' }}</div>
@@ -514,13 +514,14 @@ async function finish() {
               <div v-if="hosted" class="mt-3 space-y-3 pl-7">
                 <div class="flex flex-wrap items-center gap-2">
                   <div class="seg" role="group" aria-label="How to run meshtasticd">
-                    <button type="button" :aria-pressed="hostedVia === 'exec'" :disabled="!!runtimes && !canInstalled" :title="runtimes && !canInstalled ? runtimes.meshtasticd.error : ''" @click="hostedVia = 'exec'">Installed</button>
+                    <button type="button" :aria-pressed="hostedVia === 'exec'" @click="hostedVia = 'exec'">Installed</button>
                     <button type="button" :aria-pressed="hostedVia === 'docker'" :disabled="!!runtimes && !canDocker" :title="runtimes && !canDocker ? runtimes.docker.error : ''" @click="hostedVia = 'docker'">Docker</button>
                   </div>
-                  <input v-if="hostedVia === 'exec'" id="setup-hosted-bin" v-model="hostedBinary" class="input h-8 mono min-w-0 flex-1 text-xs" placeholder="meshtasticd (on PATH) or /usr/bin/meshtasticd" spellcheck="false" aria-label="meshtasticd program" />
+                  <input v-if="hostedVia === 'exec'" id="setup-hosted-bin" v-model="hostedBinary" class="input h-8 mono min-w-0 flex-1 text-xs" :placeholder="canInstalled || !runtimes ? 'meshtasticd (on PATH) or /usr/bin/meshtasticd' : 'where it is, e.g. /opt/meshtasticd/bin/meshtasticd'" spellcheck="false" aria-label="meshtasticd program" />
                   <input v-else id="setup-hosted-image" v-model="hostedImage" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />
                   <button class="btn btn-sm" :disabled="checkingHosted" @click="checkHosted"><Spinner v-if="checkingHosted" />Check</button>
                 </div>
+                <p v-if="hostedVia === 'exec' && runtimes && !runtimes.meshtasticd.found && !hostedCheck" class="hint !mt-1">Not found on the PATH. If it's installed somewhere else, enter the full path to the meshtasticd program and check it.</p>
                 <div v-if="hostedCheck" :class="['flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-[13px]', hostedCheck.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
                   <CircleCheck v-if="hostedCheck.ok" class="mt-0.5 size-4 shrink-0 text-ok" />
                   <CircleAlert v-else class="mt-0.5 size-4 shrink-0 text-bad" />
