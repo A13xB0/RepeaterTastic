@@ -188,7 +188,12 @@ func (s *sx126x) configure(c radio.Config, power int) error {
 	if err := s.writeRegister(regOCPConfig, 0x38); err != nil { // 140 mA, as Meshtastic sets for SX126x
 		return err
 	}
-	return s.writeRegister(regRxGain, rxGainBoosted)
+	if err := s.writeRegister(regRxGain, rxGainBoosted); err != nil {
+		return err
+	}
+	// Undocumented RX sensitivity patch meshtasticd applies (recommended by Heltec/Semtech): bit 0
+	// of register 0x08B5.
+	return s.updateRegister(0x08B5, func(v byte) byte { return v | 0x01 })
 }
 
 func (s *sx126x) standby() error { return s.cmd(cmdSetStandby, 0x00) }
