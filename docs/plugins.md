@@ -12,6 +12,7 @@ the operator allows, and it can't take the daemon down with it.
 - [Enabling and permissions](#enabling-and-permissions)
 - [Settings](#settings), [status, log and panel](#status-log-and-panel)
 - [Attached plugins](#attached-plugins) that run in another container or on another machine
+- [Plugins in Docker](#plugins-in-docker)
 - [Configuration](#configuration): the `plugins:` section
 - [Writing a plugin](#writing-a-plugin): the bundle, `plugin.yaml`, how a plugin works and the Go
   SDK
@@ -116,6 +117,41 @@ What to expect:
 - The TCP connection isn't encrypted. Keep it on localhost, a private network or a VPN.
 - **New token** on the plugin's page replaces the token and disconnects the old one.
 
+## Plugins in Docker
+
+Managed plugins run inside the RepeaterTastic container, next to meshtasticd:
+
+- **Where they live:** bundles unpack into `/data/plugins/installed/`, and each plugin's data goes
+  in `/data/plugins/data/<id>/`, both on the `/data` volume. They survive image upgrades and
+  container re-creation.
+- **Which program runs:** `{os}` is `linux` and `{arch}` is the container's CPU (`amd64`, `arm64`, or
+  `arm` for arm/v7), so a bundle built by `scripts/bundle-plugin.sh` just works.
+- **As whom:** the container's unprivileged `repeatertastic` user. A plugin can use the container's
+  network, but not the host's devices.
+- **What's available:** the image is Debian 13 (glibc 2.41, `sh` and `bash`) with nothing else
+  installed. Static binaries are the safe choice; dynamically linked ones work if they only need
+  glibc. A plugin written in Python or Node needs either an image of your own built on this one:
+
+  ```dockerfile
+  FROM ghcr.io/scotmesh/repeatertastic:latest
+  USER root
+  RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+  USER repeatertastic
+  ```
+
+  or to run as an [attached plugin](#attached-plugins) in its own container.
+- **Run the container with `--init`** (`init: true` in Compose). RepeaterTastic is the container's
+  first process, and a plugin that starts helper processes and leaves them behind would otherwise
+  leave zombies.
+- **Installing:** use the GUI, `docker cp hello-plugin.zip repeatertastic:/data/plugins/inbox/`, or
+  `docker exec repeatertastic repeatertastic plugin install /data/hello-plugin.zip` (the command
+  line already runs as the right user in the container). A bundle mounted from the host needs to be
+  readable by that user.
+- **Attached plugins in another container:** set `plugins.listen` to `0.0.0.0:4450` and either
+  give the plugin container `network_mode: "service:repeatertastic"` and `RT_PLUGIN_ADDR=127.0.0.1:4450`,
+  or put both on a Docker network and use `RT_PLUGIN_ADDR=repeatertastic:4450`. Don't publish the
+  port beyond that: the connection isn't encrypted.
+
 ## Configuration
 
 ```yaml
@@ -168,7 +204,7 @@ seconds; `install` hands the bundle to it through the inbox.
 ```
 plugin.yaml
 logo.svg                 PNG, SVG or WebP
-bin/hello-linux-arm64    one static binary per target
+bin/hello-linux-arm64    one static binary per target (see Plugins in Docker)
 bin/hello-linux-arm
 bin/hello-linux-amd64
 panel/index.html         optional

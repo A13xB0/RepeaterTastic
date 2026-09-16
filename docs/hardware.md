@@ -100,7 +100,7 @@ usually `dialout` (`ls -l /dev/ttyUSB0`). `deploy/install.sh` adds the `repeater
 Pass the device in and add the group that owns it:
 
 ```bash
-docker run … \
+docker run --init … \
   --device /dev/serial/by-id/usb-…-if00-port0:/dev/ttyUSB0 \
   --group-add "$(getent group dialout | cut -d: -f3)" \
   ghcr.io/scotmesh/repeatertastic:latest

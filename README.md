@@ -57,7 +57,7 @@ Raspberry Pi OS, Debian and Ubuntu.
 ### Or run it in Docker
 
 ```bash
-docker run -d --name repeatertastic --restart unless-stopped --network host \
+docker run -d --name repeatertastic --restart unless-stopped --init --network host \
   --device /dev/ttyUSB0 --group-add "$(getent group dialout | cut -d: -f3)" \
   -v repeatertastic-data:/data ghcr.io/scotmesh/repeatertastic:latest
 ```
