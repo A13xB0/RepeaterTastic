@@ -8,8 +8,9 @@ Wants=network-online.target
 # installs the meshtasticd package and keeps the package's own service off, which would take the
 # radio and port 4403:
 #   systemctl disable --now meshtasticd
-# To run them in Docker instead (hosted.docker_image), install.sh --meshtasticd docker adds the
-# docker group in a drop-in (repeatertastic.service.d/docker.conf).
+# To run them in Docker instead (hosted.docker_image), add the docker group in a drop-in:
+#   [Service]
+#   SupplementaryGroups=dialout docker
 
 [Service]
 Type=simple

@@ -103,9 +103,16 @@ Pass the device in and add the group that owns it:
 docker run … \
   --device /dev/serial/by-id/usb-…-if00-port0:/dev/ttyUSB0 \
   --group-add "$(getent group dialout | cut -d: -f3)" \
-  -e REPEATERTASTIC_RADIO_DEVICE=/dev/ttyUSB0 \
   ghcr.io/scotmesh/repeatertastic:latest
 ```
+
+- The image includes meshtasticd, which runs every node inside the container. Its API ports
+  (4500 up) stay inside: don't publish them.
+- `--network host` lets the apps find identities over mDNS and joins the LAN multicast mesh. Without
+  it, publish `-p 8080:8080 -p 4403-4410:4403-4410` instead.
+- A LoRa HAT needs `--device /dev/spidev0.0 --device /dev/gpiochip0` and the `spi` and `gpio`
+  groups. A CH341 stick needs `--device /dev/bus/usb` and its udev group.
+- Prefer Compose? Copy [`deploy/docker-compose.example.yml`](../deploy/docker-compose.example.yml).
 
 - Map the **by-id** path on the host to a fixed name inside the container.
 - If the board is unplugged and replugged, recreate the container (`docker compose up -d

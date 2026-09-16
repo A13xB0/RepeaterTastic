@@ -67,13 +67,13 @@ name (a random `!xxxxxxxx`). If it doesn't:
 ## 5. Run RepeaterTastic
 
 ```bash
-sudo ./deploy/install.sh dist/repeatertastic-linux-arm64 dist/kisstool-linux-arm64
+sudo ./deploy/install.sh bin/repeatertastic bin/kisstool   # or no arguments for the latest release
 # or, in the foreground:
 bin/repeatertastic -config deploy/repeatertastic.example.yaml   # set radio.device and state_dir first
 ```
 
-The installer also sets up meshtasticd 2.8+ (`--meshtasticd auto` by default), which every node
-runs on: without it nothing goes on air. Open `http://<host>:8080`, set the admin password, and
+The installer also installs meshtasticd 2.8+, which every node runs on: without it nothing goes on
+air. Open `http://<host>:8080`, set the admin password, and
 check that the top bar shows the modem connected on EU_868 · LongFast · 869.525 MHz · sync 0x2B, and
 the **meshtasticd** chip green.
 
