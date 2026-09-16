@@ -177,7 +177,9 @@ account menu) and stored in the state folder, not in this file.
 
 ### `radios`, `site` and `experimental`
 
-Extra radios, the site-wide airtime cap and the experimental identities on several radios are
+`experimental.meshtasticd_raw_modem` allows `radio.device: tcp://…`, meshtasticd serving its radio
+as a raw modem ([meshtasticd as the modem](meshtasticd-raw-modem.md)); off by default while that
+mode is under review upstream. Extra radios, the site-wide airtime cap and the experimental identities on several radios are
 covered in [Several radios](radios.md).
 
 ### `plugins`

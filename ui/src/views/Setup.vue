@@ -77,7 +77,24 @@ watch(board, (v) => {
   if (usingBoard.value) device.value = v
 })
 
+// A serial port typed by hand, for one the daemon didn't list (or a Windows COM port).
+const manualPort = ref('')
+const usingManual = ref(false)
+watch(manualPort, (v) => {
+  if (usingManual.value) device.value = v.trim()
+})
+function pickManual() {
+  usingManual.value = true
+  driver.value = 'kiss'
+  device.value = manualPort.value.trim()
+}
+watch(device, (v) => {
+  // picking a listed port, meshtasticd or a board leaves manual mode
+  if (usingManual.value && v !== manualPort.value.trim()) usingManual.value = false
+})
+
 // meshtasticd's radio served as a raw KISS modem over TCP (General: RawModemPort).
+const mtdAllowed = ref(false) // experimental.meshtasticd_raw_modem, read from /setup
 const mtdHost = ref('127.0.0.1')
 const mtdPort = ref(4405)
 const mtdDevice = computed(() => `tcp://${mtdHost.value.trim()}:${mtdPort.value}`)
@@ -105,6 +122,9 @@ watch([region, preset, primary], preview)
 
 onMounted(async () => {
   loadPorts()
+  get<{ meshtasticd_raw_modem: boolean }>('/setup')
+    .then((x) => (mtdAllowed.value = x.meshtasticd_raw_modem))
+    .catch(() => {})
   get<Board[]>('/boards')
     .then((b) => (boards.value = b))
     .catch(() => {
@@ -198,7 +218,7 @@ async function finish() {
           <section v-if="step === 0">
             <h2 class="text-base font-semibold tracking-tight">Connect the modem</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch), meshtasticd's radio served as a raw modem, or a LoRa board RepeaterTastic drives itself. We'll ping it and check it accepts sync word 0x2B.
+              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch){{ mtdAllowed ? ", meshtasticd's radio served as a raw modem," : '' }} or a LoRa board RepeaterTastic drives itself. We'll ping it and check it accepts sync word 0x2B.
             </p>
             <div class="mt-4 space-y-2">
               <label
@@ -216,7 +236,18 @@ async function finish() {
               <div v-if="!ports.length && !loadingPorts" class="rounded-xl border border-dashed border-line px-4 py-6 text-center text-[13px] text-ink-3">
                 No serial ports found. Plug the modem in and refresh.
               </div>
-              <div :class="['rounded-xl border px-3.5 py-3 transition-colors', usingMtd ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
+              <div :class="['rounded-xl border px-3.5 py-3 transition-colors', usingManual ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
+                <label class="flex cursor-pointer items-center gap-3">
+                  <input type="radio" :checked="usingManual" class="accent-[var(--brand)]" @change="pickManual" />
+                  <Usb class="size-4 shrink-0 text-ink-3" />
+                  <div class="min-w-0">
+                    <div class="text-[13px] font-medium">Serial port by name</div>
+                    <div class="text-2xs text-ink-3">A KISS modem on a port that isn't listed: <span class="mono">/dev/ttyUSB0</span>, <span class="mono">/dev/serial/by-id/…</span>, or <span class="mono">COM3</span> on Windows</div>
+                  </div>
+                </label>
+                <input v-if="usingManual" id="setup-serial" v-model="manualPort" class="input h-8 mono mt-2.5 ml-7 w-[calc(100%-1.75rem)] text-xs" placeholder="/dev/ttyUSB0 or COM3" spellcheck="false" aria-label="Serial port" />
+              </div>
+              <div v-if="mtdAllowed" :class="['rounded-xl border px-3.5 py-3 transition-colors', usingMtd ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
                 <label class="flex cursor-pointer items-center gap-3">
                   <input type="radio" :checked="usingMtd" class="accent-[var(--brand)]" @change="pickMtd" />
                   <Server class="size-4 shrink-0 text-ink-3" />
@@ -245,7 +276,7 @@ async function finish() {
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
               <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />Test modem</button>
-              <input v-if="!usingBoard" v-model="device" class="input h-7 min-w-0 flex-1 rounded-lg text-xs" placeholder="or type a path, e.g. /dev/ttyUSB0" @input="driver = 'kiss'" />
+
             </div>
             <div v-if="probe" :class="['mt-3 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[13px]', probe.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
               <CircleCheck v-if="probe.ok" class="mt-0.5 size-4 shrink-0 text-ok" />

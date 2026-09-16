@@ -25,6 +25,7 @@ func testWeb(t *testing.T) *httptest.Server {
 	cfg := config.Default()
 	cfg.StateDir = dir
 	cfg.Radio.Driver = "none"
+	cfg.Experimental.MeshtasticdRawModem = true // the tcp:// probe tests need it
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h, err := mesh.NewHost(cfg.MeshConfig(), null.New(), log)
 	if err != nil {

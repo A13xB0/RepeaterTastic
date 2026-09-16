@@ -31,7 +31,10 @@ import (
 // ---------------------------------------------------------------------------------- setup/auth
 
 func (s *Server) getSetup(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{"needed": s.auth.SetupNeeded()})
+	s.cfgMu.Lock()
+	rawModem := s.cfg.Experimental.MeshtasticdRawModem
+	s.cfgMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"needed": s.auth.SetupNeeded(), "meshtasticd_raw_modem": rawModem})
 }
 
 func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
@@ -1653,7 +1656,7 @@ func (s *Server) putExperimental(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.opt.Federation.SetEnabled(req.MultiRadioIdentities)
-	s.log.Info("experimental settings changed", "multi_radio_identities", req.MultiRadioIdentities)
+	s.log.Info("experimental settings changed", "multi_radio_identities", req.MultiRadioIdentities, "meshtasticd_raw_modem", req.MeshtasticdRawModem)
 	writeJSON(w, http.StatusOK, req)
 }
 

@@ -68,8 +68,14 @@ func TestRadioValidation(t *testing.T) {
 	}
 }
 
+func TestTCPRadioDeviceNeedsTheFlag(t *testing.T) {
+	if _, err := load(t, "radio: {device: tcp://127.0.0.1:4405}\n"); err == nil || !strings.Contains(err.Error(), "meshtasticd_raw_modem") {
+		t.Fatalf("tcp device without the experimental flag: %v", err)
+	}
+}
+
 func TestTCPRadioDevice(t *testing.T) {
-	c, err := load(t, "radio: {device: tcp://127.0.0.1:4405}\n"+
+	c, err := load(t, "experimental: {meshtasticd_raw_modem: true}\nradio: {device: tcp://127.0.0.1:4405}\n"+
 		"radios: [{id: b, radio: {device: tcp://127.0.0.1:4406}, mesh: {preset: MEDIUM_FAST}}]\n")
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +85,7 @@ func TestTCPRadioDevice(t *testing.T) {
 	}
 	for yml, want := range map[string]string{
 		"radio: {device: tcp://127.0.0.1}\n": "must be tcp://host:port",
-		"radio: {device: tcp://MTD.local:4405}\n" +
+		"experimental: {meshtasticd_raw_modem: true}\nradio: {device: tcp://MTD.local:4405}\n" +
 			"radios: [{id: b, radio: {device: tcp://mtd.local:4405}, mesh: {preset: MEDIUM_FAST}}]\n": "both use",
 	} {
 		if _, err := load(t, yml); err == nil || !strings.Contains(err.Error(), want) {

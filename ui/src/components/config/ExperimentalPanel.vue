@@ -10,6 +10,7 @@ import { toast, toastError } from '@/composables/toast'
 
 interface Experimental {
   multi_radio_identities: boolean
+  meshtasticd_raw_modem: boolean
 }
 
 const state = ref<Experimental | null>(null)
@@ -53,6 +54,20 @@ async function setMultiRadio(on: boolean) {
     busy.value = false
   }
 }
+
+async function setRawModem(on: boolean) {
+  if (!state.value) return
+  busy.value = true
+  try {
+    state.value = await api.put<Experimental>('/experimental', { ...state.value, meshtasticd_raw_modem: on })
+    live.meshtasticdRawModem = state.value.meshtasticd_raw_modem
+    toast(on ? 'meshtasticd as the modem: on' : 'meshtasticd as the modem: off')
+  } catch (e) {
+    toastError(e)
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -73,6 +88,18 @@ async function setMultiRadio(on: boolean) {
         </p>
       </div>
       <Toggle :model-value="state.multi_radio_identities" :disabled="busy" label="Identities on several radios" @update:model-value="setMultiRadio" />
+    </div>
+    <div v-if="state" class="flex items-start justify-between gap-4 rounded-xl border border-line-soft px-4 py-3.5">
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-center gap-2 text-[13px] font-medium">
+          meshtasticd as the modem
+          <span :class="['chip', state.meshtasticd_raw_modem ? 'bg-ok/14 text-ok' : 'bg-ink-3/12 text-ink-3']">{{ state.meshtasticd_raw_modem ? 'on' : 'off' }}</span>
+        </div>
+        <p class="mt-1 text-xs text-ink-3">
+          Use a radio that meshtasticd serves as a raw modem over TCP (<span class="mono">tcp://host:port</span>). Needs a meshtasticd build with raw modem mode, which is still under review upstream; the option appears in the modem pickers once this is on.
+        </p>
+      </div>
+      <Toggle :model-value="state.meshtasticd_raw_modem" :disabled="busy" label="meshtasticd as the modem" @update:model-value="setRawModem" />
     </div>
   </div>
 </template>

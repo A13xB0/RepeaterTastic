@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -480,6 +481,13 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if addr, isTCP, err := kiss.TCPAddr(req.Device); isTCP {
+		s.cfgMu.Lock()
+		allowed := s.cfg.Experimental.MeshtasticdRawModem
+		s.cfgMu.Unlock()
+		if !allowed {
+			writeError(w, http.StatusBadRequest, "meshtasticd as the modem is off: turn on experimental.meshtasticd_raw_modem first")
+			return
+		}
 		// meshtasticd in raw modem mode. Before a password exists, don't let the probe reach other hosts.
 		if err != nil || (s.auth.SetupNeeded() && !loopbackAddr(addr)) {
 			writeError(w, http.StatusBadRequest, "device must be tcp://host:port, and on this machine until a password is set")
@@ -977,7 +985,12 @@ func loopbackAddr(addr string) bool {
 }
 
 // serialPath limits the setup probe (reachable before a password is set) to serial devices.
+var comPort = regexp.MustCompile(`^(\\\\\.\\)?COM[0-9]+$`)
+
 func serialPath(p string) bool {
+	if comPort.MatchString(p) { // Windows
+		return true
+	}
 	p = filepath.Clean(p)
 	for _, prefix := range []string{"/dev/tty", "/dev/serial/", "/dev/cu.", "/dev/rfcomm"} {
 		if strings.HasPrefix(p, prefix) {

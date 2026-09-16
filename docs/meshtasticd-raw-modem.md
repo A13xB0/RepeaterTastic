@@ -48,7 +48,12 @@ refuses to start with one rather than fall back to meshing.
 
 ## 3. Point RepeaterTastic at it
 
+The option is behind an experimental switch until raw modem mode is merged upstream: turn on
+**Configuration → Experimental → meshtasticd as the modem**, or set it in the config file.
+
 ```yaml
+experimental:
+    meshtasticd_raw_modem: true
 radio:
     driver: kiss
     device: tcp://127.0.0.1:4405
