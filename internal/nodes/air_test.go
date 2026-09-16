@@ -26,16 +26,18 @@ const (
 )
 
 type airRig struct {
-	ctx     context.Context
-	h       *mesh.Host
-	node    *mtclienttest.Node
-	persona *mesh.Identity
-	ops     *mesh.Identity
-	far     *sim.Radio
+	ctx         context.Context
+	air         *LoRaAir
+	personaNode *Node
+	h           *mesh.Host
+	node        *mtclienttest.Node
+	persona     *mesh.Identity
+	ops         *mesh.Identity
+	far         *sim.Radio
 }
 
-// newAirRig runs a host on a sim radio with a hosted relay persona (a fake node) and one virtual
-// identity, plus a second radio ("far") that stands for the rest of the mesh.
+// newAirRig runs a host on a sim radio whose LoRa air has one joined node (a fake hosted persona)
+// and one virtual identity, plus a second radio ("far") that stands for the rest of the mesh.
 func newAirRig(t *testing.T) *airRig {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -57,7 +59,7 @@ func newAirRig(t *testing.T) *airRig {
 	if err := c.WaitReady(wctx); err != nil {
 		t.Fatal(err)
 	}
-	n := newNode("fake", "", c, t.Logf, false)
+	n := newNode("fake", "", c, testLogf(t))
 	persona, err := mesh.NewRemoteIdentity(n, remoteState(c.Snapshot()))
 	if err != nil {
 		t.Fatal(err)
@@ -73,8 +75,12 @@ func newAirRig(t *testing.T) *airRig {
 			ops = id
 		}
 	}
-	air := NewAir(h, t.Logf)
-	go air.Serve(ctx, c, persona, true)
+	n.Bind(h, persona)
+	air := NewLoRaAir(h, testLogf(t))
+	if air.Relay() != nil {
+		t.Fatal("a LoRa air brings no relay")
+	}
+	air.Join(ctx, n)
 	go func() { _ = h.Run(ctx) }()
 
 	far := hub.Attach("far", 64)
@@ -84,7 +90,7 @@ func newAirRig(t *testing.T) *airRig {
 		t.Fatal(err)
 	}
 	eventually(t, "air bridge registered", func() bool { return len(air.snapshot()) == 1 })
-	return &airRig{ctx: ctx, h: h, node: node, persona: persona, ops: ops, far: far}
+	return &airRig{ctx: ctx, air: air, personaNode: n, h: h, node: node, persona: persona, ops: ops, far: far}
 }
 
 func channelPacket(from, id uint32, hop uint32, text string) *pb.MeshPacket {
@@ -171,7 +177,7 @@ func TestAirHostedTransmits(t *testing.T) {
 	if p.Id != 1004 {
 		t.Fatal("frame addressed to node 0 transmitted")
 	}
-	// Our own virtual identity is heard by the persona, which must not repeat it.
+	// Everything the host sends reaches the joined nodes at hop 0: they don't repeat it.
 	pid, err := r.h.SendText(r.ops, wire.Broadcast, 0, "from ops", false)
 	if err != nil {
 		t.Fatal(err)
@@ -280,4 +286,28 @@ func eventually(t *testing.T, what string, cond func() bool) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func TestAirJoinLeave(t *testing.T) {
+	r := newAirRig(t)
+	pid, err := r.h.SendText(r.ops, wire.Broadcast, 0, "before leave", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "heard while joined", func() bool {
+		return len(r.injected(func(p *pb.MeshPacket, _ *pb.Compressed) bool { return p.Id == pid })) == 1
+	})
+	r.air.Leave(r.personaNode)
+	eventually(t, "node off the air", func() bool { return len(r.air.snapshot()) == 0 })
+	pid, err = r.h.SendText(r.ops, wire.Broadcast, 0, "after leave", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.farFrame(t, func(p *pb.MeshPacket) bool { return p.Id == pid }) // it went on air...
+	if n := len(r.injected(func(p *pb.MeshPacket, _ *pb.Compressed) bool { return p.Id == pid })); n != 0 {
+		t.Fatal("...but a node that left still heard it")
+	}
+	// Joining again puts it back.
+	r.air.Join(r.ctx, r.personaNode)
+	eventually(t, "node back on the air", func() bool { return len(r.air.snapshot()) == 1 })
 }

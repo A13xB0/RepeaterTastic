@@ -784,14 +784,13 @@ func clonePacket(p *pb.MeshPacket) *pb.MeshPacket { return proto.Clone(p).(*pb.M
 // primary channel, frequency, power) the radio is retuned and every identity's primary channel
 // name follows.
 func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
-	if err := h.MirrorConfig(ctx, cfg); err != nil {
+	if err := h.setConfig(ctx, cfg); err != nil {
 		return err
 	}
 	return h.PushConfig(ctx)
 }
 
-// ConfigApplier keeps its own copy of the host settings: a real Meshtastic node, as the radio or
-// as a hosted identity.
+// ConfigApplier keeps its own copy of the host settings: a hosted node.
 type ConfigApplier interface {
 	ApplyConfig(ctx context.Context, cfg Config) error
 }
@@ -803,15 +802,11 @@ func (h *Host) AddConfigApplier(ca ConfigApplier) {
 	h.cfgMu.Unlock()
 }
 
-// PushConfig hands the current settings to the radio (if it is a node) and to every registered
-// node.
+// PushConfig hands the current settings to every registered node.
 func (h *Host) PushConfig(ctx context.Context) error {
 	h.cfgMu.RLock()
 	all := append([]ConfigApplier(nil), h.appliers...)
 	h.cfgMu.RUnlock()
-	if ca, ok := h.radio.(ConfigApplier); ok {
-		all = append([]ConfigApplier{ca}, all...)
-	}
 	cfg := h.Config()
 	for _, ca := range all {
 		if err := ca.ApplyConfig(ctx, cfg); err != nil {
@@ -821,9 +816,8 @@ func (h *Host) PushConfig(ctx context.Context) error {
 	return nil
 }
 
-// MirrorConfig applies a host configuration without handing it to a ConfigApplier radio (the
-// settings came from there).
-func (h *Host) MirrorConfig(ctx context.Context, cfg Config) error {
+// setConfig applies a host configuration.
+func (h *Host) setConfig(ctx context.Context, cfg Config) error {
 	if cfg.HopLimit == 0 || cfg.HopLimit > wire.HopMax {
 		cfg.HopLimit = defaultHopLimit
 	}

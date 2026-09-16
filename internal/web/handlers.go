@@ -23,6 +23,7 @@ import (
 
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
@@ -48,6 +49,8 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		RelayRole string `json:"relay_role"`
 		// PrimaryChannel names the primary channel ("" = the preset's name), which picks the slot.
 		PrimaryChannel *string `json:"primary_channel"`
+		// Hosted runs the relay persona on meshtasticd (experimental); nil keeps the config's.
+		Hosted *config.Hosted `json:"hosted"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -70,6 +73,16 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PrimaryChannel != nil {
 		next.Mesh.PrimaryChannel = strings.TrimSpace(*req.PrimaryChannel)
+	}
+	if req.Hosted != nil {
+		h := *req.Hosted
+		h.Meshtasticd, h.DockerImage = strings.TrimSpace(h.Meshtasticd), strings.TrimSpace(h.DockerImage)
+		if h.DockerImage != "" && !nodes.OfficialImage(h.DockerImage) {
+			s.cfgMu.Unlock()
+			writeError(w, http.StatusBadRequest, "setup only takes meshtastic/meshtasticd images; choose another under Configuration once signed in")
+			return
+		}
+		next.Hosted = h
 	}
 	req.Device = strings.TrimSpace(req.Device)
 	switch req.Driver {
@@ -293,7 +306,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 	return map[string]any{
 		"node_id": id.NodeID(), "node_num": id.NodeNum, "long_name": u.LongName, "short_name": u.ShortName,
 		"role": u.Role.String(), "hw_model": rc.host.Hardware().String(), "public_key": base64.StdEncoding.EncodeToString(id.PublicKey),
-		"is_relay": id.IsRelay, "real_node": id.Remote() != nil, "node_kind": nodeKind(id), "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
+		"is_relay": id.IsRelay, "real_node": id.Remote() != nil, "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
 		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id), "hop_limit": id.MaxHops(),
 		"position": identityPositionJSON(id), "position_secs": id.PositionInterval(),

@@ -639,6 +639,9 @@ func (c *Config) validateOne() error {
 	if pb := c.Hosted.PortBase; pb != 0 && (pb < 1024 || pb > 64000) {
 		return errors.New("hosted.port_base must be between 1024 and 64000")
 	}
+	if b := c.Hosted.Meshtasticd; b != "" && filepath.Base(b) != "meshtasticd" {
+		return errors.New("hosted.meshtasticd must be a meshtasticd program (a path ending in /meshtasticd)")
+	}
 	if strings.ContainsAny(c.Hosted.DockerImage, " \t\n") || strings.HasPrefix(c.Hosted.DockerImage, "-") {
 		return errors.New("hosted.docker_image must be an image name such as meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian")
 	}

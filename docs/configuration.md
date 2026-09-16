@@ -174,6 +174,26 @@ account menu) and stored in the state folder, not in this file.
 - `log_level`: `debug`, `info`, `warn` or `error`; applies live from the GUI.
 - `state_dir` holds identity keys, chats, the node database and login data: back it up.
 
+### `hosted`: nodes on meshtasticd (experimental)
+
+```yaml
+hosted:
+    persona: true                    # the relay of each modem or HAT radio runs on meshtasticd
+    meshtasticd: /usr/bin/meshtasticd   # "" = meshtasticd on PATH; must be 2.8.0 or newer
+    docker_image: ""                 # or run it in Docker, e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian
+    port_base: 4500                  # client API ports: radio n (0 = main) uses port_base + 20·n onwards
+```
+
+- The relay becomes a real Meshtastic node: a meshtasticd on a simulated radio that RepeaterTastic
+  starts, sets up (names from `relay`, region, preset, role) and restarts. It still transmits on
+  this radio, at zero hops, and hears your identities without repeating them.
+- If meshtasticd can't run or is too old, the relay stays in RepeaterTastic and the log says why.
+- An installed meshtasticd listens on every interface: firewall the ports on a shared network, or
+  use `docker_image`, which publishes them on 127.0.0.1 only.
+- The relay gets a new node number on meshtasticd. The RepeaterTastic persona is kept and comes
+  back when `persona` is switched off.
+- Takes effect at the next restart. Configuration → Experimental has the same settings.
+
 ### `radios`, `site` and `experimental`
 
 Extra radios, the site-wide airtime cap and the experimental identities on several radios are

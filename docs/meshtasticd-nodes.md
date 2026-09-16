@@ -9,7 +9,8 @@ apps use). Their transmissions go out through a bridge to RepeaterTastic's radio
 the `spi` driver), and everything the radio hears is fed back to them, the way Meshtasticator
 connects simulated nodes.
 
-**Status:** in progress.
+**Status:** the relay persona can run on meshtasticd (`hosted.persona`, see
+[Configuration](configuration.md#hosted-nodes-on-meshtasticd-experimental)); identities follow.
 
 This page records what the firmware does, as measured, so the design rests on facts. The work is
 tracked in the epic pull request, [ScotMesh/RepeaterTastic#5](https://github.com/ScotMesh/RepeaterTastic/pull/5).
@@ -89,3 +90,34 @@ frame heard off air.
   the node.
 - App clients on a remote identity's port have admin messages forwarded to the node, and name and
   channel edits in the GUI are written to it.
+
+## Airs
+
+A hosted meshtasticd has no radio. RepeaterTastic gives it a mesh interface, an **air**
+(`nodes.Air`): nodes join an air, and one rule holds on every air: nodes on the same air hear each
+other at hop limit 0, so none of them repeats a frame that went out from the same place.
+
+- **LoRa air** (`nodes.LoRaAir`), for a radio RepeaterTastic drives (a KISS modem or the `spi`
+  driver): every frame the radio hears is injected into every joined node with its RSSI and SNR; a
+  joined node's transmission becomes a frame on the host's transmit queue (channel-busy check, duty
+  cycle, site turns); what the host transmits is played to the other joined nodes at hop 0. It
+  brings no relay (`Relay()` is nil), so the host joins a hosted node with the configured relay
+  role as the persona.
+- Out of an envelope: PKI ciphertext goes out as it came; channel payloads are re-encrypted with
+  the node's channel key, except a relay, which sends the ciphertext first heard.
+- A later **board air** could carry nodes through a board running stock Meshtastic firmware (its
+  MQTT client proxy or UDP multicast). The board would be that air's relay, and joined nodes would
+  sit one hop behind it.
+
+## Supervisor
+
+- `nodes.StartHosted` writes the instance's `config.yaml` (`Lora: Module: sim`, no UDP, no MQTT),
+  runs meshtasticd with `-c`, `-d`, `-h` and `-p`, and restarts it with backoff. The last 200 lines
+  it printed are kept for the GUI.
+- Launchers: `ExecLauncher` runs the installed program; `DockerLauncher` runs a meshtasticd image
+  with the API published on 127.0.0.1 and the state directory mounted. Both report the version,
+  which must be 2.8.0 or newer.
+- On every handshake the host's settings are pushed to the node (one edit transaction), and the
+  node's user, channels and node number are mirrored into its identity. A node that isn't up at
+  start is stood in for by its saved state, or a placeholder that is swapped for the real node
+  when it answers.

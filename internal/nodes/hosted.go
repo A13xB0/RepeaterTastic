@@ -188,7 +188,7 @@ func StartHosted(ctx context.Context, l Launcher, in Instance, logf func(string,
 	addr := fmt.Sprintf("127.0.0.1:%d", in.Port)
 	c := mtclient.New(mtclient.Options{Address: addr, Logf: func(string, ...any) {}, ReconnectInterval: 500 * time.Millisecond,
 		ConfigTimeout: 30 * time.Second})
-	h := &Hosted{Node: newNode(addr, in.Dir, c, logf, false), inst: in, launcher: l}
+	h := &Hosted{Node: newNode(addr, in.Dir, c, logf), inst: in, launcher: l}
 	go h.supervise(ctx)
 	if err := c.Start(ctx); err != nil {
 		return nil, err
@@ -290,4 +290,35 @@ var _ mesh.ConfigApplier = (*Hosted)(nil)
 // bootNoise is an error line every fresh or radio-less meshtasticd prints.
 func bootNoise(line string) bool {
 	return strings.Contains(line, "Can't open/read /prefs/") || strings.Contains(line, "No radio instance available to provide entropy")
+}
+
+// LauncherFor picks the launcher for the hosted settings: Docker when an image is given, else the
+// binary ("" = meshtasticd on PATH).
+func LauncherFor(binary, image string) Launcher {
+	if image != "" {
+		return DockerLauncher{Image: image}
+	}
+	return ExecLauncher{Binary: binary}
+}
+
+// CheckLauncher reports the meshtasticd version l runs, or why it can't host nodes.
+func CheckLauncher(ctx context.Context, l Launcher) (string, error) {
+	v, err := l.Version(ctx)
+	if err != nil {
+		return "", fmt.Errorf("%s can't run: %w", l.Describe(), err)
+	}
+	if !VersionAtLeast(v, MinFirmware) {
+		return v, fmt.Errorf("meshtasticd %s is too old: hosted nodes need %s or newer", v, MinFirmware)
+	}
+	return v, nil
+}
+
+// OfficialImage reports whether image is a meshtasticd image from the Meshtastic project.
+func OfficialImage(image string) bool {
+	return strings.HasPrefix(image, "meshtastic/meshtasticd:") || strings.HasPrefix(image, "docker.io/meshtastic/meshtasticd:")
+}
+
+// MeshtasticdBinary reports whether path names a meshtasticd program ("" = the one on PATH).
+func MeshtasticdBinary(path string) bool {
+	return path == "" || filepath.Base(path) == "meshtasticd"
 }

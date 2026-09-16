@@ -220,3 +220,27 @@ func TestPasswordChangeKeepsThisSessionAndSignOutEverywhere(t *testing.T) {
 		t.Fatalf("session still valid after signing out everywhere: %d", code)
 	}
 }
+
+func TestSetupMeshtasticdCheck(t *testing.T) {
+	srv := testWeb(t)
+	check := func(body map[string]any) (int, map[string]any) {
+		code, obj, _ := call(t, srv, "POST", "/api/v1/setup/meshtasticd", "", body)
+		return code, obj
+	}
+	// Before a password exists, nothing but meshtasticd may be run.
+	if code, _ := check(map[string]any{"meshtasticd": "/bin/sh"}); code != 400 {
+		t.Fatalf("other program: %d", code)
+	}
+	if code, _ := check(map[string]any{"docker_image": "evil/image:latest"}); code != 400 {
+		t.Fatalf("unofficial image: %d", code)
+	}
+	code, obj := check(map[string]any{"meshtasticd": "/nonexistent/meshtasticd"})
+	if code != 200 || obj["ok"] != false || !strings.Contains(obj["error"].(string), "can't run") || obj["min_version"] != "2.8.0" {
+		t.Fatalf("missing program: %d %v", code, obj)
+	}
+	code, obj, _ = call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse",
+		"hosted": map[string]any{"persona": true, "docker_image": "evil/image:latest"}})
+	if code != 400 || !strings.Contains(obj["error"].(string), "meshtastic/meshtasticd") {
+		t.Fatalf("setup with an unofficial image: %d %v", code, obj)
+	}
+}

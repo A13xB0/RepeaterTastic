@@ -297,9 +297,7 @@ func startRadio(ctx context.Context, rc config.RadioConfig, index int, log *slog
 		r.Close()
 		return nil, err
 	}
-	if persona := startHostedPersona(ctx, rc, index, host, log); persona != nil {
-		hosted = append(hosted, persona)
-	}
+	hosted = startHostedNodes(ctx, rc, index, host, log)
 	if err := loadIdentities(rc.Config, host, log); err != nil {
 		r.Close()
 		return nil, err
@@ -498,51 +496,49 @@ func pluginCommand(cfgPath string, args []string) int {
 	return 0
 }
 
-// startHostedPersona runs a modem or HAT radio's relay persona as a hosted meshtasticd, when the
-// config asks for it and meshtasticd can run. It returns nil to keep the persona in RepeaterTastic.
-func startHostedPersona(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, log *slog.Logger) *nodes.Hosted {
+// startHostedNodes puts a modem or HAT radio's nodes on meshtasticd when the config asks for it:
+// the radio gets a LoRa air, and the relay persona joins it unless the air brings its own relay.
+// It returns nil, leaving the persona in RepeaterTastic, when meshtasticd can't run.
+func startHostedNodes(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, log *slog.Logger) []*nodes.Hosted {
 	hc := rc.Hosted
 	if !hc.Persona || (rc.Radio.Driver != "kiss" && rc.Radio.Driver != "spi") {
 		return nil
 	}
-	var l nodes.Launcher = nodes.ExecLauncher{Binary: hc.Meshtasticd}
-	if hc.DockerImage != "" {
-		l = nodes.DockerLauncher{Image: hc.DockerImage}
-	}
+	l := nodes.LauncherFor(hc.Meshtasticd, hc.DockerImage)
 	vctx, cancel := context.WithTimeout(ctx, 90*time.Second) // docker may pull the image first
-	v, err := l.Version(vctx)
+	v, err := nodes.CheckLauncher(vctx, l)
 	cancel()
-	switch {
-	case err != nil:
-		log.Error("hosted persona: meshtasticd can't run, keeping the persona in RepeaterTastic", "launcher", l.Describe(), "err", err)
-		return nil
-	case !nodes.VersionAtLeast(v, nodes.MinFirmware):
-		log.Error("hosted persona: meshtasticd is too old, keeping the persona in RepeaterTastic", "version", v, "need", nodes.MinFirmware)
+	if err != nil {
+		log.Error("hosted nodes: keeping the persona in RepeaterTastic", "err", err)
 		return nil
 	}
 	logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...)) }
+	air := nodes.NewLoRaAir(host, logf)
+	if air.Relay() != nil {
+		return nil // the air repeats for itself
+	}
 	in := nodes.Instance{Name: "persona-" + rc.ID, Dir: filepath.Join(rc.StateDir, "hosted", "persona"),
 		Port: hc.HostedPortBase() + 20*index, HWID: nodes.HWIDFor(rc.ID + "/persona")}
-	hn, err := nodes.StartHosted(ctx, l, in, logf)
+	persona, err := nodes.StartHosted(ctx, l, in, logf)
 	if err != nil {
-		log.Error("hosted persona: not started, keeping the persona in RepeaterTastic", "err", err)
+		log.Error("hosted nodes: persona not started, keeping it in RepeaterTastic", "err", err)
 		return nil
 	}
-	hn.SetOwner(rc.Relay.LongName, rc.Relay.ShortName)
-	id, err := hn.Identity(ctx, 30*time.Second)
+	persona.SetOwner(rc.Relay.LongName, rc.Relay.ShortName)
+	id, err := persona.Identity(ctx, 30*time.Second)
 	if err == nil {
 		id.IsRelay = true
 		err = host.AddIdentity(id)
 	}
 	if err != nil {
-		log.Error("hosted persona: no identity, keeping the persona in RepeaterTastic", "err", err)
-		hn.Close()
+		log.Error("hosted nodes: persona has no identity, keeping it in RepeaterTastic", "err", err)
+		persona.Close()
 		return nil
 	}
-	host.AddConfigApplier(hn)
-	air := nodes.NewAir(host, logf)
-	go hn.Bind(ctx, host, id)
-	go air.Serve(ctx, hn.Client(), id, true)
+	host.AddConfigApplier(persona)
+	persona.Bind(host, id)
+	go persona.Run(ctx)
+	air.Join(ctx, persona.Node)
 	log.Info("relay persona runs on meshtasticd", "node", id.NodeID(), "version", v, "launcher", l.Describe(), "port", in.Port)
-	return hn
+	return []*nodes.Hosted{persona}
 }

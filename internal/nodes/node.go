@@ -29,30 +29,17 @@ type Node struct {
 	stateDir string
 	client   *mtclient.Client
 	logf     func(string, ...any)
-	// follow: the host takes its settings from the node (an attached board). Otherwise the node
-	// takes the host's (a hosted meshtasticd).
-	follow bool
 
 	mu    sync.Mutex
 	host  *mesh.Host
 	id    *mesh.Identity
-	onCfg func(mesh.Config)
 	owner *pb.User // names the node should carry (hosted nodes)
 
 	// rebootWait is how long a settings change waits for the node to reboot before re-reading it.
 	rebootWait time.Duration
-}
-
-// OnConfig registers fn to hear the host settings mirrored from the node after each handshake.
-func (n *Node) OnConfig(fn func(mesh.Config)) {
-	n.mu.Lock()
-	n.onCfg = fn
-	h := n.host
-	n.mu.Unlock()
-	// The first handshake usually finishes before anyone listens: hand over what it mirrored.
-	if h != nil && n.client.Snapshot().Connected {
-		fn(h.Config())
-	}
+	// editMu keeps settings changes one at a time: each reads the node, edits it and waits for it
+	// to come back before the next one looks.
+	editMu sync.Mutex
 }
 
 var _ mesh.Remote = (*Node)(nil)
@@ -75,24 +62,26 @@ func (n *Node) Identity(ctx context.Context, wait time.Duration) (*mesh.Identity
 	default:
 		var ok bool
 		if st, ok = n.loadState(); ok {
-			n.logf("meshtastic: node at %s not answering yet (%v); using its saved state", n.addr, err)
+			n.logf("meshtasticd: node at %s not answering yet (%v); using its saved state", n.addr, err)
 		} else {
-			n.logf("meshtastic: node at %s not answering yet (%v); it appears once it does", n.addr, err)
+			n.logf("meshtasticd: node at %s not answering yet (%v); it appears once it does", n.addr, err)
 			st = placeholderState(n.addr)
 		}
 	}
-	id, err := mesh.NewRemoteIdentity(n, st)
-	if err != nil {
-		return nil, err
-	}
-	id.IsRelay = true
-	return id, nil
+	return mesh.NewRemoteIdentity(n, st)
 }
 
-// Bind follows the node for host h, whose relay persona is id, until ctx ends.
-func (n *Node) Bind(ctx context.Context, h *mesh.Host, id *mesh.Identity) {
+// Bind makes id, on host h, the identity the node stands for.
+func (n *Node) Bind(h *mesh.Host, id *mesh.Identity) {
 	n.mu.Lock()
 	n.host, n.id = h, id
+	n.mu.Unlock()
+}
+
+// Run keeps the bound host current with the node (settings, identity, deliveries) until ctx ends.
+func (n *Node) Run(ctx context.Context) {
+	n.mu.Lock()
+	h := n.host
 	n.mu.Unlock()
 	events, stop := n.client.Subscribe(512)
 	defer stop()
@@ -111,7 +100,7 @@ func (n *Node) Bind(ctx context.Context, h *mesh.Host, id *mesh.Identity) {
 			case mtclient.Configured:
 				n.configured(ctx)
 			case mtclient.Disconnected:
-				n.logf("meshtastic: node at %s disconnected: %v", n.addr, e.Err)
+				n.logf("meshtasticd: node at %s disconnected: %v", n.addr, e.Err)
 			case mtclient.Received:
 				// A sim-radio meshtasticd hands its transmissions to the client; nobody bridges them here.
 				if p := e.FromRadio.GetPacket(); p != nil && p.GetDecoded().GetPortnum() != pb.PortNum_SIMULATOR_APP {
@@ -139,32 +128,22 @@ func (n *Node) configured(ctx context.Context) {
 			err = h.SwapRemote(cur, next)
 		}
 		if err != nil {
-			n.logf("meshtastic: node is now %s but the identity couldn't follow: %v", wire.NodeID(st.NodeNum), err)
+			n.logf("meshtasticd: node is now %s but the identity couldn't follow: %v", wire.NodeID(st.NodeNum), err)
 			return
 		}
-		n.logf("meshtastic: node %s replaces %s", next.NodeID(), cur.NodeID())
+		n.logf("meshtasticd: node %s replaces %s", next.NodeID(), cur.NodeID())
 		n.mu.Lock()
 		n.id, cur = next, next
 		n.mu.Unlock()
 	}
-	if !n.follow {
-		if err := n.ApplyConfig(ctx, h.Config()); err != nil {
-			n.logf("meshtastic: node %s didn't take the host's settings: %v", cur.NodeID(), err)
+	// Pushing may wait for a reboot; the event loop keeps delivering meanwhile.
+	go func(id string) {
+		if err := n.ApplyConfig(ctx, h.Config()); err != nil && ctx.Err() == nil {
+			n.logf("meshtasticd: node %s didn't take the host's settings: %v", id, err)
 		}
-	} else if cfg, ok := hostConfig(h.Config(), snap); ok {
-		if err := h.MirrorConfig(ctx, cfg); err != nil {
-			n.logf("meshtastic: host settings not updated from the node: %v", err)
-		} else {
-			n.mu.Lock()
-			fn := n.onCfg
-			n.mu.Unlock()
-			if fn != nil {
-				fn(h.Config())
-			}
-		}
-	}
+	}(cur.NodeID())
 	h.SyncRemote(cur, st)
-	n.logf("meshtastic: node %s %q on %s, firmware %s, %s %s", cur.NodeID(), st.User.GetLongName(), n.addr,
+	n.logf("meshtasticd: node %s %q on %s, firmware %s, %s %s", cur.NodeID(), st.User.GetLongName(), n.addr,
 		snap.Metadata.GetFirmwareVersion(), snap.Config.GetLora().GetRegion(), snap.Config.GetLora().GetModemPreset())
 }
 
@@ -189,7 +168,7 @@ func (n *Node) statePath() string {
 	if n.stateDir == "" {
 		return ""
 	}
-	return filepath.Join(n.stateDir, "attached-node.json")
+	return filepath.Join(n.stateDir, "node.json")
 }
 
 func (n *Node) saveState(st mesh.RemoteState) {
@@ -243,7 +222,7 @@ func placeholderState(addr string) mesh.RemoteState {
 	if num == wire.Broadcast {
 		num--
 	}
-	return mesh.RemoteState{NodeNum: num, User: &pb.User{LongName: "Meshtastic node (connecting)", ShortName: "…"}}
+	return mesh.RemoteState{NodeNum: num, User: &pb.User{LongName: "Hosted node (starting)", ShortName: "…"}}
 }
 
 // ------------------------------------------------------------------------------ conversions
@@ -267,36 +246,8 @@ func remoteState(s mtclient.Snapshot) mesh.RemoteState {
 	return st
 }
 
-// hostConfig mirrors the node's LoRa and device settings into the host's configuration, so the
-// GUI shows what the node runs.
-func hostConfig(cur mesh.Config, s mtclient.Snapshot) (mesh.Config, bool) {
-	lora := s.Config.GetLora()
-	if lora == nil {
-		return cur, false
-	}
-	cfg := cur
-	if r := lora.GetRegion(); r != pb.Config_LoRaConfig_UNSET {
-		cfg.Region = r.String()
-	}
-	if lora.GetUsePreset() {
-		cfg.Preset = lora.GetModemPreset()
-	}
-	if lora.GetHopLimit() != 0 {
-		cfg.HopLimit = lora.GetHopLimit()
-	}
-	cfg.ChannelNum = int(lora.GetChannelNum())
-	cfg.OverrideFreqMHz = float64(lora.GetOverrideFrequency())
-	cfg.FreqOffsetMHz = float64(lora.GetFrequencyOffset())
-	cfg.TxPowerDBm = int(lora.GetTxPower())
-	if len(s.Channels) > 0 && s.Channels[0] != nil {
-		cfg.PrimaryChannel = s.Channels[0].GetSettings().GetName()
-	}
-	cfg.RelayRole = RelayRole(s.Config.GetDevice().GetRole(), lora.GetTxEnabled())
-	return cfg, true
-}
-
-// RelayRole maps a node's device role onto the host's relay roles.
-func RelayRole(role pb.Config_DeviceConfig_Role, txEnabled bool) string {
+// relayRoleOf maps a node's device role onto the host's relay roles.
+func relayRoleOf(role pb.Config_DeviceConfig_Role, txEnabled bool) string {
 	if !txEnabled {
 		return mesh.RoleMonitor
 	}
@@ -309,12 +260,11 @@ func RelayRole(role pb.Config_DeviceConfig_Role, txEnabled bool) string {
 	return mesh.RoleClient
 }
 
-// Kind is "board" for an attached node and "hosted" for a meshtasticd RepeaterTastic runs.
-func (n *Node) Kind() string {
-	if n.follow {
-		return "board"
-	}
-	return "hosted"
+// Current is the host identity the node stands for now (nil before Bind).
+func (n *Node) Current() *mesh.Identity {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.id
 }
 
 // SetOwner sets the names a hosted node is given (and keeps) on every connect.
@@ -331,6 +281,11 @@ var ErrNotReady = errors.New("the Meshtastic node isn't connected")
 // limit, primary channel name, role) to the node in one edit transaction, so it reboots at most
 // once, then re-reads its configuration.
 func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
+	n.editMu.Lock()
+	defer n.editMu.Unlock()
+	wctx, cancel := context.WithTimeout(ctx, n.rebootWait)
+	_ = n.client.WaitReady(wctx) // back from a reboot the previous change caused
+	cancel()
 	s := n.client.Snapshot()
 	if !s.Connected || s.Config.GetLora() == nil {
 		return ErrNotReady
@@ -372,7 +327,7 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 	n.mu.Lock()
 	want := n.owner
 	n.mu.Unlock()
-	if want != nil && !n.follow {
+	if want != nil {
 		self := s.Self().GetUser()
 		if (want.LongName != "" && want.LongName != self.GetLongName()) || (want.ShortName != "" && want.ShortName != self.GetShortName()) {
 			u := &pb.User{LongName: self.GetLongName(), ShortName: self.GetShortName()}
@@ -397,25 +352,42 @@ func (n *Node) edit(ctx context.Context, msgs []*pb.AdminMessage) error {
 	defer stop()
 	all := append([]*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_BeginEditSettings{BeginEditSettings: true}}}, msgs...)
 	all = append(all, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_CommitEditSettings{CommitEditSettings: true}})
-	for _, m := range all {
+	for i, m := range all {
 		if _, err := n.client.Admin(ctx, m); err != nil {
-			return fmt.Errorf("meshtastic node refused the settings: %w", err)
+			if i == len(all)-1 && !n.client.Snapshot().Connected {
+				break // the commit's ack was lost to the reboot it caused
+			}
+			return fmt.Errorf("meshtasticd refused the settings: %w", err)
 		}
 	}
 	// Some changes reboot the node; the client reconnects by itself. Otherwise re-read the config.
 	timer := time.NewTimer(n.rebootWait)
 	defer timer.Stop()
+wait:
 	for {
 		select {
 		case e := <-events:
 			if e.Kind == mtclient.Disconnected {
-				return nil
+				break wait
 			}
 		case <-timer.C:
 			n.client.Reconnect()
-			return nil
+			break wait
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+	}
+	// Hand back once the node has answered again, so the next change reads fresh settings.
+	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		select {
+		case e := <-events:
+			if e.Kind == mtclient.Configured {
+				return nil
+			}
+		case <-wctx.Done():
+			return nil // it comes back on its own; the next change waits for it
 		}
 	}
 }
@@ -425,14 +397,14 @@ func (n *Node) edit(ctx context.Context, msgs []*pb.AdminMessage) error {
 func deviceRole(relay string, cur pb.Config_DeviceConfig_Role) pb.Config_DeviceConfig_Role {
 	switch relay {
 	case mesh.RoleRouter:
-		if RelayRole(cur, true) == mesh.RoleRouter {
+		if relayRoleOf(cur, true) == mesh.RoleRouter {
 			return cur
 		}
 		return pb.Config_DeviceConfig_ROUTER
 	case mesh.RoleMute:
 		return pb.Config_DeviceConfig_CLIENT_MUTE
 	case mesh.RoleClient:
-		if RelayRole(cur, true) == mesh.RoleClient {
+		if relayRoleOf(cur, true) == mesh.RoleClient {
 			return cur
 		}
 		return pb.Config_DeviceConfig_CLIENT
@@ -440,9 +412,9 @@ func deviceRole(relay string, cur pb.Config_DeviceConfig_Role) pb.Config_DeviceC
 	return cur // monitor and off only switch the transmitter off
 }
 
-func newNode(addr, stateDir string, c *mtclient.Client, logf func(string, ...any), follow bool) *Node {
+func newNode(addr, stateDir string, c *mtclient.Client, logf func(string, ...any)) *Node {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &Node{addr: addr, stateDir: stateDir, client: c, logf: logf, follow: follow, rebootWait: 8 * time.Second}
+	return &Node{addr: addr, stateDir: stateDir, client: c, logf: logf, rebootWait: 8 * time.Second}
 }

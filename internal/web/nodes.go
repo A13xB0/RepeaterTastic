@@ -43,14 +43,6 @@ func pushChannels(ctx context.Context, id *mesh.Identity, slots ...int) error {
 	return nil
 }
 
-// nodeKind is "board" or "hosted" for an identity a real node stands for, else "".
-func nodeKind(id *mesh.Identity) string {
-	if k, ok := id.Remote().(interface{ Kind() string }); ok {
-		return k.Kind()
-	}
-	return ""
-}
-
 func (s *Server) getHosted(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	hc := s.cfg.Hosted
@@ -88,19 +80,10 @@ func (s *Server) putHosted(w http.ResponseWriter, r *http.Request) {
 	}
 	// Check a launcher that will run: better to say so now than after the restart.
 	if req.Persona {
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
-		var l nodes.Launcher = nodes.ExecLauncher{Binary: req.Meshtasticd}
-		if req.DockerImage != "" {
-			l = nodes.DockerLauncher{Image: req.DockerImage}
-		}
-		v, err := l.Version(ctx)
-		switch {
-		case err != nil:
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("%s can't run: %v", l.Describe(), err))
-			return
-		case !nodes.VersionAtLeast(v, nodes.MinFirmware):
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("meshtasticd %s is too old: hosted nodes need %s or newer", v, nodes.MinFirmware))
+		if _, err := nodes.CheckLauncher(ctx, nodes.LauncherFor(req.Meshtasticd, req.DockerImage)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
@@ -113,4 +96,34 @@ func (s *Server) putHosted(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("hosted meshtasticd settings changed", "persona", req.Persona, "docker_image", req.DockerImage)
 	s.getHosted(w, r)
+}
+
+// checkMeshtasticd is the setup check for hosted nodes: which meshtasticd would run, and whether
+// it can. Before a password exists only a meshtasticd program or an official image may be tried.
+func (s *Server) checkMeshtasticd(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Meshtasticd string `json:"meshtasticd"`
+		DockerImage string `json:"docker_image"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	req.Meshtasticd, req.DockerImage = strings.TrimSpace(req.Meshtasticd), strings.TrimSpace(req.DockerImage)
+	if !nodes.MeshtasticdBinary(req.Meshtasticd) {
+		writeError(w, http.StatusBadRequest, "the program must be meshtasticd (a path ending in /meshtasticd)")
+		return
+	}
+	if req.DockerImage != "" && s.auth.SetupNeeded() && !nodes.OfficialImage(req.DockerImage) {
+		writeError(w, http.StatusBadRequest, "until a password is set, only meshtastic/meshtasticd images can be checked")
+		return
+	}
+	l := nodes.LauncherFor(req.Meshtasticd, req.DockerImage)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	v, err := nodes.CheckLauncher(ctx, l)
+	res := map[string]any{"ok": err == nil, "version": v, "min_version": nodes.MinFirmware, "launcher": l.Describe(), "error": ""}
+	if err != nil {
+		res["error"] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, res)
 }

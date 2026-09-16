@@ -16,31 +16,44 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
-// Air is the air bridge: meshtasticd instances on sim radios (hosted nodes) sharing a host's
-// real radio, the way Meshtasticator connects simulated nodes.
+// Air is a mesh interface for hosted nodes: what a meshtasticd on a sim radio transmits and hears.
+// Every air follows one rule: nodes on the same air hear each other at hop limit 0, so none of
+// them repeats a frame that went out from the same place.
+type Air interface {
+	// Join puts a node on the air until Leave or ctx ends.
+	Join(ctx context.Context, n *Node)
+	// Leave takes a node off the air.
+	Leave(n *Node)
+	// Relay is the node that repeats on this air when the air brings one, else nil: the host then
+	// joins a hosted node with a router role.
+	Relay() *Node
+}
+
+// LoRaAir is the air of a radio RepeaterTastic drives (a KISS modem or the spi driver), the way
+// Meshtasticator connects simulated nodes:
 //
-//   - Every frame the radio hears is injected into every hosted node, with its RSSI and SNR.
-//   - A hosted node's transmission becomes a frame on the host's transmit queue: PKI ciphertext as
+//   - Every frame the radio hears is injected into every joined node, with its RSSI and SNR.
+//   - A joined node's transmission becomes a frame on the host's transmit queue: PKI ciphertext as
 //     it came, channel payloads re-encrypted with the node's channel key (or, for a relay, the
 //     ciphertext as first heard).
-//   - What the host transmits is injected into the other hosted nodes as a strong local frame, so
-//     co-located nodes hear each other. The relay persona hears the host's own identities (and
-//     other hosted identities) with hop limit 0: it knows the packet, and doesn't repeat it from
-//     the same mast.
-type Air struct {
+//   - What the host transmits is injected into the other joined nodes at hop limit 0.
+//
+// It brings no relay, and joined nodes are on air at zero hops.
+type LoRaAir struct {
 	h    *mesh.Host
 	logf func(string, ...any)
 
 	mu     sync.RWMutex
 	nodes  map[uint32]*airNode
+	joined map[*Node]context.CancelFunc
 	recent *cipherCache
 }
 
+var _ Air = (*LoRaAir)(nil)
+
 type airNode struct {
-	num     uint32
-	client  *mtclient.Client
-	id      *mesh.Identity
-	persona bool
+	num  uint32
+	node *Node
 }
 
 const (
@@ -49,22 +62,49 @@ const (
 	cacheTTL = 10 * time.Minute
 )
 
-// NewAir attaches an air bridge to h.
-func NewAir(h *mesh.Host, logf func(string, ...any)) *Air {
+// NewLoRaAir puts an air on h's radio.
+func NewLoRaAir(h *mesh.Host, logf func(string, ...any)) *LoRaAir {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	a := &Air{h: h, logf: logf, nodes: map[uint32]*airNode{}, recent: newCipherCache(1024)}
+	a := &LoRaAir{h: h, logf: logf, nodes: map[uint32]*airNode{}, joined: map[*Node]context.CancelFunc{},
+		recent: newCipherCache(1024)}
 	h.AddAirTap(a)
 	return a
 }
 
-// Serve bridges one hosted node until ctx ends. id is its identity on the host; persona marks the
-// relay persona.
-func (a *Air) Serve(ctx context.Context, c *mtclient.Client, id *mesh.Identity, persona bool) {
+// Relay is nil: a radio we drive brings no relay of its own.
+func (a *LoRaAir) Relay() *Node { return nil }
+
+// Join puts n on the air.
+func (a *LoRaAir) Join(ctx context.Context, n *Node) {
+	ctx, cancel := context.WithCancel(ctx)
+	a.mu.Lock()
+	if old, ok := a.joined[n]; ok {
+		old()
+	}
+	a.joined[n] = cancel
+	a.mu.Unlock()
+	go a.serve(ctx, n)
+}
+
+// Leave takes n off the air.
+func (a *LoRaAir) Leave(n *Node) {
+	a.mu.Lock()
+	cancel := a.joined[n]
+	delete(a.joined, n)
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// serve carries one node's transmissions until ctx ends.
+func (a *LoRaAir) serve(ctx context.Context, node *Node) {
+	c := node.client
 	events, stop := c.Subscribe(1024)
 	defer stop()
-	n := &airNode{client: c, id: id, persona: persona}
+	n := &airNode{node: node}
 	register := func() {
 		num := c.Snapshot().NodeNum()
 		a.mu.Lock()
@@ -115,7 +155,7 @@ func (a *Air) Serve(ctx context.Context, c *mtclient.Client, id *mesh.Identity, 
 var errNotOurs = errors.New("not a transmission")
 
 // transmit turns a hosted node's SIMULATOR_APP envelope into a frame on the host's queue.
-func (a *Air) transmit(n *airNode, p *pb.MeshPacket) error {
+func (a *LoRaAir) transmit(n *airNode, p *pb.MeshPacket) error {
 	pkt, plain, err := a.frameFor(n, p)
 	if errors.Is(err, errNotOurs) {
 		return nil
@@ -128,7 +168,7 @@ func (a *Air) transmit(n *airNode, p *pb.MeshPacket) error {
 }
 
 // frameFor builds the encrypted packet a hosted node's envelope stands for.
-func (a *Air) frameFor(n *airNode, p *pb.MeshPacket) (*pb.MeshPacket, *pb.Data, error) {
+func (a *LoRaAir) frameFor(n *airNode, p *pb.MeshPacket) (*pb.MeshPacket, *pb.Data, error) {
 	if p.GetTo() == 0 || p.GetFrom() == 0 {
 		return nil, nil, errNotOurs // the firmware addresses a failed client DM's error to node 0
 	}
@@ -155,9 +195,9 @@ func (a *Air) frameFor(n *airNode, p *pb.MeshPacket) (*pb.MeshPacket, *pb.Data, 
 			return out, data, nil
 		}
 	}
-	id := a.h.Identity(n.num) // the identity may have been swapped since Serve started
+	id := n.node.Current()
 	if id == nil {
-		id = n.id
+		return nil, nil, errors.New("the node has no identity on the host yet")
 	}
 	hash, key, aead, ok := a.h.ChannelKey(id, int(p.Channel))
 	if !ok {
@@ -186,7 +226,7 @@ func (a *Air) frameFor(n *airNode, p *pb.MeshPacket) (*pb.MeshPacket, *pb.Data, 
 // ------------------------------------------------------------------------------------ in
 
 // Heard injects a frame off the air into every hosted node.
-func (a *Air) Heard(f radio.Frame) {
+func (a *LoRaAir) Heard(f radio.Frame) {
 	p := wire.DecodeFrame(f.Data, int32(f.RSSI), f.SNR)
 	if p == nil {
 		return
@@ -197,29 +237,21 @@ func (a *Air) Heard(f radio.Frame) {
 	}
 }
 
-// Transmitted injects what the host sent into the hosted nodes that didn't send it.
-func (a *Air) Transmitted(frame []byte, pkt *pb.MeshPacket, origin uint32) {
+// Transmitted injects what the host sent into the joined nodes that didn't send it, at hop limit
+// 0: they stand where the sender does, so they know the packet and don't repeat it.
+func (a *LoRaAir) Transmitted(frame []byte, pkt *pb.MeshPacket, origin uint32) {
 	p := wire.DecodeFrame(frame, loopRSSI, loopSNR)
 	if p == nil {
 		return
 	}
-	a.mu.RLock()
-	from := a.nodes[origin]
-	a.mu.RUnlock()
-	identity := from == nil || !from.persona // one of our identities, hosted or not
 	for _, n := range a.snapshot() {
-		if n == from {
-			continue
+		if n.num != origin {
+			a.inject(n, p, loopRSSI, loopSNR, 0)
 		}
-		hop := p.HopLimit
-		if n.persona && identity {
-			hop = 0 // the persona stands where the identity does: known, not repeated
-		}
-		a.inject(n, p, loopRSSI, loopSNR, hop)
 	}
 }
 
-func (a *Air) snapshot() []*airNode {
+func (a *LoRaAir) snapshot() []*airNode {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	out := make([]*airNode, 0, len(a.nodes))
@@ -230,12 +262,12 @@ func (a *Air) snapshot() []*airNode {
 }
 
 // inject hands a frame to a hosted node as if its sim radio had received it.
-func (a *Air) inject(n *airNode, p *pb.MeshPacket, rssi int32, snr float32, hopLimit uint32) {
+func (a *LoRaAir) inject(n *airNode, p *pb.MeshPacket, rssi int32, snr float32, hopLimit uint32) {
 	env, err := envelope(p, rssi, snr, hopLimit)
 	if err != nil {
 		return
 	}
-	if err := n.client.Send(&pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: env}}); err != nil && !errors.Is(err, mtclient.ErrNotConnected) {
+	if err := n.node.client.Send(&pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: env}}); err != nil && !errors.Is(err, mtclient.ErrNotConnected) {
 		a.logf("air: %s: frame not injected: %v", wire.NodeID(n.num), err)
 	}
 }
