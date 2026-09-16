@@ -131,7 +131,7 @@ async function handle(req: IncomingMessage, res: Res) {
     case 'GET /status': return json(res, 200, status())
     case 'PUT /relay': {
       const role = body.role as typeof state.relayRole
-      if (!['client', 'router', 'mute'].includes(role)) return fail(res, 400, 'role must be client, router or mute')
+      if (!['client', 'client_base', 'client_mute', 'router', 'router_late', 'monitor', 'off'].includes(role)) return fail(res, 400, 'unknown relay role')
       state.relayRole = role
       state.config.relay.role = role
       log('info', `relay: role set to ${role}`, emit)

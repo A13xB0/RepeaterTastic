@@ -192,7 +192,7 @@ func TestAddRenameRemoveRadios(t *testing.T) {
 	}
 	_, list, _ := call(t, srv, "GET", "/api/v1/radios", tok, nil)
 	pending := list["pending"].([]any)
-	if len(pending) != 1 || pending[0].(map[string]any)["id"] != "ls" || pending[0].(map[string]any)["relay_role"] != "mute" || list["restart_required"] != true {
+	if len(pending) != 1 || pending[0].(map[string]any)["id"] != "ls" || pending[0].(map[string]any)["relay_role"] != "client_mute" || list["restart_required"] != true {
 		t.Fatalf("pending = %v", list)
 	}
 
@@ -335,6 +335,30 @@ func TestConfigurationGaps(t *testing.T) {
 	if out["airtime"].(map[string]any)["telemetry_interval"] != "3h" || out["radio"].(map[string]any)["hop_limit"] != float64(2) ||
 		out["web"].(map[string]any)["log_level"] != "debug" || out["web"].(map[string]any)["map_tile_url"] != "https://tiles.example/{z}/{x}/{y}.png" {
 		t.Fatalf("after put = %v", out)
+	}
+	// Relay roles and rebroadcast modes use Meshtastic's names; the old "mute" still reads.
+	if cfg["relay"].(map[string]any)["rebroadcast"] != "all" {
+		t.Fatalf("unset rebroadcast = %v", cfg["relay"])
+	}
+	relay := func(role, rebroadcast string) (int, map[string]any) {
+		code, res, _ := call(t, srv, "PUT", "/api/v1/config", tok, map[string]any{
+			"relay": map[string]any{"role": role, "rebroadcast": rebroadcast, "long_name": "RT Relay", "short_name": "RTR", "local_dm": "software"}})
+		return code, res
+	}
+	if code, res := relay("mute", "LOCAL_ONLY"); code != 200 || res["config"].(map[string]any)["relay"].(map[string]any)["role"] != "client_mute" ||
+		res["config"].(map[string]any)["relay"].(map[string]any)["rebroadcast"] != "local_only" {
+		t.Fatalf("relay put %d %v", code, res)
+	}
+	if code, res := relay("router_late", "all"); code != 200 || res["config"].(map[string]any)["relay"].(map[string]any)["rebroadcast"] != "all" {
+		t.Fatalf("router_late %d %v", code, res)
+	}
+	if _, st, _ := call(t, srv, "GET", "/api/v1/status", tok, nil); st["relay"].(map[string]any)["role"] != "router_late" {
+		t.Fatalf("live role = %v", st["relay"])
+	}
+	for _, bad := range [][2]string{{"repeater", "all"}, {"client", "sometimes"}} {
+		if code, _ := relay(bad[0], bad[1]); code != 400 {
+			t.Errorf("relay %v accepted: %d", bad, code)
+		}
 	}
 	if code, _, _ := call(t, srv, "PUT", "/api/v1/config", tok, map[string]any{"airtime": map[string]any{"telemetry_interval": "5m", "duty_cycle_percent": 10, "identity_share_percent": 25, "nodeinfo_interval": "3h"}}); code != 400 {
 		t.Fatalf("5 minute telemetry accepted: %d", code)

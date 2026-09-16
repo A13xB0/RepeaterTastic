@@ -5,6 +5,7 @@ import { Import, KeyRound, Layers, MessagesSquare, Pencil, Plus, RotateCcw, Tras
 import { api, enc } from '@/api/client'
 import type { Identity } from '@/api/types'
 import { live, refreshAllIdentities, removeIdentity, upsertIdentity } from '@/store/live'
+import { muted } from '@/lib/relay'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
@@ -54,8 +55,8 @@ function stateOf(i: Identity): State {
     const role = live.status?.relay.role
     if (role === 'off') return { label: 'Radio off', cls: 'bg-bad/12 text-bad', title: 'The radio is off: nothing is received or sent' }
     if (role === 'monitor') return { label: 'Listening', cls: 'bg-info/12 text-info', title: 'Monitor mode: the radio only listens' }
-    return role === 'mute'
-      ? { label: 'Muted', cls: 'bg-bad/12 text-bad', title: 'Relay mode is mute: nothing is rebroadcast' }
+    return muted(role)
+      ? { label: 'Muted', cls: 'bg-bad/12 text-bad', title: 'Relay role is client mute: nothing is rebroadcast' }
       : { label: 'Relaying', cls: 'bg-brand/14 text-brand', title: `Relay mode ${role}` }
   }
   if (!i.enabled) return { label: 'Disabled', cls: 'bg-ink-3/14 text-ink-3', title: 'Not transmitting; API port closed' }

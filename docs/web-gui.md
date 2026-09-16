@@ -3,7 +3,7 @@
 [← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Several radios](radios.md) · [MQTT](mqtt.md) · [Plugins](plugins.md) · [HTTP API](api.md) · [Architecture](architecture.md)
 
 Open `http://<host>:8080`. The first visit runs the setup wizard: the modem, region and preset,
-the relay role (client, router or mute) and the admin password. The **account menu** (top right)
+the relay role (a Meshtastic role such as client, router or client mute) and the admin password. The **account menu** (top right)
 changes the password, signs out, or signs every browser out.
 
 Pages update live. A tab left in the background gives up its live connection after 15 seconds, so
@@ -15,10 +15,11 @@ many open tabs don't use up the browser's connections to the host, and catches u
   MQTT settings follow the radio picked here.
 - **Modem state, frequency and preset**, and the **airtime gauge**: this hour's transmit time against
   the duty-cycle budget.
-- **Relay switch:** client, router or mute for this radio's relay persona, then **Monitor** (the
+- **Relay switch:** the Meshtastic role of this radio's relay persona (client, client base, client
+  mute, router or router late), then **Monitor** (the
   radio only listens and transmits nothing) and **Off** (the radio is ignored). Both ask before
   switching. In either, sends from identities, the relay persona and plugins fail with "the radio
-  isn't transmitting". The same switch is under Configuration → Relay.
+  isn't transmitting". The same switch is under Configuration → Relay, with the rebroadcast mode.
 - A **restart banner** appears under the bar when saved changes need a restart, listing them.
 
 ## Pages

@@ -177,6 +177,17 @@ func (c *Config) RadioConfigs() []RadioConfig {
 	return out
 }
 
+// normalizeRoles writes relay roles under their current names ("mute" → client_mute), so a saved
+// config speaks Meshtastic's role names.
+func (c *Config) normalizeRoles() {
+	c.Relay.Role = mesh.NormalizeRelayRole(c.Relay.Role)
+	c.Relay.Rebroadcast = strings.ToLower(c.Relay.Rebroadcast)
+	for i := range c.Radios {
+		c.Radios[i].Relay.Role = mesh.NormalizeRelayRole(c.Radios[i].Relay.Role)
+		c.Radios[i].Relay.Rebroadcast = strings.ToLower(c.Radios[i].Relay.Rebroadcast)
+	}
+}
+
 // fillRadioDefaults gives extra radios the defaults a top-level radio would get, inheriting
 // the region and NodeInfo interval from the main radio. Extra relays default to mute:
 // a new radio on a mast shouldn't start repeating until someone decides it should.
@@ -197,7 +208,7 @@ func (c *Config) fillRadioDefaults() {
 			r.Mesh.HopLimit = d.Mesh.HopLimit
 		}
 		if r.Relay.Role == "" {
-			r.Relay.Role = mesh.RoleMute
+			r.Relay.Role = mesh.RoleClientMute
 		}
 		if r.Relay.LongName == "" {
 			r.Relay.LongName = "RepeaterTastic " + r.ID + " Relay"
@@ -279,9 +290,14 @@ type Mesh struct {
 }
 
 type Relay struct {
-	Role      string `yaml:"role" json:"role"`
-	LongName  string `yaml:"long_name" json:"long_name"`
-	ShortName string `yaml:"short_name" json:"short_name"`
+	// Role is a Meshtastic device role for the relay (client, client_base, client_mute, router,
+	// router_late), or monitor or off. "mute" is read as client_mute.
+	Role string `yaml:"role" json:"role"`
+	// Rebroadcast is Meshtastic's rebroadcast mode: all (default), all_skip_decoding, local_only,
+	// known_only, none or core_portnums_only. The built-in relay only honours none.
+	Rebroadcast string `yaml:"rebroadcast,omitempty" json:"rebroadcast"`
+	LongName    string `yaml:"long_name" json:"long_name"`
+	ShortName   string `yaml:"short_name" json:"short_name"`
 }
 
 type Airtime struct {
@@ -559,6 +575,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	c.fillRadioDefaults()
+	c.normalizeRoles()
 	c.Links.MQTT.fillNames()
 	for i := range c.Radios {
 		c.Radios[i].Links.MQTT.fillNames()
@@ -634,7 +651,10 @@ func (c *Config) validateOne() error {
 		return errors.New("airtime.telemetry_interval must be 0 (off) or at least 30m")
 	}
 	if !mesh.ValidRelayRole(c.Relay.Role) {
-		return fmt.Errorf("relay.role must be client, router, mute, monitor or off, not %q", c.Relay.Role)
+		return fmt.Errorf("relay.role must be client, client_base, client_mute, router, router_late, monitor or off, not %q", c.Relay.Role)
+	}
+	if _, ok := mesh.RebroadcastMode(c.Relay.Rebroadcast); !ok {
+		return fmt.Errorf("relay.rebroadcast must be all, all_skip_decoding, local_only, known_only, none or core_portnums_only, not %q", c.Relay.Rebroadcast)
 	}
 	if pb := c.Hosted.PortBase; pb != 0 && (pb < 1024 || pb > 64000) {
 		return errors.New("hosted.port_base must be between 1024 and 64000")
@@ -697,7 +717,7 @@ func (c *Config) MeshConfig() mesh.Config {
 	return mesh.Config{
 		Region: strings.ToUpper(c.Mesh.Region), Preset: preset, PrimaryChannel: c.Mesh.PrimaryChannel,
 		ChannelNum: c.Mesh.ChannelNum, OverrideFreqMHz: c.Mesh.OverrideFreqMHz, FreqOffsetMHz: c.Mesh.FreqOffsetMHz,
-		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: c.Relay.Role,
+		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: mesh.NormalizeRelayRole(c.Relay.Role), Rebroadcast: strings.ToLower(c.Relay.Rebroadcast),
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
 		TelemetryInterval: c.Airtime.TelemetryInterval,

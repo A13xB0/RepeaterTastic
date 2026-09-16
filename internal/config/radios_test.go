@@ -46,7 +46,7 @@ radios:
 	}
 	mf := rcs[1]
 	if mf.StateDir != filepath.Join("/var/lib/rt", "radios", "mf") || mf.Mesh.Region != "EU_868" ||
-		mf.Relay.Role != "mute" || mf.Radio.Driver != "kiss" || mf.Radio.Baud != 115200 || mf.MeshConfig().RadioID != "mf" {
+		mf.Relay.Role != "client_mute" || mf.Radio.Driver != "kiss" || mf.Radio.Baud != 115200 || mf.MeshConfig().RadioID != "mf" {
 		t.Fatalf("mf radio = %+v", mf)
 	}
 	if rcs[0].Mesh.Preset != "LONG_FAST" || len(rcs[0].Identities) != 0 {
@@ -81,6 +81,30 @@ func TestHostedConfig(t *testing.T) {
 	} {
 		if _, err := load(t, yml); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: %v, want %q", yml, err, want)
+		}
+	}
+}
+
+func TestRelayRolesUseMeshtasticNames(t *testing.T) {
+	c, err := load(t, `relay: {role: mute, rebroadcast: LOCAL_ONLY}
+radios:
+  - id: mf
+    radio: {device: /dev/rt-mf}
+    mesh: {preset: MEDIUM_FAST}
+    relay: {role: router_late}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Relay.Role != "client_mute" || c.Relay.Rebroadcast != "local_only" || c.MeshConfig().Rebroadcast != "local_only" {
+		t.Fatalf("relay = %+v", c.Relay)
+	}
+	if c.Radios[0].Relay.Role != "router_late" {
+		t.Fatalf("extra radio relay = %+v", c.Radios[0].Relay)
+	}
+	for _, bad := range []string{"relay: {role: repeater}", "relay: {rebroadcast: sometimes}"} {
+		if _, err := load(t, bad); err == nil {
+			t.Errorf("%s accepted", bad)
 		}
 	}
 }

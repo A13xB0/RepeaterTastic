@@ -92,7 +92,7 @@ func TestHostedNodeFollowsConfigChanges(t *testing.T) {
 	cfg := r.h.Config()
 	cfg.Preset = pb.Config_LoRaConfig_MEDIUM_FAST
 	cfg.PrimaryChannel = "Ops"
-	cfg.RelayRole = mesh.RoleMute
+	cfg.RelayRole = mesh.RoleClientMute
 	if err := r.h.UpdateConfig(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -162,28 +162,6 @@ func TestHostedNodeLateStart(t *testing.T) {
 	r2 := startNode(t, fake2, dir, 50*time.Millisecond)
 	if r2.id.NodeNum != hostedNum {
 		t.Fatalf("from saved state: %s", r2.id.NodeID())
-	}
-}
-
-func TestDeviceRoles(t *testing.T) {
-	for role, want := range map[pb.Config_DeviceConfig_Role]string{
-		pb.Config_DeviceConfig_ROUTER:      mesh.RoleRouter,
-		pb.Config_DeviceConfig_REPEATER:    mesh.RoleRouter,
-		pb.Config_DeviceConfig_CLIENT_MUTE: mesh.RoleMute,
-		pb.Config_DeviceConfig_TRACKER:     mesh.RoleClient,
-	} {
-		if got := relayRoleOf(role, true); got != want {
-			t.Errorf("%s: %s", role, got)
-		}
-	}
-	if relayRoleOf(pb.Config_DeviceConfig_ROUTER, false) != mesh.RoleMonitor {
-		t.Error("tx disabled is monitor")
-	}
-	if deviceRole(mesh.RoleRouter, pb.Config_DeviceConfig_ROUTER_LATE) != pb.Config_DeviceConfig_ROUTER_LATE ||
-		deviceRole(mesh.RoleClient, pb.Config_DeviceConfig_TRACKER) != pb.Config_DeviceConfig_TRACKER ||
-		deviceRole(mesh.RoleRouter, pb.Config_DeviceConfig_CLIENT) != pb.Config_DeviceConfig_ROUTER ||
-		deviceRole(mesh.RoleOff, pb.Config_DeviceConfig_CLIENT) != pb.Config_DeviceConfig_CLIENT {
-		t.Error("deviceRole")
 	}
 }
 

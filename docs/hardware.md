@@ -169,6 +169,6 @@ Each extra radio is another board on its own USB port, set up in Configuration â
 | "rejected Meshtastic's sync word" | Stock MeshCore KISS firmware: flash Mesh KISS |
 | Modem connected, nothing heard | Region, preset or primary channel name don't match the mesh; antenna not attached |
 | `rx` counter rises but nothing decodes | PHY mismatch (preset, bandwidth) or a different channel key |
-| Heard, but nobody hears us | Duty-cycle budget used up, TX power too low, or the relay in `monitor` or `off` mode (nothing is sent). `mute` only stops repeating |
+| Heard, but nobody hears us | Duty-cycle budget used up, TX power too low, or the relay in `monitor` or `off` mode (nothing is sent). `client_mute` only stops repeating |
 
 The [bench test](bench-test.md) walks through a first real-radio test step by step.

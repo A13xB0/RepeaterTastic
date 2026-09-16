@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -76,7 +77,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 			if dec.ok && !h.perhapsRelay(p, dec) && dec.target != nil && p.WantAck {
 				h.sendAckNak(dec.target, pb.Routing_NONE, p.From, p.Id, h.ackChannel(dec), 0, false)
 			}
-		} else if !sr.WeWereNextHop && p.TransportMechanism == pb.MeshPacket_TRANSPORT_LORA && h.Config().RelayRole != RoleRouter {
+		} else if !sr.WeWereNextHop && p.TransportMechanism == pb.MeshPacket_TRANSPORT_LORA && !routerRole(h.Config().RelayRole) {
 			if h.txq.Cancel(k, false) {
 				h.Counters.RelayCancelled.Add(1)
 			}
@@ -366,7 +367,12 @@ func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
 		return false // the hosted relay persona decides for itself
 	}
 	cfg := h.Config()
-	if (cfg.RelayRole != RoleClient && cfg.RelayRole != RoleRouter) || p.To == wire.BroadcastNoLoRa || p.HopLimit == 0 || p.Id == 0 {
+	switch cfg.RelayRole {
+	case RoleClient, RoleClientBase, RoleRouter, RoleRouterLate:
+	default:
+		return false
+	}
+	if strings.EqualFold(cfg.Rebroadcast, "none") || p.To == wire.BroadcastNoLoRa || p.HopLimit == 0 || p.Id == 0 {
 		return false
 	}
 	if p.ViaMqtt && cfg.IgnoreMQTT {
@@ -402,7 +408,7 @@ func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
 		}
 	}
 	rp := h.RadioParams()
-	delay := phy.FloodDelayMs(p.RxSnr, rp.SlotTimeMs(), cfg.RelayRole == RoleRouter)
+	delay := phy.FloodDelayMs(p.RxSnr, rp.SlotTimeMs(), routerRole(cfg.RelayRole))
 	k := pktKey{p.From, p.Id}
 	h.hist.MarkTx(k, out.HopLimit, uint8(out.NextHop), time.Now())
 	return h.txq.Enqueue(&txItem{key: k, pkt: out, due: time.Now().Add(time.Duration(delay) * time.Millisecond),

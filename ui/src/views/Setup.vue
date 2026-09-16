@@ -165,8 +165,10 @@ const presetLabel = (p: string) => p.split('_').map((w) => w[0] + w.slice(1).toL
 
 const roles: { id: RelayRole; title: string; body: string }[] = [
   { id: 'client', title: 'Client', body: 'Rebroadcast what we hear, but wait for routers and cancel if another node relays first. Right for most homes.' },
-  { id: 'router', title: 'Router', body: 'Rebroadcast with router priority. Only for a well-placed site (rooftop, hill) that the mesh relies on.' },
-  { id: 'mute', title: 'Mute', body: 'Never rebroadcast. Your identities still send and receive normally.' },
+  { id: 'client_base', title: 'Client base', body: 'A client that relays for its favourited nodes with router priority. For a base station serving your own nodes.' },
+  { id: 'client_mute', title: 'Client mute', body: 'Never rebroadcast. Your identities still send and receive normally.' },
+  { id: 'router', title: 'Router', body: 'Always rebroadcast, with priority. Only for a well-placed site (rooftop, hill) that the mesh relies on.' },
+  { id: 'router_late', title: 'Router late', body: 'Always rebroadcast, but only after other nodes had their chance. Fills gaps without taking over.' },
   { id: 'monitor', title: 'Monitor', body: 'Listen only. Nothing is transmitted, not even by your identities: no messages, ACKs, NodeInfo or telemetry.' },
   { id: 'off', title: 'Off', body: 'The radio is ignored: nothing received or sent. Local DMs, links and apps still work.' },
 ]

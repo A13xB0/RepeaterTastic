@@ -287,9 +287,15 @@ func (h *Hosted) Close() error { return h.client.Close() }
 
 var _ mesh.ConfigApplier = (*Hosted)(nil)
 
-// bootNoise is an error line every fresh or radio-less meshtasticd prints.
+// bootNoise is an error line every fresh or radio-less meshtasticd prints while it starts.
 func bootNoise(line string) bool {
-	return strings.Contains(line, "Can't open/read /prefs/") || strings.Contains(line, "No radio instance available to provide entropy")
+	for _, s := range []string{"Can't open/read /prefs/", "No radio instance available to provide entropy",
+		"Invalid channel index 0 > 0"} {
+		if strings.Contains(line, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // LauncherFor picks the launcher for the hosted settings: Docker when an image is given, else the
