@@ -43,6 +43,8 @@ type LoRaAir struct {
 	h    *mesh.Host
 	logf func(string, ...any)
 
+	relay *Node // the node that repeats on this air, when the radio brings one (a board)
+
 	mu     sync.RWMutex
 	nodes  map[uint32]*airNode
 	joined map[*Node]context.CancelFunc
@@ -73,8 +75,14 @@ func NewLoRaAir(h *mesh.Host, logf func(string, ...any)) *LoRaAir {
 	return a
 }
 
-// Relay is nil: a radio we drive brings no relay of its own.
-func (a *LoRaAir) Relay() *Node { return nil }
+// Relay is the radio's own relay (a board), or nil for a radio we drive.
+func (a *LoRaAir) Relay() *Node { return a.relay }
+
+// WithRelay makes n (the board a BoardRadio is) the air's relay. Joined nodes are then a hop behind it.
+func (a *LoRaAir) WithRelay(n *Node) *LoRaAir {
+	a.relay = n
+	return a
+}
 
 // Join puts n on the air.
 func (a *LoRaAir) Join(ctx context.Context, n *Node) {

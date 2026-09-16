@@ -2,7 +2,7 @@
 // Setup wizard: radio → meshtasticd → region → relay → admin password → review.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Check, CircleAlert, CircuitBoard, CircleCheck, RefreshCw, Server, Usb } from '@lucide/vue'
+import { Check, CircleAlert, CircuitBoard, CircleCheck, RadioTower, RefreshCw, Server, Usb } from '@lucide/vue'
 import { request, setToken } from '@/api/client'
 import type { Board, Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/types'
 import BoardSelect from '@/components/config/BoardSelect.vue'
@@ -47,9 +47,10 @@ async function checkHosted() {
 }
 watch([hostedVia, hostedBinary, hostedImage], () => (hostedCheck.value = null))
 function hostedSettings() {
+  // Behind a board the board is the relay, and identities use meshtasticd whenever it can run.
   return {
-    persona: hosted.value,
-    identities: hosted.value && hostedIdentities.value,
+    persona: hosted.value && !usingNode.value,
+    identities: hosted.value && hostedIdentities.value && !usingNode.value,
     meshtasticd: hostedVia.value === 'exec' ? hostedBinary.value.trim() : '',
     docker_image: hostedVia.value === 'docker' ? hostedImage.value.trim() : '',
     port_base: hostedPortBase.value,
@@ -59,8 +60,9 @@ function hostedSettings() {
 const ports = ref<SerialPort[]>([])
 const loadingPorts = ref(false)
 const device = ref('')
-// kiss: a USB modem on the serial port `device`; spi: `device` is a LoRa board the daemon drives itself.
-const driver = ref<'kiss' | 'spi'>('kiss')
+// kiss: a USB modem on the serial port `device`; spi: `device` is a LoRa board the daemon drives itself;
+// meshtastic: `device` is a board running Meshtastic firmware (a serial port or host[:port]).
+const driver = ref<'kiss' | 'spi' | 'meshtastic'>('kiss')
 const probe = ref<ProbeResult | null>(null)
 const probing = ref(false)
 
@@ -98,6 +100,11 @@ async function runProbe() {
   probe.value = null
   try {
     probe.value = await post<ProbeResult>('/setup/probe', { device: device.value, driver: driver.value })
+    // A board that already has a region keeps its settings unless they're changed later on.
+    if (probe.value.ok && probe.value.driver === 'meshtastic' && probe.value.region && probe.value.region !== 'UNSET') {
+      region.value = probe.value.region
+      if (probe.value.preset) preset.value = probe.value.preset
+    }
   } catch (e) {
     probe.value = { ok: false, driver: '', firmware: '', name: '', sync_word_ok: false, error: (e as Error).message }
   } finally {
@@ -117,6 +124,22 @@ function pickBoard() {
 watch(board, (v) => {
   if (usingBoard.value) device.value = v
 })
+
+// A board running stock Meshtastic firmware, over USB or the network: the radio's relay, with the
+// identities a hop behind it.
+const usingNode = computed(() => driver.value === 'meshtastic')
+const nodeVia = ref<'usb' | 'net'>('usb')
+const nodePort = ref('')
+const nodeHost = ref('')
+const nodeDevice = computed(() => (nodeVia.value === 'usb' ? nodePort.value.trim() : nodeHost.value.trim()))
+function pickNode() {
+  driver.value = 'meshtastic'
+  device.value = nodeDevice.value
+}
+watch(nodeDevice, (v) => {
+  if (usingNode.value) device.value = v
+})
+const identityHops = computed(() => (usingNode.value ? 1 : 0))
 
 // A serial port typed by hand, for one the daemon didn't list.
 const manualPort = ref('')
@@ -217,7 +240,7 @@ async function finish() {
     })
     setToken(r.token)
     // The relay moves to meshtasticd when the daemon starts again.
-    if (r.restart_required && hosted.value) {
+    if (r.restart_required && (hosted.value || usingNode.value)) {
       await request('POST', '/restart').catch(() => {})
       await waitForRestart()
     }
@@ -264,11 +287,15 @@ async function finish() {
           <section v-if="stepId === 'radio'">
             <h2 class="text-base font-semibold tracking-tight">Connect the radio</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch) or a LoRa board RepeaterTastic drives itself. We'll ping it and check it accepts sync word 0x2B.
+              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch), a LoRa board RepeaterTastic drives itself, or a board running stock Meshtastic firmware. We'll check it answers.
             </p>
-            <p class="mt-2 flex flex-wrap items-center gap-1.5 text-2xs text-ink-3">
+            <p v-if="!usingNode" class="mt-2 flex flex-wrap items-center gap-1.5 text-2xs text-ink-3">
               <span class="chip bg-brand/12 text-brand">0 hops</span>
               The relay and your identities all transmit on this radio themselves.
+            </p>
+            <p v-else class="mt-2 flex flex-wrap items-center gap-1.5 text-2xs text-ink-3">
+              <span class="chip bg-warn/15 text-warn">1 hop</span>
+              The board is the relay. Your identities reach the air through it, one hop behind.
             </p>
             <div class="mt-4 space-y-2">
               <label
@@ -308,10 +335,29 @@ async function finish() {
                 </label>
                 <BoardSelect v-if="usingBoard" id="setup-board" v-model="board" :boards="boards" input-class="input h-8 text-xs" class="mt-2.5 pl-7" />
               </div>
+              <div :class="['rounded-xl border px-3.5 py-3 transition-colors', usingNode ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
+                <label class="flex cursor-pointer items-center gap-3">
+                  <input id="setup-node-pick" type="radio" :checked="usingNode" class="accent-[var(--brand)]" @change="pickNode" />
+                  <RadioTower class="size-4 shrink-0 text-ink-3" />
+                  <div class="min-w-0">
+                    <div class="text-[13px] font-medium">A board running Meshtastic firmware</div>
+                    <div class="text-2xs text-ink-3">A Heltec, T-Beam, RAK or similar on stock firmware, over USB or the network. It becomes the relay, and carries your identities over its MQTT client proxy.</div>
+                  </div>
+                </label>
+                <div v-if="usingNode" class="mt-2.5 flex flex-wrap items-center gap-2 pl-7">
+                  <div class="seg" role="group" aria-label="How the board is connected">
+                    <button type="button" :aria-pressed="nodeVia === 'usb'" @click="nodeVia = 'usb'">USB</button>
+                    <button type="button" :aria-pressed="nodeVia === 'net'" @click="nodeVia = 'net'">Network</button>
+                  </div>
+                  <input v-if="nodeVia === 'usb'" id="setup-node-serial" v-model="nodePort" class="input h-8 mono min-w-0 flex-1 text-xs" list="setup-node-ports" placeholder="/dev/ttyACM0" spellcheck="false" aria-label="Board serial port" />
+                  <input v-else id="setup-node-host" v-model="nodeHost" class="input h-8 mono min-w-0 flex-1 text-xs" placeholder="192.168.1.20 or meshtastic.local:4403" spellcheck="false" aria-label="Board address" />
+                  <datalist id="setup-node-ports"><option v-for="p in ports" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
+                </div>
+              </div>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
-              <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />Test modem</button>
+              <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />{{ usingNode ? 'Test board' : 'Test modem' }}</button>
 
             </div>
             <div v-if="probe" :class="['mt-3 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[13px]', probe.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
@@ -320,13 +366,14 @@ async function finish() {
               <div v-if="probe.ok" class="min-w-0">
                 <div class="font-medium">{{ probe.name }} answered</div>
                 <div v-if="probe.driver === 'spi'" class="text-ink-2">{{ probe.firmware }} module · ready for sync word 0x2B</div>
+                <div v-else-if="probe.driver === 'meshtastic'" class="text-ink-2">{{ probe.firmware }}<template v-if="probe.region && probe.region !== 'UNSET'"> · {{ probe.region }} · {{ presetLabel(probe.preset ?? '') }}</template></div>
                 <div v-else class="text-ink-2">{{ probe.firmware }} · sync word 0x2B {{ probe.sync_word_ok ? 'accepted' : 'rejected (flash the patched firmware)' }}</div>
                 <ul v-if="probe.details?.length" class="mono mt-1.5 space-y-0.5 text-2xs text-ink-3">
                   <li v-for="(d, i) in probe.details" :key="i" class="break-words">{{ d }}</li>
                 </ul>
               </div>
               <div v-else>
-                <div class="font-medium">{{ usingBoard ? 'The board didn’t answer' : 'No modem on this port' }}</div>
+                <div class="font-medium">{{ usingBoard || usingNode ? 'The board didn’t answer' : 'No modem on this port' }}</div>
                 <div class="text-ink-2">{{ probe.error }}</div>
               </div>
             </div>
@@ -337,14 +384,15 @@ async function finish() {
             <h2 class="text-base font-semibold tracking-tight">Run nodes on meshtasticd</h2>
             <p class="mt-1 text-[13px] text-ink-3">
               Experimental: the relay persona and your identities can be real Meshtastic nodes, each a meshtasticd on a simulated radio that RepeaterTastic starts, sets up and restarts.
-              They still transmit on this radio themselves, at zero hops.
+              <template v-if="!usingNode">They still transmit on this radio themselves, at zero hops.</template>
             </p>
+            <p v-if="usingNode" class="mt-2 text-[13px] text-ink-3">Your board is the relay, so only your identities can run here. Each gets its own meshtasticd, one hop behind the board.</p>
             <div :class="['mt-4 rounded-xl border px-3.5 py-3', hosted ? 'border-brand/60 bg-brand/6' : 'border-line']">
               <label class="flex cursor-pointer items-center gap-3">
                 <input id="setup-hosted" v-model="hosted" type="checkbox" class="accent-[var(--brand)]" />
                 <Server class="size-4 shrink-0 text-ink-3" />
                 <div class="min-w-0">
-                  <div class="text-[13px] font-medium">Run the relay on meshtasticd</div>
+                  <div class="text-[13px] font-medium">{{ usingNode ? 'Run identities on meshtasticd' : 'Run the relay on meshtasticd' }}</div>
                   <div class="text-2xs text-ink-3">Needs meshtasticd 2.8.0 or newer, installed or in Docker.</div>
                 </div>
               </label>
@@ -364,7 +412,7 @@ async function finish() {
                   <div v-if="hostedCheck.ok"><div class="font-medium">meshtasticd {{ hostedCheck.version }} found</div><div class="text-ink-2">{{ hostedCheck.min_version }} or newer is needed · {{ hostedCheck.launcher }}</div></div>
                   <div v-else><div class="font-medium">meshtasticd can't host nodes</div><div class="text-ink-2">{{ hostedCheck.error }}</div></div>
                 </div>
-                <label class="flex cursor-pointer items-start gap-2.5 text-[13px]">
+                <label v-if="!usingNode" class="flex cursor-pointer items-start gap-2.5 text-[13px]">
                   <input id="setup-hosted-identities" v-model="hostedIdentities" type="checkbox" class="mt-0.5 accent-[var(--brand)]" />
                   <span><span class="font-medium">Identities on meshtasticd too</span><span class="block text-2xs text-ink-3">Each identity you create gets its own meshtasticd and keeps its app port. They never repeat: the relay does.</span></span>
                 </label>
@@ -380,15 +428,16 @@ async function finish() {
             <div class="mt-4 rounded-xl border border-line-soft bg-raised p-4">
               <div class="flex items-center justify-between gap-2">
                 <div class="eyebrow">What will run on this radio</div>
-                <span class="chip bg-brand/12 text-brand">all at 0 hops</span>
+                <span v-if="!usingNode" class="chip bg-brand/12 text-brand">all at 0 hops</span>
               </div>
               <table class="mt-2 w-full text-xs">
                 <tbody>
-                  <tr class="border-b border-line-soft"><td class="py-1.5 font-medium">Relay persona</td><td class="py-1.5 text-ink-3">{{ hosted ? (hostedCheck?.ok ? `meshtasticd ${hostedCheck.version}` : 'meshtasticd') : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
-                  <tr><td class="py-1.5 font-medium">Your identities</td><td class="py-1.5 text-ink-3">{{ hosted && hostedIdentities ? 'meshtasticd, one each' : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
+                  <tr class="border-b border-line-soft"><td class="py-1.5 font-medium">Relay persona</td><td class="py-1.5 text-ink-3">{{ usingNode ? 'the board (Meshtastic firmware)' : hosted ? (hostedCheck?.ok ? `meshtasticd ${hostedCheck.version}` : 'meshtasticd') : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
+                  <tr><td class="py-1.5 font-medium">Your identities</td><td class="py-1.5 text-ink-3">{{ hosted && (hostedIdentities || usingNode) ? 'meshtasticd, one each' : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span :class="['chip', identityHops ? 'bg-warn/15 text-warn' : 'bg-brand/12 text-brand']">{{ identityHops }} hop{{ identityHops === 1 ? '' : 's' }}</span></td></tr>
                 </tbody>
               </table>
-              <p class="mt-2 text-2xs text-ink-3">Everything on this radio transmits from here. The relay hears your identities but never repeats them: they already went out from this mast.</p>
+              <p v-if="usingNode" class="mt-2 text-2xs text-ink-3">The board repeats your identities' packets onto the air, so the mesh hears them one hop away. Its role must be one that repeats (Client or Router), and its MQTT module is used for this.</p>
+              <p v-else class="mt-2 text-2xs text-ink-3">Everything on this radio transmits from here. The relay hears your identities but never repeats them: they already went out from this mast.</p>
             </div>
           </section>
 
@@ -493,11 +542,11 @@ async function finish() {
           <section v-else>
             <h2 class="text-base font-semibold tracking-tight">Ready to go</h2>
             <dl class="kv mt-4">
-              <dt>Radio</dt><dd class="mono truncate">{{ usingBoard ? `board · ${device}` : device }}</dd>
+              <dt>Radio</dt><dd class="mono truncate">{{ usingBoard ? `board · ${device}` : usingNode ? `Meshtastic board · ${device}` : device }}</dd>
               <dt>Region</dt><dd>{{ region }} · {{ phy?.preset_name }} · {{ phy?.frequency_mhz.toFixed(3) }} MHz</dd>
               <dt>Relay role</dt><dd class="capitalize">{{ role }}</dd>
-              <dt>Identities run on</dt><dd>{{ hosted && hostedIdentities ? 'meshtasticd, one each' : 'RepeaterTastic' }}</dd>
-              <dt>Relay runs on</dt><dd>{{ hosted ? `meshtasticd ${hostedCheck?.version ?? ''} (${hostedVia === 'docker' ? 'Docker' : 'installed'})` : 'RepeaterTastic' }}</dd>
+              <dt>Identities run on</dt><dd>{{ hosted && (hostedIdentities || usingNode) ? 'meshtasticd, one each' : 'RepeaterTastic' }}<template v-if="usingNode">, a hop behind the board</template></dd>
+              <dt>Relay runs on</dt><dd>{{ usingNode ? 'the board' : hosted ? `meshtasticd ${hostedCheck?.version ?? ''} (${hostedVia === 'docker' ? 'Docker' : 'installed'})` : 'RepeaterTastic' }}</dd>
               <dt>Admin password</dt><dd>{{ '•'.repeat(Math.min(password.length, 16)) }}</dd>
             </dl>
             <p v-if="hosted" class="mt-4 text-[13px] text-ink-3">RepeaterTastic restarts once to start the relay on meshtasticd, then opens the dashboard.</p>

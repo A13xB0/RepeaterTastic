@@ -266,7 +266,17 @@ func startRadio(ctx context.Context, rc config.RadioConfig, index int, log *slog
 		return nil, fmt.Errorf("state dir: %w", err)
 	}
 	var r radio.Radio
+	var board *nodes.BoardRadio
 	switch rc.Radio.Driver {
+	case nodes.BoardDriver:
+		// A board on Meshtastic firmware: it is the radio's relay, and the identities reach the air
+		// through its MQTT client proxy, a hop behind.
+		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.ID) }
+		var err error
+		if board, err = nodes.OpenBoard(ctx, rc.Radio.Device, filepath.Join(rc.StateDir, "board"), logf); err != nil {
+			return nil, err
+		}
+		r = board
 	case "kiss", "spi":
 		// One lazy radio for both drivers, so first-time setup can switch driver as well as device
 		// before anything has opened (see web.followUnopenedDevices).
@@ -300,7 +310,23 @@ func startRadio(ctx context.Context, rc config.RadioConfig, index int, log *slog
 		r.Close()
 		return nil, err
 	}
-	hosting := startHosting(ctx, rc, index, host, log)
+	var relay *nodes.Node
+	if board != nil {
+		relay = board.Node()
+		id, err := relay.Identity(ctx, 10*time.Second)
+		if err == nil {
+			id.IsRelay = true
+			err = host.AddIdentity(id)
+		}
+		if err != nil {
+			r.Close()
+			return nil, fmt.Errorf("the Meshtastic board: %w", err)
+		}
+		host.AddConfigApplier(relay)
+		relay.Bind(host, id)
+		go relay.Run(ctx)
+	}
+	hosting := startHosting(ctx, rc, index, host, relay, log)
 	if err := loadIdentities(ctx, rc.Config, host, log); err != nil {
 		r.Close()
 		return nil, err
@@ -357,7 +383,12 @@ func loadIdentities(ctx context.Context, cfg *config.Config, host *mesh.Host, lo
 		return fmt.Errorf("reading identities: %w", err)
 	}
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].IsRelay && !recs[j].IsRelay }) // the persona first
+	boardRelay := host.Relay() != nil                                                          // a board is the relay
 	for _, rec := range recs {
+		if rec.IsRelay && boardRelay {
+			host.KeepRecord(rec) // back when the radio isn't a board any more
+			continue
+		}
 		if _, err := host.AddRecord(ctx, rec); err != nil {
 			return err
 		}
@@ -487,13 +518,16 @@ func pluginCommand(cfgPath string, args []string) int {
 	return 0
 }
 
-// startHosting runs a modem or HAT radio's nodes on meshtasticd when the config asks for it: the
-// radio gets a LoRa air, and the host's hoster starts the relay persona (and, if asked, every
-// other identity) on it as their records are loaded. It returns nil, leaving every identity in
-// RepeaterTastic, when meshtasticd can't run.
-func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, log *slog.Logger) *nodes.Hosting {
+// startHosting runs a radio's nodes on meshtasticd when the config asks for it. A modem or HAT
+// radio gets a LoRa air, and the host's hoster starts the relay persona (and, if asked, every other
+// identity) on it as their records are loaded. A board radio's air has the board as its relay, and
+// its identities always run on meshtasticd, a hop behind the board. It returns nil, leaving
+// identities in RepeaterTastic, when meshtasticd can't run.
+func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, relay *nodes.Node, log *slog.Logger) *nodes.Hosting {
 	hc := rc.Hosted
-	if !hc.Persona || (rc.Radio.Driver != "kiss" && rc.Radio.Driver != "spi") {
+	switch {
+	case relay != nil: // a board
+	case !hc.Persona || (rc.Radio.Driver != "kiss" && rc.Radio.Driver != "spi"):
 		return nil
 	}
 	l := nodes.LauncherFor(hc.Meshtasticd, hc.DockerImage)
@@ -501,16 +535,25 @@ func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *m
 	v, err := nodes.CheckLauncher(vctx, l)
 	cancel()
 	if err != nil {
-		log.Error("hosted nodes: keeping every identity in RepeaterTastic", "err", err)
+		if relay != nil {
+			log.Warn("identities behind the Meshtastic board stay in RepeaterTastic", "radio", rc.ID, "err", err)
+		} else {
+			log.Error("hosted nodes: keeping every identity in RepeaterTastic", "err", err)
+		}
 		return nil
 	}
 	logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.ID) }
 	relayLong, relayShort := rc.Relay.LongName, rc.Relay.ShortName
-	x := nodes.NewHosting(ctx, nodes.HostingOptions{Launcher: l, Air: nodes.NewLoRaAir(host, logf), Radio: rc.ID,
+	air := nodes.NewLoRaAir(host, logf).WithRelay(relay)
+	opts := nodes.HostingOptions{Launcher: l, Air: air, Radio: rc.ID,
 		Dir: filepath.Join(rc.StateDir, "hosted"), PortBase: hc.RadioPortBase(index), Persona: true, Identities: hc.Identities,
-		RelayOwner: func() (string, string) { return relayLong, relayShort }, Logf: logf})
+		RelayOwner: func() (string, string) { return relayLong, relayShort }, Logf: logf}
+	if relay != nil {
+		opts.Persona, opts.Identities, opts.HopsBehind = false, true, 1
+	}
+	x := nodes.NewHosting(ctx, opts)
 	host.SetHoster(x)
 	log.Info("hosted nodes run on meshtasticd", "radio", rc.ID, "version", v, "launcher", l.Describe(),
-		"identities", hc.Identities, "ports_from", hc.RadioPortBase(index))
+		"identities", opts.Identities, "behind_board", relay != nil, "ports_from", hc.RadioPortBase(index))
 	return x
 }

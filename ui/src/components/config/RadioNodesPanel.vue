@@ -1,11 +1,13 @@
 <script setup lang="ts">
-// Where a radio's relay persona and identities run (RepeaterTastic or meshtasticd, which version)
-// and how far they are from the air. Every node on a radio we drive transmits itself: 0 hops.
+// Where a radio's relay persona and identities run (RepeaterTastic, meshtasticd or a board on
+// Meshtastic firmware) and how far they are from the air. On a radio we drive every node transmits
+// itself (0 hops); behind a board, identities are one hop away.
 import { computed, ref, watch } from 'vue'
 import { api, enc } from '@/api/client'
 import type { HostedInstance, HostedSettings, Identity } from '@/api/types'
 
-const props = defineProps<{ radioId: string }>()
+const props = defineProps<{ radioId: string; board?: boolean }>()
+const hops = computed(() => (props.board ? 1 : 0))
 
 const identities = ref<Identity[]>([])
 const instances = ref<HostedInstance[]>([])
@@ -51,7 +53,11 @@ function runsOn(i: Identity) {
           <span class="font-medium">{{ relay.long_name }}</span>
           <span class="mono text-xs text-ink-3">{{ relay.node_id }}</span>
         </div>
-        <p v-if="relayInstance" class="mt-1 text-xs text-ink-3">
+        <p v-if="board" class="mt-1 text-xs text-ink-3">
+          The board is this radio's relay, running its own Meshtastic firmware. RepeaterTastic writes its region, preset and role, and uses its MQTT client proxy to carry your identities onto the air.
+          Its role must repeat (Client or Router) for them to be heard.
+        </p>
+        <p v-else-if="relayInstance" class="mt-1 text-xs text-ink-3">
           Runs on meshtasticd {{ relayInstance.firmware || '' }} ({{ relayInstance.launcher }}, port {{ relayInstance.port }}<template v-if="relayInstance.restarts">, {{ relayInstance.restarts }} restarts</template>).
           RepeaterTastic gives it its saved key and sets its region, preset and role from this page.
           <span v-if="relayInstance.last_error" class="text-warn">Last stop: {{ relayInstance.last_error }}</span>
@@ -64,7 +70,7 @@ function runsOn(i: Identity) {
     <div>
       <div class="flex items-center justify-between gap-2">
         <span class="label !mb-0">Identities on this radio</span>
-        <span class="chip bg-brand/12 text-brand">0 hops from the air</span>
+        <span :class="['chip', hops ? 'bg-warn/15 text-warn' : 'bg-brand/12 text-brand']">{{ hops ? '1 hop behind the board' : '0 hops from the air' }}</span>
       </div>
       <div class="scroll-thin mt-1.5 overflow-x-auto rounded-xl border border-line-soft">
         <table class="tbl text-xs">
@@ -77,13 +83,14 @@ function runsOn(i: Identity) {
                 <span v-if="runsOn(i).state" :class="['chip ml-1', runsOn(i).state === 'running' ? 'bg-ok/14 text-ok' : 'bg-warn/15 text-warn']">{{ runsOn(i).state }}</span>
               </td>
               <td class="mono">{{ i.api ? `:${i.api.port}` : '—' }}</td>
-              <td class="num"><span class="chip bg-brand/12 text-brand">0</span></td>
+              <td class="num"><span :class="['chip', hops ? 'bg-warn/15 text-warn' : 'bg-brand/12 text-brand']">{{ hops }}</span></td>
             </tr>
             <tr v-if="loaded && !others.length"><td colspan="4" class="text-ink-3">No identities yet.</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="hint">Each identity transmits on this radio itself, beside the relay. The relay hears them but never repeats them: they already went out from this mast.</p>
+      <p v-if="board" class="hint">The board repeats each identity's packets onto the air, so the mesh hears them one hop away. Identities get a hop limit one higher to make up for it.</p>
+      <p v-else class="hint">Each identity transmits on this radio itself, beside the relay. The relay hears them but never repeats them: they already went out from this mast.</p>
     </div>
   </section>
 </template>

@@ -136,3 +136,25 @@ func TestHostedIdentities(t *testing.T) {
 		t.Fatalf("hosted = %v", h)
 	}
 }
+
+func TestSetupMeshtasticBoard(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	// Before a password exists, a board's address must be local.
+	if code, res, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "meshtastic", "device": "8.8.8.8"}); code != 400 {
+		t.Fatalf("public board address probed before setup: %d %v", code, res)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "meshtastic", "device": "/etc/passwd"}); code != 400 {
+		t.Fatalf("non-serial path probed: %d", code)
+	}
+	// A local address that nothing answers on is reported, not refused.
+	if code, res, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "meshtastic", "device": "127.0.0.1:1"}); code != 200 || res["ok"] != false || res["error"] == "" {
+		t.Fatalf("probe of a closed port: %d %v", code, res)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse", "driver": "meshtastic"}); code != 400 {
+		t.Fatalf("board without a device accepted: %d", code)
+	}
+	code, res, _ := call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse", "driver": "meshtastic", "device": "127.0.0.1:4403"})
+	if code != 200 || res["restart_required"] != true {
+		t.Fatalf("setup with a board %d %v", code, res)
+	}
+}

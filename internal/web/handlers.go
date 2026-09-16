@@ -87,11 +87,15 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Device = strings.TrimSpace(req.Device)
 	switch req.Driver {
-	case "kiss", "spi":
-		if req.Driver == "spi" && req.Device == "" {
+	case "kiss", "spi", nodes.BoardDriver:
+		if req.Driver != "kiss" && req.Device == "" {
 			// Don't let a serial port left in the config pass as a board.
 			s.cfgMu.Unlock()
-			writeError(w, http.StatusBadRequest, "driver spi needs a device: a board from GET /boards, or auto")
+			if req.Driver == "spi" {
+				writeError(w, http.StatusBadRequest, "driver spi needs a device: a board from GET /boards, or auto")
+			} else {
+				writeError(w, http.StatusBadRequest, "driver meshtastic needs a device: the board's serial port or its address")
+			}
 			return
 		}
 		next.Radio.Driver = req.Driver
@@ -100,12 +104,12 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 		}
 	case "":
 		// An older wizard only picks serial ports: don't write one over an SPI radio's board.
-		if req.Device != "" && next.Radio.Driver != "spi" {
+		if req.Device != "" && next.Radio.Driver == "kiss" {
 			next.Radio.Device = req.Device
 		}
 	default:
 		s.cfgMu.Unlock()
-		writeError(w, http.StatusBadRequest, "driver must be kiss or spi")
+		writeError(w, http.StatusBadRequest, "driver must be kiss, spi or meshtastic")
 		return
 	}
 	if err := next.Validate(); err != nil {

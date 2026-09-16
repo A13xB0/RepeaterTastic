@@ -325,6 +325,10 @@ export interface ProbeResult {
   error: string
   /** spi: the chip's diagnostic lines */
   details?: string[]
+  /** meshtastic: the board's current region, preset and role */
+  region?: string
+  preset?: string
+  role?: string
 }
 
 export interface ApiToken {

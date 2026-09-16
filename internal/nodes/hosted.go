@@ -97,11 +97,15 @@ func (l DockerLauncher) container(in Instance) string {
 
 func (l DockerLauncher) Run(ctx context.Context, in Instance, out io.Writer) error {
 	name := l.container(in)
+	dir, err := filepath.Abs(in.Dir) // docker takes a relative path for a volume name
+	if err != nil {
+		return err
+	}
 	_ = exec.Command("docker", "rm", "-f", name).Run() // a container left by a crash
 	args := []string{"run", "--rm", "--name", name, "--label", "repeatertastic.hosted=1",
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", in.Port, in.Port),
-		"-v", in.Dir + ":/data", l.Image, "/usr/bin/meshtasticd"}
+		"-v", dir + ":/data", l.Image, "/usr/bin/meshtasticd"}
 	args = append(args, in.Args("/data/config.yaml", "/data/vfs")...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = out, out

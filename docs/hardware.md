@@ -147,6 +147,35 @@ live mesh). HATs, LR1121, RF95 and SX1280 follow the same datasheets and RadioLi
 haven't been run on hardware yet; [LoRa HATs and USB sticks](spi-radio-testing.md) is the
 step-by-step test guide, and reports are welcome.
 
+## Boards on Meshtastic firmware
+
+A board running stock Meshtastic firmware (Heltec, T-Beam, RAK, T-Echo and the like) can be a
+radio too, over USB or its network API: `driver: meshtastic`, or **A board running Meshtastic
+firmware** in the setup wizard, or the **Meshtastic firmware** tab under Configuration → Radios.
+
+![Setup: a board on Meshtastic firmware](images/setup-meshtastic-board.png)
+
+- **The board is the relay.** It keeps its own key and node number and does its own radio work.
+  RepeaterTastic writes the radio settings (region, preset, primary channel, TX power, hop limit)
+  and the relay role to it.
+- **Identities are one hop behind it.** They run on meshtasticd (installed or Docker, see
+  [`hosted`](configuration.md#hosted-nodes-on-meshtasticd-experimental)), or in RepeaterTastic
+  when meshtasticd can't run. Their packets go to the board through its **MQTT client proxy**. The
+  board repeats them onto the air one hop lower, so identities get a hop limit one higher. Everything
+  the board hears comes back the same way, with the RSSI and SNR it measured.
+- **The board must repeat.** A role like Client or Router works; Client mute or rebroadcast mode
+  None keeps identities off the air.
+- **Its MQTT module is taken over.** RepeaterTastic turns on the client proxy with encryption,
+  sets the server address to 127.0.0.1 (so other nodes' packets are passed on), switches map
+  reports and "ignore MQTT" off, and turns on uplink and downlink on every channel. The board's own
+  MQTT connection stops; use RepeaterTastic's MQTT links instead.
+- **Channels.** An identity's channel packets only go out on channels the board also has (same
+  name and key). Direct messages use the PKI path and need the board to have heard both nodes.
+- One program at a time: close the Meshtastic app's USB connection, or a serial board has no room
+  for RepeaterTastic.
+
+![Radio settings with a board on Meshtastic firmware](images/radio-settings-meshtastic-board.png)
+
 ## Several modems
 
 Each extra radio is another board on its own USB port, set up in Configuration → Radios → Add radio

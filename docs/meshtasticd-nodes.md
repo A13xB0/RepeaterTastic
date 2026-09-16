@@ -121,9 +121,24 @@ other at hop limit 0, so none of them repeats a frame that went out from the sam
   role as the persona.
 - Out of an envelope: PKI ciphertext goes out as it came; channel payloads are re-encrypted with
   the node's channel key, except a relay, which sends the ciphertext first heard.
-- A later **board air** could carry nodes through a board running stock Meshtastic firmware (its
-  MQTT client proxy or UDP multicast). The board would be that air's relay, and joined nodes would
-  sit one hop behind it.
+- **A board radio** (`nodes.BoardRadio`, driver `meshtastic`) is a board on stock Meshtastic
+  firmware used as the radio. The same LoRa air runs on it, with the board as its relay
+  (`LoRaAir.WithRelay`), and joined nodes are a hop behind it:
+  - A frame the host sends goes to the board as an MQTT downlink (`MqttClientProxyMessage` with a
+    `ServiceEnvelope`: the encrypted packet, the channel's MQTT id or `PKI`, and the sender as
+    gateway). The board takes it as heard via MQTT and floods it onto LoRa with the hop limit one
+    lower (checked on 2.8.0: `Rebroadcast msg`, `HopLim=2 hopStart=3`).
+  - What the board hears comes back as uplinks and becomes received frames with its RSSI and SNR.
+  - The board doesn't uplink what came from MQTT, and 2.8 resends a broadcast it never hears
+    repeated (twice, 7.3 s apart) and then reports it failed. So when the board's role repeats,
+    the driver plays each downlink back one hop lower, relayed by the board, as the sender would
+    hear it.
+  - The board needs `ignore_mqtt` off, the MQTT proxy with encryption and a private server
+    address (else packets without the OK-to-MQTT flag aren't uplinked), and uplink and downlink on
+    its channels (`BoardSettings`). The downlink is dropped for a channel id the board doesn't
+    have.
+  - meshtasticd hands proxy messages to whichever API client asks first: a second client on the
+    board (an app over the network) takes some of them.
 
 ## Supervisor
 

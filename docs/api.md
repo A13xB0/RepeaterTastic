@@ -66,8 +66,9 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
 - `POST /setup` answers 409 once setup is done, and 400 when the password is under 8 characters or
   the settings don't validate. Nothing is saved on a 400, so setup can be tried again. Empty fields
   keep their defaults; `primary_channel` `""` means the preset's name. `driver` is `kiss` (a USB
-  modem on the serial port `device`) or `spi` (a LoRa board: `device` is a board id from
-  `GET /boards`); without `driver`, `device` is taken as a serial port and left alone when the
+  modem on the serial port `device`), `spi` (a LoRa board: `device` is a board id from
+  `GET /boards`) or `meshtastic` (a board on Meshtastic firmware: `device` is its serial port or
+  `host[:port]`; switching to it needs a restart); without `driver`, `device` is taken as a serial port and left alone when the
   config already has an `spi` radio. A modem that hasn't opened yet switches to the chosen
   `device` at once, so `restart_required` is normally false; a change of driver needs a restart.
 - `GET /boards` lists the boards the experimental `spi` driver knows: `auto` first (detect a
@@ -90,6 +91,11 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
   (the SX126x/SX127x/SX128x/LR11x0 version, mode and error flags). A board a running radio
   already drives is reported without being opened. A board file outside `/etc/meshtasticd`
   answers 400.
+- With `driver: "meshtastic"` the probe connects to the board, reads its settings and disconnects:
+  `name` is its long name, `firmware` its Meshtastic version, `region`, `preset`, `role` and
+  `node_id` its current settings, and `details` a summary. A board a running radio uses is
+  reported without a second connection. Before a password exists, a network address must be on
+  this machine or the local network (400 otherwise).
 - `POST /phy/preview` answers 400 for an unknown preset or region. `tx_power_dbm` is clamped to the
   region limit in the reply.
 
