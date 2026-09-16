@@ -39,7 +39,11 @@ func pushChannels(ctx context.Context, id *mesh.Identity, slots ...int) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for _, i := range slots {
-		if _, err := rm.Admin(ctx, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetChannel{SetChannel: id.ChannelCopy(i)}}); err != nil {
+		ch := id.ChannelCopy(i)
+		if p, ok := rm.(interface{ PrepareChannel(*pb.Channel) }); ok {
+			p.PrepareChannel(ch) // what the node needs on every channel (a board's MQTT proxy)
+		}
+		if _, err := rm.Admin(ctx, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetChannel{SetChannel: ch}}); err != nil {
 			return fmt.Errorf("saved here, but meshtasticd didn't take channel %d: %w", i, err)
 		}
 	}

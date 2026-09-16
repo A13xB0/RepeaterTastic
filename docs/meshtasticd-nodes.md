@@ -163,6 +163,12 @@ other at hop limit 0, so none of them repeats a frame that went out from the sam
     address (else packets without the OK-to-MQTT flag aren't uplinked), and uplink and downlink on
     its channels (`BoardSettings`). The downlink is dropped for a channel id the board doesn't
     have.
+  - A direct message for an identity isn't uplinked: 2.8.0 publishes only packets it decoded, or
+    opaque ones (no channel with that hash); a DM for another node fails decoding and is only
+    relayed. So identities behind a board can't receive DMs, nor the ACKs of their own.
+  - The board takes a `PKI` downlink only when it knows both nodes: the recipient is added with
+    `add_contact` (from the host's node DB) before the downlink.
+  - Channels written to a board keep uplink and downlink on (`Node.PrepareChannel`).
   - meshtasticd hands proxy messages to whichever API client asks first: a second client on the
     board (an app over the network) takes some of them.
 
