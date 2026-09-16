@@ -55,7 +55,7 @@ Copy the `.uf2` onto it and the board reboots into the modem firmware.
 
 ## Check the modem
 
-`kisstool` ships with RepeaterTastic (it's `/kisstool` in the container):
+`kisstool` ships with RepeaterTastic (`docker exec repeatertastic kisstool …` in the container):
 
 ```bash
 kisstool info --dev /dev/ttyUSB0            # firmware version (2 or higher), board, radio, noise floor, counters
