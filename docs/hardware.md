@@ -172,6 +172,13 @@ radio:
 - If the node is away when RepeaterTastic starts, its last known state stands in until it answers.
 - Switching a radio to or from a node needs a restart; the setup wizard does it for you.
 
+![Setup wizard with a Meshtastic node on the network](images/setup-meshtastic-node.png)
+
+In Configuration → Radios, **Edit** offers the same choice (USB modem, HAT or stick, Meshtastic
+node); a node's region, preset, primary channel, TX power and hop limit are saved to the node.
+
+![Editing a radio that is a Meshtastic node](images/radio-settings-meshtastic-node.png)
+
 This is the first step of running every identity on real Meshtastic firmware; see
 [Real Meshtastic nodes](meshtasticd-nodes.md).
 
