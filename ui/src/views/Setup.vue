@@ -145,6 +145,8 @@ const roles: { id: RelayRole; title: string; body: string }[] = [
   { id: 'client', title: 'Client', body: 'Rebroadcast what we hear, but wait for routers and cancel if another node relays first. Right for most homes.' },
   { id: 'router', title: 'Router', body: 'Rebroadcast with router priority. Only for a well-placed site (rooftop, hill) that the mesh relies on.' },
   { id: 'mute', title: 'Mute', body: 'Never rebroadcast. Your identities still send and receive normally.' },
+  { id: 'monitor', title: 'Monitor', body: 'Listen only. Nothing is transmitted, not even by your identities: no messages, ACKs, NodeInfo or telemetry.' },
+  { id: 'off', title: 'Off', body: 'The radio is ignored: nothing received or sent. Local DMs, links and apps still work.' },
 ]
 
 const pwScore = computed(() => {
@@ -352,12 +354,12 @@ async function finish() {
           <section v-else-if="step === 2">
             <h2 class="text-base font-semibold tracking-tight">Relay role</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              The relay persona rebroadcasts other people's packets. You can change this any time from the top bar, which also has
-              Monitor (listen only, never transmit) and Off.
+              The relay persona rebroadcasts other people's packets. You can change this any time from the top bar.
             </p>
             <div class="mt-4 grid gap-2 sm:grid-cols-3">
               <button
                 v-for="r in roles"
+                :id="`role-${r.id}`"
                 :key="r.id"
                 :class="['rounded-xl border p-3.5 text-left transition-colors', role === r.id ? 'border-brand/60 bg-brand/8' : 'border-line hover:bg-raised']"
                 @click="role = r.id"
