@@ -127,6 +127,16 @@ other at hop limit 0, so none of them repeats a frame that went out from the sam
   role as the persona.
 - Out of an envelope: PKI ciphertext goes out as it came; channel payloads are re-encrypted with
   the node's channel key, except a relay, which sends the ciphertext first heard.
+- **Repeats:** SimRadio hands a repeat to the client as a copy of the packet it heard, so the
+  envelope keeps that packet's RSSI and SNR. Every `SIMULATOR_APP` packet a node sends its client is
+  a transmission; the bridge doesn't use RSSI or SNR to tell them apart.
+- **Local direct messages** between nodes on one air are handed over directly, as a neighbour
+  would hear them, unless `links.local_dm_over_rf` is on. They show in the packet log as local.
+- **Keys between local nodes:** a node decrypts a DM only with the sender's key in its node DB.
+  Nodes on one host may never have heard each other's NodeInfo, so on every connect the bridge adds
+  every other identity as a verified contact (`add_contact`), and the node to the others.
+- **Same-mast packets** are played back with hop limit and hop start 0: zero hops (2.8 counts a
+  modern packet with hop start 0 as zero hops), and nothing to repeat.
 - **A board radio** (`nodes.BoardRadio`, driver `meshtastic`) is a board on stock Meshtastic
   firmware used as the radio. The same LoRa air runs on it, with the board as its relay
   (`LoRaAir.WithRelay`), and joined nodes are a hop behind it:

@@ -53,6 +53,18 @@ func (h *Host) QueueHosted(p *pb.MeshPacket, plain *pb.Data, origin uint32) erro
 	return nil
 }
 
+// LogInternal records a packet one hosted node handed straight to another on this host, without
+// going on air (local DMs). plain is its payload when known.
+func (h *Host) LogInternal(p *pb.MeshPacket, plain *pb.Data) {
+	rec := PacketRecord{Direction: "local", Kind: "local", ID: p.Id, From: wire.NodeID(p.From), To: wire.NodeID(p.To),
+		HopLimit: p.HopLimit, HopStart: p.HopStart, WantAck: p.WantAck, DecodedBy: wire.NodeID(p.To),
+		PKI: plain == nil, Transport: "internal", Port: "PKI (direct message)"}
+	if plain != nil {
+		rec.Port, rec.Summary = plain.GetPortnum().String(), summarize(plain)
+	}
+	h.Packets.Add(rec)
+}
+
 // ChannelKey resolves an identity's channel slot for encryption: its hash, key and whether it is
 // an AEAD channel.
 func (h *Host) ChannelKey(id *Identity, index int) (hash uint8, key []byte, aead bool, ok bool) {

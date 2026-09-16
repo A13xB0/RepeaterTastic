@@ -184,7 +184,7 @@ func TestAirHostedTransmits(t *testing.T) {
 	}
 	eventually(t, "persona hears ops", func() bool {
 		return len(r.injected(func(p *pb.MeshPacket, c *pb.Compressed) bool {
-			return p.Id == pid && p.HopLimit == 0 && p.GetRxRssi() == loopRSSI && c.Portnum == pb.PortNum_UNKNOWN_APP
+			return p.Id == pid && p.HopLimit == 0 && p.HopStart == 0 && p.GetRxRssi() == loopRSSI && c.Portnum == pb.PortNum_UNKNOWN_APP
 		})) == 1
 	})
 	// ...and the persona's own frames are not played back to it.
@@ -226,8 +226,9 @@ func TestAirHeardAndRelayed(t *testing.T) {
 		return false
 	})
 	// The persona relays it (decoded in its envelope, relay byte set): the original bytes go out.
+	// Like SimRadio, the relay's envelope keeps the RSSI and SNR the packet was heard with.
 	r.node.Push(simTX(&pb.MeshPacket{From: neighbourNum, To: wire.Broadcast, Id: 2001, HopLimit: 2, HopStart: 3, RelayNode: 0x01,
-		Channel: 0, PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{}}}, pb.PortNum_TEXT_MESSAGE_APP, []byte("from afar")))
+		RxRssi: proto.Int32(-97), RxSnr: 6.25, Channel: 0, PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{}}}, pb.PortNum_TEXT_MESSAGE_APP, []byte("from afar")))
 	p := r.farFrame(t, func(p *pb.MeshPacket) bool { return p.Id == 2001 })
 	if p.HopLimit != 2 || p.RelayNode != 0x01 || !bytes.Equal(p.GetEncrypted(), orig.GetEncrypted()) {
 		t.Fatalf("relayed frame %v", p)
@@ -310,4 +311,103 @@ func TestAirJoinLeave(t *testing.T) {
 	// Joining again puts it back.
 	r.air.Join(r.ctx, r.personaNode)
 	eventually(t, "node back on the air", func() bool { return len(r.air.snapshot()) == 1 })
+}
+
+// join adds another hosted node (a fake) to the rig's air as an identity.
+func (r *airRig) join(t *testing.T, num uint32) *mtclienttest.Node {
+	t.Helper()
+	fake := mtclienttest.New(num)
+	c := mtclient.New(mtclient.Options{Address: "fake2", Dial: fake.Dial, ReconnectInterval: 10 * time.Millisecond})
+	if err := c.Start(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	wctx, cancel := context.WithTimeout(r.ctx, 5*time.Second)
+	defer cancel()
+	if err := c.WaitReady(wctx); err != nil {
+		t.Fatal(err)
+	}
+	n := newNode("fake2", "", c, testLogf(t))
+	id, err := mesh.NewRemoteIdentity(n, remoteState(c.Snapshot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.h.AddIdentity(id); err != nil {
+		t.Fatal(err)
+	}
+	n.Bind(r.h, id)
+	before := len(r.air.snapshot())
+	r.air.Join(r.ctx, n)
+	eventually(t, "second node registered", func() bool { return len(r.air.snapshot()) == before+1 })
+	return fake
+}
+
+func TestAirLocalDirectMessagesStayOffAir(t *testing.T) {
+	r := newAirRig(t)
+	const deskNum = 0x7e57de5c
+	desk := r.join(t, deskNum)
+	cipher := []byte("pki ciphertext for the desk, 32+")
+	dm := func(id uint32) *pb.FromRadio {
+		return simTX(&pb.MeshPacket{From: personaNum, To: deskNum, Id: id, HopLimit: 3, HopStart: 3, WantAck: true, PkiEncrypted: true},
+			pb.PortNum_UNKNOWN_APP, cipher)
+	}
+	gotDM := func(id uint32) bool {
+		for _, p := range desk.Packets() {
+			var c pb.Compressed
+			if p.Id == id && p.GetDecoded().GetPortnum() == pb.PortNum_SIMULATOR_APP && proto.Unmarshal(p.GetDecoded().GetPayload(), &c) == nil &&
+				bytes.Equal(c.Data, cipher) && p.HopLimit == 3 {
+				return true
+			}
+		}
+		return false
+	}
+	r.node.Push(dm(3001))
+	eventually(t, "the DM handed to the desk", func() bool { return gotDM(3001) })
+	select {
+	case f := <-r.far.Frames():
+		if p := wire.DecodeFrame(f.Data, 0, 0); p != nil && p.Id == 3001 {
+			t.Fatal("a local DM went on air")
+		}
+	case <-time.After(500 * time.Millisecond):
+	}
+	logged := false
+	for _, rec := range r.h.Packets.List(100, 0, nil) {
+		if rec.ID == 3001 && rec.Kind == "local" && rec.Transport == "internal" {
+			logged = true
+		}
+	}
+	if !logged {
+		t.Fatal("local DM not in the packet log")
+	}
+
+	// With local DMs over RF, it goes on air like any other packet.
+	cfg := r.h.Config()
+	cfg.LocalDMOverRF = true
+	if err := r.h.UpdateConfig(r.ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	r.node.Push(dm(3002))
+	if p := r.farFrame(t, func(p *pb.MeshPacket) bool { return p.Id == 3002 }); !bytes.Equal(p.GetEncrypted(), cipher) {
+		t.Fatalf("on air %v", p)
+	}
+}
+
+func TestAirIntroducesLocalIdentities(t *testing.T) {
+	r := newAirRig(t)
+	const deskNum = 0x7e57de5d
+	desk := r.join(t, deskNum)
+	contacts := func(f *mtclienttest.Node) map[uint32]bool {
+		out := map[uint32]bool{}
+		for _, m := range f.Admins() {
+			if c := m.GetAddContact(); c != nil && c.ManuallyVerified && len(c.GetUser().GetPublicKey()) == 32 {
+				out[c.NodeNum] = true
+			}
+		}
+		return out
+	}
+	eventually(t, "the desk knows the persona and the host's own identity", func() bool {
+		c := contacts(desk)
+		return c[personaNum] && c[r.ops.NodeNum]
+	})
+	eventually(t, "the persona knows the desk", func() bool { return contacts(r.node)[deskNum] })
 }
