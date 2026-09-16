@@ -99,10 +99,6 @@ func (d *decoder) feed(b byte) []byte {
 	if !d.active {
 		return nil
 	}
-	if b == fesc {
-		d.escaped = true
-		return nil
-	}
 	if d.escaped {
 		d.escaped = false
 		switch b {
@@ -111,8 +107,11 @@ func (d *decoder) feed(b byte) []byte {
 		case tfesc:
 			b = fesc
 		default:
-			return nil
+			return nil // an invalid escape (a second FESC included) drops the byte
 		}
+	} else if b == fesc {
+		d.escaped = true
+		return nil
 	}
 	if len(d.buf) >= maxFrame {
 		d.buf = d.buf[:0]

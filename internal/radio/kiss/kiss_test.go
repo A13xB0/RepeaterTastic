@@ -627,3 +627,18 @@ func TestTCPAddr(t *testing.T) {
 		t.Error("serial path taken for tcp")
 	}
 }
+
+// FESC FESC TFEND: the second FESC is an invalid escaped byte and is dropped, and TFEND is then a
+// literal 0xDC, matching the modem firmware's deframer.
+func TestDecoderConsecutiveFESC(t *testing.T) {
+	var d decoder
+	var got []byte
+	for _, b := range []byte{fend, 0x00, fesc, fesc, tfend, fend} {
+		if f := d.feed(b); f != nil {
+			got = append([]byte(nil), f...)
+		}
+	}
+	if string(got) != "\x00\xdc" {
+		t.Fatalf("decoded %x, want 00dc", got)
+	}
+}
