@@ -230,7 +230,8 @@ hosted:
 - Takes effect at the next restart. Configuration → Experimental has the same settings.
 
 The setup wizard offers it as an optional step. It shows whether meshtasticd is installed and new
-enough, and whether Docker answers and already has the image, then picks the one that works.
+enough, and whether Docker answers and already has the image, then picks the one that works. A
+meshtasticd that isn't on the PATH can still be used: pick Installed and enter where it is.
 Configuration → Experimental shows the same and lists every
 instance, and Edit on a radio shows where the relay and each identity run:
 

@@ -198,3 +198,10 @@ func instanceDir(x *Hosting, num uint32) string {
 	}
 	return ""
 }
+
+func TestCheckLauncherMissingProgram(t *testing.T) {
+	_, err := CheckLauncher(context.Background(), ExecLauncher{Binary: "/nonexistent/dir/meshtasticd"})
+	if err == nil || err.Error() != "there's no meshtasticd at /nonexistent/dir/meshtasticd" {
+		t.Fatalf("err = %v", err)
+	}
+}
