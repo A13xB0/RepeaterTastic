@@ -10,7 +10,7 @@ import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import MqttConnections from '@/components/config/MqttConnections.vue'
 import RadiosPanel from '@/components/config/RadiosPanel.vue'
-import ExperimentalPanel from '@/components/config/ExperimentalPanel.vue'
+import MeshtasticdPanel from '@/components/config/MeshtasticdPanel.vue'
 import RelayFavorites from '@/components/config/RelayFavorites.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
@@ -18,7 +18,7 @@ import { now } from '@/composables/now'
 import { num, relTime } from '@/lib/format'
 import { rebroadcastModes, relayModes } from '@/lib/relay'
 
-type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
+type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'meshtasticd' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
   { id: 'radio', label: 'Radios' },
   { id: 'relay', label: 'Relay' },
@@ -26,14 +26,18 @@ const allTabs: { id: Tab; label: string }[] = [
   { id: 'position', label: 'Position & hardware' },
   { id: 'mqtt', label: 'MQTT' },
   { id: 'web', label: 'Web & API tokens' },
-  { id: 'experimental', label: 'Experimental' },
+  { id: 'meshtasticd', label: 'meshtasticd' },
   { id: 'backup', label: 'Backup & restore' },
 ]
 // The radio list, web settings, tokens and backups belong to the host, so they only show on the main radio.
-const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'experimental'].includes(t.id)))
+const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'meshtasticd'].includes(t.id)))
 const route = useRoute()
 const router = useRouter()
-const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio')) // 'radios' (old link) → Radios
+const oldTabs: Record<string, Tab> = { experimental: 'meshtasticd' } // old links
+const tab = computed<Tab>(() => {
+  const want = oldTabs[route.params.tab as string] ?? route.params.tab
+  return tabs.value.some((t) => t.id === want) ? (want as Tab) : 'radio' // 'radios' (old link) → Radios
+})
 const setTab = (t: Tab) => router.replace({ name: 'config', params: { tab: t } })
 
 const saved = ref<Config | null>(null)
@@ -46,7 +50,7 @@ async function load() {
   form.value = structuredClone(c)
 }
 
-const section = computed(() => (['backup', 'experimental', 'radio'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
+const section = computed(() => (['backup', 'meshtasticd', 'radio'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
 // The Position tab edits two config sections.
 const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
 const dirty = computed(() => {
@@ -362,8 +366,8 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
         <!-- MQTT -->
         <MqttConnections v-else-if="tab === 'mqtt'" v-model="form.mqtt" />
 
-        <!-- EXPERIMENTAL -->
-        <ExperimentalPanel v-else-if="tab === 'experimental'" />
+        <!-- MESHTASTICD -->
+        <MeshtasticdPanel v-else-if="tab === 'meshtasticd'" class="max-w-3xl" />
 
         <!-- WEB -->
         <div v-else-if="tab === 'web'" class="grid gap-8 xl:grid-cols-2">

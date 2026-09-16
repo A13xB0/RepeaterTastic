@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
@@ -18,17 +19,13 @@ import (
 // the first, identities the rest.
 const SlotsPerRadio = 100
 
-// HostingOptions say which of a radio's identities run on meshtasticd, and how.
+// HostingOptions say how a radio's identities run on meshtasticd.
 type HostingOptions struct {
 	Launcher Launcher
 	Air      Air
 	Radio    string // radio ID: names the instances
 	Dir      string // instance state directories live here
 	PortBase int    // the radio's first client API port (the persona's)
-	// Persona runs the relay persona on meshtasticd (unless the air brings its own relay).
-	Persona bool
-	// Identities runs the other identities on meshtasticd too (not those routed across radios).
-	Identities bool
 	// HopsBehind is how far joined nodes are from the air (1 behind a board's relay).
 	HopsBehind uint32
 	// RelayOwner names the persona (the configured relay names).
@@ -41,9 +38,11 @@ type Hosting struct {
 	ctx  context.Context // instances live as long as this
 	opts HostingOptions
 
-	mu       sync.Mutex
-	nodes    map[*Node]*hostedEntry
-	starting map[int]bool // port slots held by starts in progress
+	mu        sync.Mutex
+	nodes     map[*Node]*hostedEntry
+	starting  map[int]bool // port slots held by starts in progress
+	version   string       // meshtasticd's version, once checked
+	launchErr string       // why meshtasticd can't run, from the last check
 }
 
 type hostedEntry struct {
@@ -51,6 +50,7 @@ type hostedEntry struct {
 	host    *mesh.Host
 	slot    int
 	role    string
+	started time.Time
 	running chan struct{} // closed when the node's event loop has ended
 }
 
@@ -64,18 +64,10 @@ func NewHosting(ctx context.Context, o HostingOptions) *Hosting {
 	return &Hosting{ctx: ctx, opts: o, nodes: map[*Node]*hostedEntry{}, starting: map[int]bool{}}
 }
 
-// Takes reports whether the record runs on meshtasticd.
-func (x *Hosting) Takes(rec mesh.IdentityRecord) bool {
-	if rec.IsRelay {
-		return x.opts.Persona && x.opts.Air.Relay() == nil
-	}
-	return x.opts.Identities && rec.MultiRadio == nil
-}
-
 // HostIdentity starts a meshtasticd for rec, seeded with its key, and adds its identity to h.
 func (x *Hosting) HostIdentity(ctx context.Context, h *mesh.Host, rec mesh.IdentityRecord) (*mesh.Identity, error) {
-	if !x.Takes(rec) {
-		return nil, mesh.ErrRunHere
+	if rec.IsRelay && x.opts.Air.Relay() != nil {
+		return nil, errors.New("the radio's board is its relay")
 	}
 	num := rec.NodeNum()
 	if num == 0 {
@@ -131,7 +123,7 @@ func (x *Hosting) HostIdentity(ctx context.Context, h *mesh.Host, rec mesh.Ident
 	}()
 	x.opts.Air.Join(hn.Context(), hn.Node)
 	x.mu.Lock()
-	x.nodes[hn.Node] = &hostedEntry{hn: hn, host: h, slot: slot, role: role, running: done}
+	x.nodes[hn.Node] = &hostedEntry{hn: hn, host: h, slot: slot, role: role, started: time.Now(), running: done}
 	x.mu.Unlock()
 	x.opts.Logf("meshtasticd: %s %s runs on %s, port %d", role, id.NodeID(), x.opts.Launcher.Describe(), in.Port)
 	return id, nil
@@ -197,3 +189,102 @@ func (x *Hosting) Nodes() []HostedNode {
 
 // Launcher runs the instances.
 func (x *Hosting) Launcher() Launcher { return x.opts.Launcher }
+
+// SetLauncherCheck records the result of checking the launcher (CheckLauncher).
+func (x *Hosting) SetLauncherCheck(version string, err error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.version, x.launchErr = version, ""
+	if err != nil {
+		x.launchErr = err.Error()
+	}
+}
+
+// Health states, worst last.
+const (
+	HealthOK       = "ok"
+	HealthStarting = "starting"
+	HealthWarning  = "warning"
+	HealthError    = "error"
+)
+
+// startGrace is how long a new node may take to come up before it counts as a problem.
+const startGrace = 90 * time.Second
+
+// Health is how a radio's hosted nodes are doing, for the status bar.
+type Health struct {
+	State    string   `json:"state"` // ok, starting, warning (some identities down) or error (meshtasticd isn't running)
+	Nodes    int      `json:"nodes"`
+	Up       int      `json:"up"`
+	Problems []string `json:"problems,omitempty"`
+	Version  string   `json:"version,omitempty"`
+	Launcher string   `json:"launcher"`
+}
+
+// Health reports whether meshtasticd runs and every node is connected.
+func (x *Hosting) Health() Health {
+	now := time.Now()
+	x.mu.Lock()
+	h := Health{State: HealthOK, Version: x.version, Launcher: x.opts.Launcher.Describe()}
+	launchErr := x.launchErr
+	type row struct {
+		e  *hostedEntry
+		st HostedStatus
+	}
+	rows := make([]row, 0, len(x.nodes))
+	for _, e := range x.nodes {
+		rows = append(rows, row{e, e.hn.Status()})
+	}
+	x.mu.Unlock()
+	sort.Slice(rows, func(i, j int) bool { return rows[i].st.Port < rows[j].st.Port })
+
+	h.Nodes = len(rows)
+	starting, personaDown := false, false
+	for _, r := range rows {
+		if r.st.Running && r.st.Connected {
+			h.Up++
+			continue
+		}
+		if now.Sub(r.e.started) < startGrace && r.st.Restarts == 0 {
+			starting = true
+			continue
+		}
+		who := "identity " + r.e.hn.label()
+		if r.e.role == "persona" {
+			who, personaDown = "relay persona", true
+		}
+		why := "not connected"
+		switch {
+		case r.st.LastError != "":
+			why = r.st.LastError
+		case !r.st.Running:
+			why = "not running"
+		}
+		h.Problems = append(h.Problems, fmt.Sprintf("%s: %s", who, why))
+	}
+	switch {
+	case launchErr != "" && h.Up == 0:
+		h.State = HealthError
+		h.Problems = append([]string{"meshtasticd can't run: " + launchErr}, h.Problems...)
+	case h.Nodes > 0 && h.Up == 0 && !starting:
+		h.State = HealthError
+	case personaDown:
+		h.State = HealthError
+	case len(h.Problems) > 0:
+		h.State = HealthWarning
+	case starting:
+		h.State = HealthStarting
+	}
+	return h
+}
+
+// label names the identity a hosted node stands for.
+func (h *Hosted) label() string {
+	if id := h.Current(); id != nil {
+		if u := id.UserCopy(); u.GetLongName() != "" {
+			return fmt.Sprintf("%s (%s)", u.GetLongName(), id.NodeID())
+		}
+		return id.NodeID()
+	}
+	return h.inst.Name
+}

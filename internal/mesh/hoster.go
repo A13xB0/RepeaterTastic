@@ -5,21 +5,19 @@ import (
 	"errors"
 )
 
-// Hoster runs identities as real Meshtastic nodes (meshtasticd) instead of in this host.
+// Hoster runs identities as real Meshtastic nodes (meshtasticd).
 type Hoster interface {
-	// Takes reports whether the hoster runs this record (else the host runs it).
-	Takes(rec IdentityRecord) bool
 	// HostIdentity starts a node for the record, seeded with its key, adds the node's identity to
-	// the host and returns it. ErrRunHere means the hoster leaves this record to the host.
+	// the host and returns it.
 	HostIdentity(ctx context.Context, h *Host, rec IdentityRecord) (*Identity, error)
 	// Unhost stops the node an identity stands for and forgets its state.
 	Unhost(id *Identity)
 }
 
-// ErrRunHere is returned by a Hoster for an identity the host runs itself.
-var ErrRunHere = errors.New("identity runs in RepeaterTastic")
+// ErrNoHoster is returned when a host has nothing to run its identities on.
+var ErrNoHoster = errors.New("no meshtasticd to run identities on")
 
-// SetHoster makes hs run this host's identities from now on (nil = run them all here).
+// SetHoster makes hs run this host's identities.
 func (h *Host) SetHoster(hs Hoster) {
 	h.mu.Lock()
 	h.hoster = hs
@@ -33,26 +31,13 @@ func (h *Host) Hoster() Hoster {
 	return h.hoster
 }
 
-// AddRecord adds a saved identity: on a hosted node when the hoster takes it, else here. A node
-// that can't be started leaves the identity here (logged), so it stays on air.
+// AddRecord runs a saved identity on a hosted node.
 func (h *Host) AddRecord(ctx context.Context, rec IdentityRecord) (*Identity, error) {
-	if hs := h.Hoster(); hs != nil {
-		id, err := hs.HostIdentity(ctx, h, rec)
-		if err == nil {
-			return id, nil
-		}
-		if !errors.Is(err, ErrRunHere) {
-			h.log.Error("identity stays in RepeaterTastic: its meshtasticd didn't start", "node", rec.LongName, "err", err)
-		}
+	hs := h.Hoster()
+	if hs == nil {
+		return nil, ErrNoHoster
 	}
-	id, err := IdentityFromRecord(rec)
-	if err != nil {
-		return nil, err
-	}
-	if err := h.AddIdentity(id); err != nil {
-		return nil, err
-	}
-	return id, nil
+	return hs.HostIdentity(ctx, h, rec)
 }
 
 // DropIdentity removes an identity (not the relay persona) and stops the node it stands for.

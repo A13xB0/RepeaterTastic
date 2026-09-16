@@ -35,8 +35,6 @@ export const live = reactive({
   site: null as RadiosResponse['site'],
   /** Identities on every radio (only fetched when the host has more than one). */
   allIdentities: [] as Identity[],
-  /** Experimental: identities on several radios is switched on. */
-  multiRadioIdentities: false,
   /** Radios added in the config that start at the next restart. */
   pendingRadios: [] as { id: string; name: string; preset?: string }[],
 })
@@ -44,29 +42,6 @@ export const live = reactive({
 /** A radio's display name from its id (running or waiting to start). */
 export function radioName(id: string): string {
   return live.radios.find((r) => r.id === id)?.name ?? live.pendingRadios.find((r) => r.id === id)?.name ?? id
-}
-
-export interface RadioChoice {
-  id: string
-  name: string
-  detail: string
-  pending: boolean
-}
-
-const presetLabel = (p?: string) => (p ? p.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join('') : '')
-
-/** Radios a channel slot, default radio or DM can be put on: running ones, then ones that start at the next restart. */
-export function radioChoices(): RadioChoice[] {
-  return [
-    ...live.radios.map((r) => ({ id: r.id, name: r.name, pending: false,
-      detail: `${r.phy.preset_name} · ${r.phy.frequency_mhz.toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz` })),
-    ...live.pendingRadios.map((r) => ({ id: r.id, name: r.name || r.id, pending: true, detail: `${presetLabel(r.preset)} · starts at restart` })),
-  ]
-}
-
-/** Multi-radio choices apply: the experimental switch is on and the site has more than one radio. */
-export function multiRadioActive(): boolean {
-  return live.multiRadioIdentities && live.radios.length + live.pendingRadios.length > 1
 }
 
 export async function refreshAllIdentities() {
@@ -87,9 +62,6 @@ export async function refreshRadios() {
     live.radios = r.radios
     live.site = r.site
     live.pendingRadios = (r.pending ?? []).filter((p) => p.action === 'start').map((p) => ({ id: p.id, name: p.name, preset: p.preset }))
-    api.get<{ multi_radio_identities: boolean }>('/experimental').then((x) => {
-      live.multiRadioIdentities = x.multi_radio_identities
-    }, () => {})
     // A remembered radio that no longer exists falls back to the main one.
     if (radio.value !== 'main' && !r.radios.some((x) => x.id === radio.value)) setRadio('main')
   } catch {
@@ -148,7 +120,7 @@ export function upsertIdentity(i: Identity) {
   if (ai >= 0) live.allIdentities[ai] = i
   const idx = live.identities.findIndex((x) => x.node_id === i.node_id)
   if (idx >= 0) live.identities[idx] = i
-  // an identity from another radio (edited here as a guest) doesn't join this radio's list
+  // an identity created or moved onto another radio doesn't join this radio's list
   else if (!i.radio_id || i.radio_id === radio.value) live.identities.push(i)
 }
 

@@ -72,13 +72,15 @@ sudo ./deploy/install.sh dist/repeatertastic-linux-arm64 dist/kisstool-linux-arm
 bin/repeatertastic -config deploy/repeatertastic.example.yaml   # set radio.device and state_dir first
 ```
 
-Open `http://<host>:8080`, set the admin password, and check that the top bar shows the modem
-connected on EU_868 · LongFast · 869.525 MHz · sync 0x2B.
+The installer also sets up meshtasticd 2.8+ (`--meshtasticd auto` by default), which every node
+runs on: without it nothing goes on air. Open `http://<host>:8080`, set the admin password, and
+check that the top bar shows the modem connected on EU_868 · LongFast · 869.525 MHz · sync 0x2B, and
+the **meshtasticd** chip green.
 
 Within about a minute each identity broadcasts its NodeInfo. The stock node's app should list
 **RepeaterTastic Relay** and **Base Camp** with a lock icon, meaning it has their public keys.
 
-## 6. Connect an app to a virtual node
+## 6. Connect an app to an identity
 
 - **Python CLI:** `meshtastic --host <host>:4403 --info`, then `--nodes`, then
   `--dest '!<stock node id>' --sendtext hi --ack`.

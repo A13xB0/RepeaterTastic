@@ -3,8 +3,6 @@
 package phoneapi
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"log/slog"
 	"sync"
 	"time"
@@ -40,7 +38,6 @@ type Session struct {
 	configDone  bool
 	attached    bool
 	closed      bool
-	passkey     []byte
 	lastText    time.Time
 	lastTrace   time.Time
 	recentIDs   map[uint32]time.Time
@@ -49,9 +46,7 @@ type Session struct {
 
 // NewSession creates a session; send must not block for long (drop and return false if full).
 func NewSession(h *mesh.Host, id *mesh.Identity, log *slog.Logger, send func(*pb.FromRadio) bool) *Session {
-	pk := make([]byte, 8)
-	_, _ = rand.Read(pk)
-	return &Session{host: h, id: id, log: log, send: send, passkey: pk, recentIDs: map[uint32]time.Time{}}
+	return &Session{host: h, id: id, log: log, send: send, recentIDs: map[uint32]time.Time{}}
 }
 
 // SendFromRadio implements mesh.ClientSink: live packets for this identity.
@@ -151,7 +146,7 @@ func (s *Session) startConfig(nonce uint32) {
 		}
 	}
 	if nonce != nonceOnlyConfig {
-		for _, e := range s.host.NodesFor(s.id) {
+		for _, e := range s.host.DB.Snapshot() {
 			if e.Num == s.id.NodeNum || (e.User == nil && e.LastHeard.IsZero()) {
 				continue
 			}
@@ -302,14 +297,6 @@ func allModuleConfigs() []*pb.ModuleConfig {
 	return out
 }
 
-func moduleConfigByType(t pb.AdminMessage_ModuleConfigType) *pb.ModuleConfig {
-	all := allModuleConfigs()
-	if int(t) < len(all) {
-		return all[t]
-	}
-	return nil
-}
-
 func regionPresetMap() *pb.LoRaRegionPresetMap {
 	m := &pb.LoRaRegionPresetMap{}
 	groupIdx := map[string]int{}
@@ -393,20 +380,11 @@ func (s *Session) handlePacket(p *pb.MeshPacket) {
 		return
 	}
 
-	if p.To == s.id.NodeNum && s.id.Remote() != nil {
-		// A real node answers its own admin messages and requests; the replies come back to
-		// every client of the identity with this packet's id.
+	if p.To == s.id.NodeNum {
+		// The node answers its own admin messages and requests; the replies come back to every
+		// client of the identity with this packet's id.
 		if err := s.host.Send(s.id, p); err != nil {
 			s.routingToClient(p.Id, pb.Routing_NO_INTERFACE)
-		}
-		return
-	}
-	if p.To == s.id.NodeNum {
-		if d.Portnum == pb.PortNum_ADMIN_APP {
-			s.handleAdmin(p)
-		}
-		if p.WantAck {
-			s.routingToClient(p.Id, pb.Routing_NONE)
 		}
 		return
 	}
@@ -422,12 +400,6 @@ func (s *Session) routingToClient(reqID uint32, reason pb.Routing_Error) {
 		From: s.id.NodeNum, To: s.id.NodeNum, Id: wire.RandomPacketID(), RxTime: &rx, Priority: pb.MeshPacket_ACK,
 		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_ROUTING_APP, Payload: payload,
 			RequestId: reqID}}}}})
-}
-
-func randomU32() uint32 {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return binary.LittleEndian.Uint32(b[:])
 }
 
 // hopLimit is what the client sees as the node's hop limit: the identity's cap when it has one.

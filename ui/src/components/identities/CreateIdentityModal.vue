@@ -3,8 +3,8 @@
 import { computed, ref, watch } from 'vue'
 import { RefreshCw, TriangleAlert, CircleCheck } from '@lucide/vue'
 import { api, radio } from '@/api/client'
-import type { HostedSettings, Identity, KeyPreview } from '@/api/types'
-import { hostedIdentityRoles, hostsIdentities } from '@/lib/relay'
+import type { Identity, KeyPreview } from '@/api/types'
+import { hostedIdentityRoles } from '@/lib/relay'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import RadioFields from '@/components/identities/RadioFields.vue'
@@ -21,12 +21,6 @@ const port = ref(4403)
 // Only the relay persona repeats; other identities say so by default.
 const role = ref('CLIENT_MUTE')
 const radioId = ref(radio.value)
-// Follows the home radio until chosen separately.
-const defaultChosen = ref('')
-const defaultRadio = computed({
-  get: () => defaultChosen.value || radioId.value,
-  set: (v: string) => (defaultChosen.value = v === radioId.value ? '' : v),
-})
 const tab = ref<'generate' | 'import'>('generate')
 const importKey = ref('')
 const preview = ref<KeyPreview | null>(null)
@@ -36,11 +30,8 @@ const acceptClash = ref(false)
 const saving = ref(false)
 const error = ref('')
 
-const allRoles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR']
-// Whether the chosen radio runs new identities on meshtasticd (they can't take a repeating role).
-const hostedSettings = ref<HostedSettings | null>(null)
-const onMeshtasticd = computed(() => hostsIdentities(hostedSettings.value, radioId.value) && !defaultRadio.value)
-const roles = computed(() => (onMeshtasticd.value ? hostedIdentityRoles : allRoles))
+// Every new identity runs on meshtasticd, so its role can't repeat.
+const roles = hostedIdentityRoles
 
 function nextPort() {
   const used = new Set((live.allIdentities.length ? live.allIdentities : live.identities).map((i) => i.api?.port).filter(Boolean))
@@ -54,14 +45,12 @@ watch(
   (o) => {
     if (!o) return
     refreshAllIdentities()
-    api.get<HostedSettings>('/hosted').then((s) => (hostedSettings.value = s)).catch(() => (hostedSettings.value = null))
     longName.value = ''
     shortName.value = ''
     shortTouched.value = false
     port.value = nextPort()
     role.value = 'CLIENT_MUTE'
     radioId.value = radio.value
-    defaultChosen.value = ''
     tab.value = props.mode === 'import' ? 'import' : 'generate'
     importKey.value = ''
     preview.value = null
@@ -133,8 +122,6 @@ async function save() {
       radio_id: live.radios.length > 1 ? radioId.value : undefined,
     })
     upsertIdentity(ident)
-    if (defaultChosen.value && live.multiRadioIdentities)
-      upsertIdentity(await api.patch<Identity>(`/identities/${encodeURIComponent(ident.node_id)}`, { multi_radio: { default_radio: defaultChosen.value, dm: 'auto', fallback: false } }))
     toast(`${ident.long_name} created as ${ident.node_id}`)
     emit('close')
   } catch (e) {
@@ -167,9 +154,9 @@ async function save() {
         <select id="role" v-model="role" class="input">
           <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
         </select>
-        <p v-if="onMeshtasticd" class="hint">Runs on meshtasticd {{ hostedSettings?.instances.find((x) => x.role === 'persona' && x.radio === radioId)?.firmware ?? '' }}, keeping the key RepeaterTastic generates.</p>
+        <p class="hint">Runs on meshtasticd, keeping the key RepeaterTastic generates.</p>
       </div>
-      <RadioFields v-model:home="radioId" v-model:default-radio="defaultRadio" creating class="sm:col-span-2" />
+      <RadioFields v-model:home="radioId" creating class="sm:col-span-2" />
       <div>
         <label class="label" for="port">API port</label>
         <input id="port" v-model.number="port" type="number" min="1024" max="65535" class="input tabular-nums" />

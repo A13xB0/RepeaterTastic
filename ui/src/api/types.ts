@@ -60,6 +60,8 @@ export interface Status {
   map?: { tile_url: string }
   /** Saved changes the running daemon hasn't picked up yet. */
   restart_reasons?: string[] | null
+  /** How the meshtasticd nodes are doing across the site. */
+  nodes?: NodesHealth
   uptime_s: number
   radio: {
     driver: string
@@ -106,13 +108,6 @@ export interface Channel {
   uplink: boolean
   downlink: boolean
   locked: boolean
-  /** With identities on several radios (experimental): the one radio this slot is on. */
-  radio?: string
-  radio_name?: string
-  /** Set when the slot's chosen radio left the site; it runs on the default radio meanwhile. */
-  radio_removed?: string
-  /** Set when the slot's radio was added but hasn't started; it runs on the default radio until the restart. */
-  radio_pending?: string
 }
 
 export interface Identity {
@@ -145,10 +140,6 @@ export interface Identity {
   created_at: number
   channels: Channel[]
   api_bind?: string
-  /** Experimental routing across radios (kept while the switch is off). */
-  multi_radio?: MultiRadio | null
-  /** Radios the identity is on right now (home first). */
-  radios?: string[]
   /** The radio this identity is on. */
   radio_id?: string
   radio_name?: string
@@ -185,8 +176,6 @@ export interface Message {
   rssi: number | null
   snr: number | null
   hops: number | null
-  /** The radio a multi-radio identity heard or sent it on. */
-  radio?: string
 }
 
 export interface MeshNode {
@@ -368,17 +357,6 @@ export interface Link {
   map_report?: boolean
 }
 
-/** Experimental: an identity's routing across radios. */
-export interface MultiRadio {
-  /** Where slot 0 lives, new channels start and DMs fall back ("" = home). */
-  default_radio?: string
-  /** Slot index → the one radio that slot is on. */
-  channels?: Record<string, string>
-  /** "auto" (best heard), "default", or a radio id. */
-  dm?: string
-  fallback?: boolean
-}
-
 export type MqttMode = 'gateway' | 'uplink_only' | 'map_only' | 'monitor' | 'bridge'
 
 /** One MQTT broker connection of a radio. */
@@ -554,10 +532,17 @@ export interface Runtimes {
   min_version: string
 }
 
+/** GET /status nodes: ok, starting, warning (some identities down) or error (meshtasticd isn't running). */
+export interface NodesHealth {
+  state: 'ok' | 'starting' | 'warning' | 'error'
+  nodes: number
+  up: number
+  problems: string[]
+  version?: string
+  launcher: string
+}
+
 export interface HostedSettings {
-  persona: boolean
-  /** Identities run on meshtasticd too (needs persona). */
-  identities: boolean
   meshtasticd: string
   docker_image: string
   port_base: number

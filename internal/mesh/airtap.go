@@ -82,12 +82,6 @@ func (h *Host) ChannelKey(id *Identity, index int) (hash uint8, key []byte, aead
 	return 0, nil, false, false
 }
 
-// remoteRelay reports whether the relay persona is a real node: it relays and answers for itself.
-func (h *Host) remoteRelay() bool {
-	r := h.Relay()
-	return r != nil && r.Remote() != nil
-}
-
 // remoteOnly reports whether every identity is a real node with its own radio (an attached node):
 // the host then never decodes frames itself.
 func (h *Host) remoteOnly() bool {

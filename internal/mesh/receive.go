@@ -1,12 +1,10 @@
 package mesh
 
 import (
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
@@ -27,8 +25,10 @@ type decodeResult struct {
 	pkiNoKey   bool // DM to us from a node whose key we don't have
 }
 
-// HandleReceived runs the receive pipeline for an encrypted packet from the radio or a link.
-// raw is the full LoRa frame when it came off the air (for the packet log), else nil.
+// HandleReceived logs and sniffs an encrypted packet from the radio or a link: the node DB, the
+// packet log and the links learn from it. The hosted nodes do the receiving, answering and
+// relaying (they hear the frame over the air bridge). raw is the full LoRa frame when it came off
+// the air, else nil.
 func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	if raw == nil && p.GetEncrypted() != nil { // from a link, not the radio
 		for _, t := range h.airTaps() {
@@ -41,11 +41,13 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 		return // a real node does its own receiving; links can't feed it frames
 	}
 	relay := h.Relay()
-	remoteRelay := relay.Remote() != nil
 	now := time.Now()
 	h.Counters.Rx.Add(1)
 	k := pktKey{p.From, p.Id}
-	relayByte := wire.LastByte(relay.NodeNum)
+	var relayByte uint8
+	if relay != nil {
+		relayByte = wire.LastByte(relay.NodeNum)
+	}
 	rec := h.baseRecord(p, raw, "rx", "heard")
 
 	if p.HopStart != 0 && p.HopStart < p.HopLimit {
@@ -55,10 +57,9 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 		return
 	}
 
-	// One of our own packets relayed back to us: implicit ACK (ReliableRouter).
-	if origin := h.identityAny(p.From); origin != nil {
+	// One of our own packets relayed back to us.
+	if h.Identity(p.From) != nil {
 		h.hist.Observe(k, p.HopLimit, uint8(p.RelayNode), uint8(p.NextHop), relayByte, now)
-		h.implicitAck(origin, p)
 		rec.Kind = "echo"
 		h.describe(&rec, p)
 		h.publishPacket(rec)
@@ -66,29 +67,17 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	}
 
 	sr := h.hist.Observe(k, p.HopLimit, uint8(p.RelayNode), uint8(p.NextHop), relayByte, now)
-	if sr.Upgraded && h.txq.RemoveLowerHop(k, p.HopLimit) {
-		dec := h.decode(p)
-		h.perhapsRelay(p, dec)
-		rec.Kind = "dup"
-		h.Counters.RxDupe.Add(1)
-		h.publishPacket(rec)
-		return
-	}
-	if sr.Seen {
-		h.Counters.RxDupe.Add(1)
-		rec.Kind = "dup"
-		repeated := p.HopStart > 0 && p.HopStart == p.HopLimit
-		if repeated && !h.txq.Contains(k) {
-			// The originator is retrying (our ACK or relay was lost): handle it again.
-			dec := h.decode(p)
-			if dec.ok && !h.perhapsRelay(p, dec) && dec.target != nil && p.WantAck {
-				h.sendAckNak(dec.target, pb.Routing_NONE, p.From, p.Id, h.ackChannel(dec), 0, false)
-			}
+	if sr.Seen || sr.Upgraded {
+		if sr.Upgraded {
+			h.txq.RemoveLowerHop(k, p.HopLimit)
 		} else if !sr.WeWereNextHop && p.TransportMechanism == pb.MeshPacket_TRANSPORT_LORA && !h.relaysAsRouter(p) {
+			// Someone else relayed it first: a relay still waiting for the channel stands down.
 			if h.txq.Cancel(k, false) {
 				h.Counters.RelayCancelled.Add(1)
 			}
 		}
+		h.Counters.RxDupe.Add(1)
+		rec.Kind = "dup"
 		h.describe(&rec, p)
 		h.publishPacket(rec)
 		return
@@ -96,24 +85,9 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 
 	dec := h.decode(p)
 	h.DB.UpdateFromPacket(p, now)
-	if dec.target != nil && dec.target.Remote() != nil {
-		dec.target = nil // a hosted node answers for itself
-	}
-
 	if !dec.ok {
 		h.Counters.RxUndecryptable.Add(1)
 		rec.Kind = "undecryptable"
-		if dec.target != nil && p.WantAck {
-			if p.Channel == 0 && dec.pkiNoKey {
-				h.sendAckNak(dec.target, pb.Routing_PKI_UNKNOWN_PUBKEY, p.From, p.Id, 0, h.responseHopLimit(p), false)
-				h.sendNodeInfo(dec.target, p.From, true, 0, true)
-			} else {
-				h.sendAckNak(dec.target, pb.Routing_NO_CHANNEL, p.From, p.Id, 0, h.responseHopLimit(p), false)
-			}
-		}
-		if h.perhapsRelay(p, dec) {
-			rec.Kind = "relayed"
-		}
 		h.publishPacket(rec)
 		return
 	}
@@ -147,25 +121,9 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	}
 
 	h.sniffContent(decoded, dec, now)
-	if !remoteRelay {
-		h.askUnknownNode(decoded, dec) // a hosted relay asks for itself
-	}
 	h.sniffRouting(decoded, dec)
-
-	for _, d := range dec.deliveries {
-		if d.id.Remote() != nil {
-			continue // a hosted node gets the frame over the air bridge
-		}
-		if !h.firstDelivery(d.id, p) {
-			continue // already delivered from another of its radios
-		}
-		h.deliver(d.id, decoded, dec, d.index, now)
-	}
 	if len(dec.deliveries) > 0 {
 		rec.Kind = "delivered"
-	}
-	if h.perhapsRelay(p, dec) && len(dec.deliveries) == 0 {
-		rec.Kind = "relayed"
 	}
 	h.publishPacket(rec)
 }
@@ -174,7 +132,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 func (h *Host) decode(p *pb.MeshPacket) decodeResult {
 	var r decodeResult
 	enc := p.GetEncrypted()
-	r.target = h.identityAny(p.To)
+	r.target = h.Identity(p.To)
 	if p.Channel == 0 && r.target != nil && len(enc) > wire.PKIOverhead {
 		r.matched = true
 		if peer := h.peerKey(p.From); peer != nil {
@@ -225,7 +183,7 @@ func (h *Host) decode(p *pb.MeshPacket) decodeResult {
 }
 
 func (h *Host) peerKey(num uint32) []byte {
-	if id := h.identityAny(num); id != nil {
+	if id := h.Identity(num); id != nil {
 		return id.PublicKey
 	}
 	e, ok := h.DB.Get(num)
@@ -233,16 +191,6 @@ func (h *Host) peerKey(num uint32) []byte {
 		return nil
 	}
 	return e.PublicKey()
-}
-
-// ackChannel picks the channel index an ACK for a decoded packet should use on the target identity.
-func (h *Host) ackChannel(dec decodeResult) int {
-	for _, d := range dec.deliveries {
-		if d.id == dec.target {
-			return d.index
-		}
-	}
-	return 0
 }
 
 // sniffContent updates the shared node DB from NodeInfo, Position and Telemetry, once per packet.
@@ -273,41 +221,7 @@ func (h *Host) sniffContent(p *pb.MeshPacket, dec decodeResult, now time.Time) {
 	}
 }
 
-// askUnknownNode sends the relay persona's NodeInfo (want_response) to nodes we have no User for.
-// Firmware does this per node; with a shared DB one request covers every identity.
-func (h *Host) askUnknownNode(p *pb.MeshPacket, dec decodeResult) {
-	if p.From == 0 || dec.data.Portnum == pb.PortNum_NODEINFO_APP || dec.data.Portnum == pb.PortNum_TELEMETRY_APP {
-		return
-	}
-	if e, ok := h.DB.Get(p.From); ok && e.User != nil {
-		return
-	}
-	if hops := wire.HopsAway(p); hops > int(h.Config().HopLimit)+2 {
-		return
-	}
-	if v, ok := h.nodeInfoAsks.Load(p.From); ok && time.Since(v.(time.Time)) < 15*time.Minute {
-		return
-	}
-	relay := h.Relay()
-	chIndex := -1
-	if dec.group != nil {
-		for _, m := range dec.group.members {
-			if m.id == relay {
-				chIndex = m.index
-			}
-		}
-	} else if dec.pki && dec.target != nil {
-		// DM to one of our identities from an unknown node can't happen (we needed its key); ignore.
-		return
-	}
-	if chIndex < 0 || h.Air.ChannelUtilPercent(time.Now()) > 25 {
-		return
-	}
-	h.nodeInfoAsks.Store(p.From, time.Now())
-	h.sendNodeInfo(relay, p.From, true, chIndex, false)
-}
-
-// sniffRouting handles ACKs, NAKs, next-hop learning and reliable-delivery responses.
+// sniffRouting learns next hops from responses and stands down relays already answered.
 func (h *Host) sniffRouting(p *pb.MeshPacket, dec decodeResult) {
 	d := dec.data
 	if d.RequestId != 0 || d.ReplyId != 0 {
@@ -321,136 +235,6 @@ func (h *Host) sniffRouting(p *pb.MeshPacket, dec decodeResult) {
 			h.txq.Cancel(orig, false)
 		}
 	}
-	target := dec.target
-	if target == nil {
-		return
-	}
-	ch := h.ackChannel(dec)
-	switch {
-	case p.WantAck:
-		hl := h.responseHopLimit(p)
-		switch {
-		case d.Portnum == pb.PortNum_TEXT_MESSAGE_APP || d.Portnum == pb.PortNum_TEXT_MESSAGE_COMPRESSED_APP:
-			h.sendAckNak(target, pb.Routing_NONE, p.From, p.Id, ch, hl, true)
-		case d.RequestId == 0 && d.ReplyId == 0:
-			h.sendAckNak(target, pb.Routing_NONE, p.From, p.Id, ch, hl, false)
-		case wire.HopsAway(p) == 0 || p.NextHop != 0:
-			h.sendAckNak(target, pb.Routing_NONE, p.From, p.Id, ch, 0, false)
-		}
-	case p.NextHop == uint32(wire.LastByte(target.NodeNum)) && p.HopLimit > 0:
-		h.sendAckNak(target, pb.Routing_NONE, p.From, p.Id, ch, 0, false)
-	}
-	if d.Portnum == pb.PortNum_ROUTING_APP && d.RequestId != 0 {
-		rt := &pb.Routing{}
-		_ = proto.Unmarshal(d.Payload, rt)
-		h.stopPendingEverywhere(pktKey{target.NodeNum, d.RequestId})
-		h.routingResult(target, d)
-		if rt.GetErrorReason() == pb.Routing_PKI_UNKNOWN_PUBKEY {
-			h.sendNodeInfo(target, p.From, false, ch, true)
-		}
-	}
-}
-
-// responseHopLimit mirrors RoutingModule::getHopLimitForResponse.
-func (h *Host) responseHopLimit(p *pb.MeshPacket) uint32 {
-	limit := h.Config().HopLimit
-	used := wire.HopsAway(p)
-	if used >= 0 {
-		switch {
-		case uint32(used) > limit:
-			return uint32(used)
-		case p.HopStart == 0:
-			return 0
-		case uint32(used)+2 < limit:
-			return uint32(used) + 2
-		}
-	}
-	return limit
-}
-
-// perhapsRelay is the relay persona's rebroadcast decision (NextHopRouter::perhapsRebroadcast).
-func (h *Host) perhapsRelay(p *pb.MeshPacket, dec decodeResult) bool {
-	if h.remoteRelay() {
-		return false // the hosted relay persona decides for itself
-	}
-	cfg := h.Config()
-	switch cfg.RelayRole {
-	case RoleClient, RoleClientBase, RoleRouter, RoleRouterLate:
-	default:
-		return false
-	}
-	if strings.EqualFold(cfg.Rebroadcast, "none") || p.To == wire.BroadcastNoLoRa || p.HopLimit == 0 || p.Id == 0 {
-		return false
-	}
-	if p.ViaMqtt && cfg.IgnoreMQTT {
-		return false
-	}
-	if h.isSiteIdentity(p.To) || h.isSiteIdentity(p.From) || h.identityAny(p.To) != nil {
-		return false
-	}
-	relay := h.Relay()
-	relayByte := wire.LastByte(relay.NodeNum)
-	if p.NextHop != 0 && p.NextHop != uint32(relayByte) {
-		return false
-	}
-	out := clonePacket(p)
-	out.RxRssi, out.RxSnr, out.RxTime = nil, 0, nil
-	out.HopLimit--
-	out.RelayNode = uint32(relayByte)
-	if p.NextHop != 0 {
-		out.NextHop = uint32(h.nextHopFor(out.To, relayByte))
-	}
-	if dec.ok && !dec.pki && dec.group != nil && dec.data.Portnum == pb.PortNum_TRACEROUTE_APP {
-		if d := h.appendTraceroute(p, dec.data, relay.NodeNum, false); d != nil {
-			plain, _ := proto.Marshal(d)
-			var enc []byte
-			if dec.group.aead {
-				enc, _ = wire.AEADEncrypt(dec.group.key, p.From, p.To, p.Id, plain)
-			} else {
-				enc = wire.AESCTR(dec.group.key, p.From, p.Id, plain)
-			}
-			if len(enc) <= wire.MaxPayload {
-				out.PayloadVariant = &pb.MeshPacket_Encrypted{Encrypted: enc}
-			}
-		}
-	}
-	rp := h.RadioParams()
-	delay := phy.FloodDelayMs(p.RxSnr, rp.SlotTimeMs(), h.relaysAsRouter(p))
-	k := pktKey{p.From, p.Id}
-	h.hist.MarkTx(k, out.HopLimit, uint8(out.NextHop), time.Now())
-	return h.txq.Enqueue(&txItem{key: k, pkt: out, due: time.Now().Add(time.Duration(delay) * time.Millisecond),
-		prio: p.Priority, relay: true})
-}
-
-// nextHopFor returns the learned next hop towards dest if it's an unambiguous direct neighbour.
-func (h *Host) nextHopFor(dest uint32, relayByte uint8) uint8 {
-	if dest == wire.Broadcast {
-		return 0
-	}
-	e, ok := h.DB.Get(dest)
-	if !ok || e.NextHop == 0 || e.NextHop == relayByte {
-		return 0
-	}
-	if _, unique := h.DB.ResolveLastByte(e.NextHop, true); !unique {
-		return 0
-	}
-	return e.NextHop
-}
-
-// deliver hands a decoded packet to one identity: modules first, then its clients.
-func (h *Host) deliver(id *Identity, p *pb.MeshPacket, dec decodeResult, index int, now time.Time) {
-	dp := clonePacket(p)
-	dp.Channel = uint32(index)
-	dp.RxTime = u32p(uint32(now.Unix()))
-	if dec.pki {
-		dp.PkiEncrypted = true
-		dp.PublicKey = h.peerKey(p.From)
-	}
-	dp = h.runModules(id, dp)
-	if dp == nil {
-		return
-	}
-	id.deliverToClients(&pb.FromRadio{PayloadVariant: &pb.FromRadio_Packet{Packet: dp}}, keepOffline(dp))
 }
 
 func keepOffline(p *pb.MeshPacket) bool {

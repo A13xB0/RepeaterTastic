@@ -36,7 +36,7 @@ func NewRemoteIdentity(r Remote, st RemoteState) (*Identity, error) {
 		return nil, errors.New("remote node has no usable node number")
 	}
 	id := &Identity{NodeNum: st.NodeNum, Enabled: true, CreatedAt: time.Now(), remote: r,
-		sinks: map[ClientSink]struct{}{}, nodeInfoReplied: map[uint32]time.Time{}}
+		sinks: map[ClientSink]struct{}{}}
 	id.applyRemoteState(st)
 	return id, nil
 }
@@ -161,7 +161,7 @@ func (h *Host) sendRemote(from *Identity, r Remote, p *pb.MeshPacket) error {
 	q.From = 0 // the node fills in its own number
 	if _, err := r.SendPacket(q); err != nil {
 		if p.GetDecoded().GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP {
-			h.nakLocal(from, p.Id, pb.Routing_NO_INTERFACE)
+			h.failMessage(from, p.Id, pb.Routing_NO_INTERFACE)
 		}
 		return &RoutingError{pb.Routing_NO_INTERFACE}
 	}
@@ -265,7 +265,7 @@ func (h *Host) routingResult(target *Identity, d *pb.Data) {
 	} else {
 		h.Counters.AckOK.Add(1)
 	}
-	if m, ok := h.storeFor(target).SetStatus(target.NodeNum, d.RequestId, status, errText); ok {
+	if m, ok := h.Messages.SetStatus(target.NodeNum, d.RequestId, status, errText); ok {
 		h.publishMessage(target, m)
 	}
 }
@@ -276,16 +276,13 @@ func (h *Host) storeIncomingText(id *Identity, p *pb.MeshPacket) {
 	m := &Message{ID: p.Id, From: wire.NodeID(p.From), To: wire.NodeID(p.To), Channel: int(p.Channel),
 		Text: string(d.Payload), Time: time.Now().UnixMilli(), Direction: "in", Status: "received", PKI: p.PkiEncrypted,
 		SNR: p.RxSnr, Hops: wire.HopsAway(p)}
-	if h.multiRadioOf(id) != nil {
-		m.Radio = h.RadioID()
-	}
 	if p.RxRssi != nil {
 		m.RSSI = *p.RxRssi
 	}
 	if p.To == wire.Broadcast {
 		m.To = "!ffffffff"
 	}
-	h.storeFor(id).Add(id.NodeNum, m)
+	h.Messages.Add(id.NodeNum, m)
 	h.publishMessage(id, *m)
 }
 

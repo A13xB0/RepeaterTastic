@@ -90,8 +90,9 @@ GUI: **Configuration → Radios → Edit**.
 ### `relay`: the relay persona
 
 Each radio has one relay persona, the only identity that repeats other nodes' packets. Its role is
-a Meshtastic device role, and meshtasticd applies it as-is when the relay runs there
-([hosted relay](#hosted-nodes-on-meshtasticd-experimental)).
+a Meshtastic device role, applied as-is by the meshtasticd it runs on
+([`hosted`](#hosted-meshtasticd)) — unless the radio is a board on Meshtastic firmware, which keeps
+the board as its relay.
 
 ```yaml
 relay:
@@ -115,10 +116,9 @@ relay:
 Switching to monitor or off fails anything still queued. GUI: **Configuration → Relay**, or the
 switch in the top bar.
 
-`rebroadcast` is Meshtastic's rebroadcast mode (`device.rebroadcast_mode`) and defaults to `all`.
-A relay on meshtasticd honours every mode. The built-in relay only honours `none`; it treats
-`client_base` as `client` and `router_late` as `router`. Repeater, tracker, sensor and TAK roles
-aren't offered: they make no sense for a relay persona.
+`rebroadcast` is Meshtastic's rebroadcast mode (`device.rebroadcast_mode`) and defaults to `all`;
+meshtasticd (or the board) honours every mode. Repeater, tracker, sensor and TAK roles aren't
+offered: they make no sense for a relay persona.
 
 ![Configuration → Relay: Meshtastic roles and the rebroadcast mode](images/relay-roles.png)
 
@@ -192,20 +192,23 @@ account menu) and stored in the state folder, not in this file.
 - `log_level`: `debug`, `info`, `warn` or `error`; applies live from the GUI.
 - `state_dir` holds identity keys, chats, the node database and login data: back it up.
 
-### `hosted`: nodes on meshtasticd (experimental)
+### `hosted`: meshtasticd
 
 ```yaml
 hosted:
-    persona: true                    # the relay of each modem or HAT radio runs on meshtasticd
-    identities: true                 # and every identity too (with persona; behind a board, on its own)
     meshtasticd: /usr/bin/meshtasticd   # "" = meshtasticd on PATH; must be 2.8.0 or newer
     docker_image: ""                 # or run it in Docker, e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian
     port_base: 4500                  # client API ports: radio n (0 = main) uses 100 ports from port_base + 100·n
 ```
 
-- **Real nodes.** The relay, and with `identities` every identity, becomes a meshtasticd on a
-  simulated radio that RepeaterTastic starts, sets up and restarts. They still transmit on this
-  radio, at zero hops, and the relay hears the identities without repeating them.
+RepeaterTastic doesn't run nodes itself. The relay persona of each modem or HAT radio, and every
+identity, is a meshtasticd on a simulated radio that RepeaterTastic starts, sets up and restarts.
+They transmit on this radio, at zero hops, and the relay hears the identities without repeating
+them. A board radio (`driver: meshtastic`) keeps the board itself as its relay; its identities still
+run on meshtasticd, one hop behind it. There's no fallback: an identity whose meshtasticd can't be
+started stays off air, retrying with backoff, until it can — the top bar and `GET /api/v1/status`
+say why (see [meshtasticd nodes](meshtasticd-nodes.md)).
+
 - **Same node numbers.** RepeaterTastic keeps each identity's key and gives it to its meshtasticd,
   so node numbers, chats and app pairings stay. A meshtasticd that loses or changes its key gets it
   back at the next connect; one that won't keep it after three tries stays off air.
@@ -215,37 +218,32 @@ hosted:
   and rebroadcast mode from `relay` for the persona; NodeInfo interval; device telemetry for the
   persona only. A fresh node also gets the identity's names and channels. After that the node
   keeps them, and edits in the GUI are written to it.
-- **Roles.** A hosted identity never repeats: its role is `CLIENT_MUTE`, `TRACKER`, `SENSOR` or
+- **Roles.** An identity never repeats: its role is `CLIENT_MUTE`, `TRACKER`, `SENSOR` or
   `TAK_TRACKER` (the last three with rebroadcasting off). Any other role becomes `CLIENT_MUTE`.
-- **One radio each.** Identities routed across radios (experimental) stay in RepeaterTastic, and a
-  hosted identity can't be routed across radios.
 - **Apps connect as before**, to the identity's own app port. The meshtasticd API ports are
-  RepeaterTastic's.
-- **Moving and deleting.** Moving an identity to another radio starts it there, on meshtasticd if
-  that radio hosts identities. Deleting one stops its meshtasticd and removes its state.
-- **Fallback.** If meshtasticd can't run or is too old, everything stays in RepeaterTastic and
-  the log says why.
+  RepeaterTastic's; packets addressed to an identity itself, admin included, are forwarded to its
+  meshtasticd.
+- **Moving and deleting.** Moving an identity to another radio starts its meshtasticd there.
+  Deleting one stops its meshtasticd and removes its state.
 - **Ports.** An installed meshtasticd listens on every interface: firewall the ports on a shared
   network, or use `docker_image`, which publishes them on 127.0.0.1 only. Each node takes about
   3 MB of memory.
-- Takes effect at the next restart. Configuration → Experimental has the same settings.
+- Takes effect at the next restart. Configuration → meshtasticd has the same settings, plus a
+  status chip and a table of every running instance.
 
-The setup wizard offers it as an optional step. It shows whether meshtasticd is installed and new
-enough, and whether Docker answers and already has the image, then picks the one that works. A
-meshtasticd that isn't on the PATH can still be used: pick Installed and enter where it is.
-Configuration → Experimental shows the same and lists every
-instance, and Edit on a radio shows where the relay and each identity run:
+The setup wizard's meshtasticd step is mandatory: it shows whether meshtasticd is installed and new
+enough, and whether Docker answers and already has the image, then picks the one that works. You can
+carry on if the check fails and fix it under Configuration → meshtasticd afterwards. A meshtasticd
+that isn't on the PATH can still be used: pick Installed and enter where it is. Edit on a radio shows
+where the relay and each identity run:
 
-![Setup: run nodes on meshtasticd](images/setup-runtimes.png)
-
-![Configuration → Experimental with hosted identities](images/hosted-identities.png)
+![Configuration → meshtasticd with one identity's node down](images/config-meshtasticd.png)
 
 ![Radio settings with hosted nodes](images/radio-settings-hosted-relay.png)
 
-### `radios`, `site` and `experimental`
+### `radios` and `site`
 
-Extra radios, the site-wide airtime cap and the experimental identities on several radios are
-covered in [Several radios](radios.md).
+Extra radios and the site-wide airtime cap are covered in [Several radios](radios.md).
 
 ### `plugins`
 

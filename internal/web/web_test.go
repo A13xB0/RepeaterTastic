@@ -29,6 +29,7 @@ func testWeb(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.SetHoster(&fakeHoster{remote: &fakeRemote{}})
 	relay, _ := mesh.NewIdentity(nil, "Relay", "RLY")
 	relay.IsRelay = true
 	if err := h.AddIdentity(relay); err != nil {
@@ -121,9 +122,10 @@ func TestSetupLoginIdentitiesAndMessages(t *testing.T) {
 	if code != 202 {
 		t.Fatalf("send %d %v", code, m)
 	}
-	_, _, msgs := call(t, srv, "GET", "/api/v1/identities/"+bID+"/messages?conversation=dm:"+aID, tok, nil)
-	if len(msgs) != 1 || msgs[0].(map[string]any)["text"] != "hello ops" {
-		t.Fatalf("local DM not delivered: %v", msgs)
+	// Handed to A's node, which delivers it (the hosted nodes' air carries local DMs).
+	_, _, msgs := call(t, srv, "GET", "/api/v1/identities/"+aID+"/messages?conversation=dm:"+bID, tok, nil)
+	if len(msgs) != 1 || msgs[0].(map[string]any)["text"] != "hello ops" || msgs[0].(map[string]any)["status"] != "queued" {
+		t.Fatalf("DM not queued: %v", msgs)
 	}
 
 	code, u, _ := call(t, srv, "GET", "/api/v1/identities/"+aID+"/channels/url", tok, nil)

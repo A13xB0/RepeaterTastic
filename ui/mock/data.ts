@@ -569,6 +569,7 @@ export function status(): Status {
   const phy = resolvePhy(state.config.radio.region, state.config.radio.preset, state.config.radio.primary_channel, state.config.radio.tx_power_dbm)
   return {
     version: '0.1.0', uptime_s: Math.floor((now() - state.startedAt) / 1000),
+    nodes: { state: 'ok', nodes: state.identities.length, up: state.identities.length, problems: [], version: '2.8.0.47db0e3', launcher: 'meshtasticd' },
     radio: { driver: 'kiss', device: '/dev/ttyUSB0', firmware: 'Mesh KISS v2', name: 'Heltec V3', connected: true, reconnects: 0,
       rx: state.counters.rx, tx: state.counters.tx, errors: 2, noise_floor_dbm: state.noise },
     phy,

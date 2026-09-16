@@ -112,7 +112,7 @@ onMounted(async () => {
     <template v-else-if="kind === 'board'">
       <BoardSelect :id="`${props.id}-board`" v-model="board" :boards="boards" class="mt-2" />
       <p class="hint">
-        A LoRa board on SPI or a CH341 USB stick that RepeaterTastic drives itself (experimental), with no meshtasticd on it.<template v-if="restartHint"> Changing it needs a restart.</template>
+        A LoRa board on SPI or a CH341 USB stick that RepeaterTastic drives itself (experimental), with no firmware on it.<template v-if="restartHint"> Changing it needs a restart.</template>
       </p>
     </template>
 

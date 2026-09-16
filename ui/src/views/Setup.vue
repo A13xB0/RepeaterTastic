@@ -25,10 +25,8 @@ const steps = stepList.map((x) => x.label)
 const step = ref(0)
 const stepId = computed(() => stepList[step.value].id)
 
-// Hosted nodes (experimental): the relay persona runs on meshtasticd.
+// The relay persona and identities run on meshtasticd: which one, installed or in Docker.
 const DEFAULT_IMAGE = 'meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian'
-const hosted = ref(false)
-const hostedIdentities = ref(true)
 const hostedVia = ref<'exec' | 'docker'>('exec')
 const hostedBinary = ref('')
 const hostedImage = ref(DEFAULT_IMAGE)
@@ -71,15 +69,12 @@ watch([hostedVia, hostedBinary, hostedImage], () => (hostedCheck.value = null))
 watch(stepId, (id) => {
   if (id === 'nodes' && !runtimes.value && !loadingRuntimes.value) loadRuntimes()
 })
-// Ticking the box checks the chosen way at once (Docker may download the image first).
-watch(hosted, (on) => {
-  if (on && !hostedCheck.value && !checkingHosted.value && (canInstalled.value || canDocker.value)) checkHosted()
+// Once the machine is looked at, the likely way is checked at once (Docker may download the image first).
+watch(runtimes, (r) => {
+  if (r && !hostedCheck.value && !checkingHosted.value && (canInstalled.value || canDocker.value)) checkHosted()
 })
 function hostedSettings() {
-  // Behind a board the board is the relay, and identities use meshtasticd whenever it can run.
   return {
-    persona: hosted.value && !usingNode.value,
-    identities: hosted.value && (usingNode.value || hostedIdentities.value),
     meshtasticd: hostedVia.value === 'exec' ? hostedBinary.value.trim() : '',
     docker_image: hostedVia.value === 'docker' ? hostedImage.value.trim() : '',
     port_base: hostedPortBase.value,
@@ -286,7 +281,6 @@ const pwScore = computed(() => {
 const canNext = computed(() => {
   switch (stepId.value) {
     case 'radio': return !!device.value
-    case 'nodes': return !hosted.value || !!hostedCheck.value?.ok
     case 'region': return !!phy.value && !phyError.value
     case 'password': return password.value.length >= 8 && password.value === password2.value
     default: return true
@@ -314,8 +308,8 @@ async function finish() {
       hosted: hostedSettings(),
     })
     setToken(r.token)
-    // The relay moves to meshtasticd when the daemon starts again.
-    if (r.restart_required && (hosted.value || usingNode.value)) {
+    // The nodes start on the chosen meshtasticd when the daemon starts again.
+    if (r.restart_required) {
       await request('POST', '/restart').catch(() => {})
       await waitForRestart()
     }
@@ -410,7 +404,7 @@ async function finish() {
                   <CircuitBoard class="size-4 shrink-0 text-ink-3" />
                   <div class="min-w-0">
                     <div class="text-[13px] font-medium">LoRa board on SPI or a USB stick</div>
-                    <div class="text-2xs text-ink-3">A Pi HAT or CH341 stick RepeaterTastic drives itself, with no meshtasticd on it (experimental)</div>
+                    <div class="text-2xs text-ink-3">A Pi HAT or CH341 stick RepeaterTastic drives itself, with no firmware on it (experimental)</div>
                   </div>
                 </label>
                 <BoardSelect v-if="usingBoard" id="setup-board" v-model="board" :boards="boards" input-class="input h-8 text-xs" class="mt-2.5 pl-7" />
@@ -465,12 +459,12 @@ async function finish() {
 
           <!-- meshtasticd -->
           <section v-else-if="stepId === 'nodes'">
-            <h2 class="text-base font-semibold tracking-tight">Run nodes on meshtasticd</h2>
+            <h2 class="text-base font-semibold tracking-tight">meshtasticd</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Experimental: the relay persona and your identities can be real Meshtastic nodes, each a meshtasticd on a simulated radio that RepeaterTastic starts, sets up and restarts.
-              <template v-if="!usingNode">They still transmit on this radio themselves, at zero hops.</template>
+              The relay persona and your identities are real Meshtastic nodes: each is a meshtasticd on a simulated radio that RepeaterTastic starts, sets up and restarts.
+              <template v-if="!usingNode">They transmit on this radio themselves, at zero hops.</template>
             </p>
-            <p v-if="usingNode" class="mt-2 text-[13px] text-ink-3">Your board is the relay, so only your identities can run here. Each gets its own meshtasticd, one hop behind the board.</p>
+            <p v-if="usingNode" class="mt-2 text-[13px] text-ink-3">Your board is the relay, so only your identities run here. Each gets its own meshtasticd, one hop behind the board.</p>
             <div class="mt-4 rounded-xl border border-line-soft px-3.5 py-3">
               <div class="flex items-center justify-between gap-2">
                 <div class="eyebrow">Found on this machine</div>
@@ -501,19 +495,18 @@ async function finish() {
                 </li>
               </ul>
               <p v-if="noRuntime" class="mt-2 text-2xs text-ink-3">
-                Neither was found. If meshtasticd ({{ runtimes?.min_version }} or newer) is installed somewhere unusual, tick the box and enter where it is. Otherwise install it or Docker, then look again.<template v-if="usingNode"> Left off, your identities run in RepeaterTastic behind the board.</template>
+                Neither was found. If meshtasticd ({{ runtimes?.min_version }} or newer) is installed somewhere unusual, enter where it is below. Otherwise install it (the setup script in the README does) or Docker, then look again.
               </p>
             </div>
-            <div :class="['mt-3 rounded-xl border px-3.5 py-3', hosted ? 'border-brand/60 bg-brand/6' : 'border-line']">
-              <label class="flex cursor-pointer items-center gap-3">
-                <input id="setup-hosted" v-model="hosted" type="checkbox" class="accent-[var(--brand)]" />
+            <div class="mt-3 rounded-xl border border-line px-3.5 py-3">
+              <div class="flex items-center gap-3">
                 <Server class="size-4 shrink-0 text-ink-3" />
                 <div class="min-w-0">
-                  <div class="text-[13px] font-medium">{{ usingNode ? 'Run identities on meshtasticd' : 'Run the relay on meshtasticd' }}</div>
+                  <div class="text-[13px] font-medium">Run meshtasticd</div>
                   <div class="text-2xs text-ink-3">Needs meshtasticd 2.8.0 or newer, installed or in Docker.</div>
                 </div>
-              </label>
-              <div v-if="hosted" class="mt-3 space-y-3 pl-7">
+              </div>
+              <div class="mt-3 space-y-3 pl-7">
                 <div class="flex flex-wrap items-center gap-2">
                   <div class="seg" role="group" aria-label="How to run meshtasticd">
                     <button type="button" :aria-pressed="hostedVia === 'exec'" @click="hostedVia = 'exec'">Installed</button>
@@ -530,10 +523,7 @@ async function finish() {
                   <div v-if="hostedCheck.ok"><div class="font-medium">meshtasticd {{ hostedCheck.version }} found</div><div class="text-ink-2">{{ hostedCheck.min_version }} or newer is needed · {{ hostedCheck.launcher }}</div></div>
                   <div v-else><div class="font-medium">meshtasticd can't host nodes</div><div class="text-ink-2">{{ hostedCheck.error }}</div></div>
                 </div>
-                <label v-if="!usingNode" class="flex cursor-pointer items-start gap-2.5 text-[13px]">
-                  <input id="setup-hosted-identities" v-model="hostedIdentities" type="checkbox" class="mt-0.5 accent-[var(--brand)]" />
-                  <span><span class="font-medium">Identities on meshtasticd too</span><span class="block text-2xs text-ink-3">Each identity you create gets its own meshtasticd and keeps its app port. They never repeat: the relay does.</span></span>
-                </label>
+                <p v-if="hostedCheck && !hostedCheck.ok" class="hint !mt-1 !text-warn">You can carry on and fix this under Configuration → meshtasticd: until meshtasticd runs, nothing goes on air and the top bar shows it.</p>
                 <div class="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label class="label" for="setup-hosted-port">API ports from</label>
@@ -550,8 +540,8 @@ async function finish() {
               </div>
               <table class="mt-2 w-full text-xs">
                 <tbody>
-                  <tr class="border-b border-line-soft"><td class="py-1.5 font-medium">Relay persona</td><td class="py-1.5 text-ink-3">{{ usingNode ? 'the board (Meshtastic firmware)' : hosted ? (hostedCheck?.ok ? `meshtasticd ${hostedCheck.version}` : 'meshtasticd') : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
-                  <tr><td class="py-1.5 font-medium">Your identities</td><td class="py-1.5 text-ink-3">{{ hosted && (hostedIdentities || usingNode) ? 'meshtasticd, one each' : 'RepeaterTastic' }}</td><td class="py-1.5 text-right"><span :class="['chip', identityHops ? 'bg-warn/15 text-warn' : 'bg-brand/12 text-brand']">{{ identityHops }} hop{{ identityHops === 1 ? '' : 's' }}</span></td></tr>
+                  <tr class="border-b border-line-soft"><td class="py-1.5 font-medium">Relay persona</td><td class="py-1.5 text-ink-3">{{ usingNode ? 'the board (Meshtastic firmware)' : hostedCheck?.ok ? `meshtasticd ${hostedCheck.version}` : 'meshtasticd' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
+                  <tr><td class="py-1.5 font-medium">Your identities</td><td class="py-1.5 text-ink-3">meshtasticd, one each</td><td class="py-1.5 text-right"><span :class="['chip', identityHops ? 'bg-warn/15 text-warn' : 'bg-brand/12 text-brand']">{{ identityHops }} hop{{ identityHops === 1 ? '' : 's' }}</span></td></tr>
                 </tbody>
               </table>
               <p v-if="usingNode" class="mt-2 text-2xs text-ink-3">The board repeats your identities' packets onto the air, so the mesh hears them one hop away. Its role must be one that repeats (Client or Router), and its MQTT module is used for this.</p>
@@ -664,13 +654,12 @@ async function finish() {
               <dt>Radio</dt><dd class="mono truncate">{{ usingBoard ? `board · ${device}` : usingNode ? `Meshtastic board · ${device}` : device }}</dd>
               <dt>Region</dt><dd>{{ region }} · {{ phy?.preset_name }} · {{ phy?.frequency_mhz.toFixed(3) }} MHz</dd>
               <dt>Relay role</dt><dd class="capitalize">{{ role }}</dd>
-              <dt>Identities run on</dt><dd>{{ hosted && (hostedIdentities || usingNode) ? 'meshtasticd, one each' : 'RepeaterTastic' }}<template v-if="usingNode">, a hop behind the board</template></dd>
-              <dt>Relay runs on</dt><dd>{{ usingNode ? 'the board' : hosted ? `meshtasticd ${hostedCheck?.version ?? ''} (${hostedVia === 'docker' ? 'Docker' : 'installed'})` : 'RepeaterTastic' }}</dd>
+              <dt>Identities run on</dt><dd>meshtasticd, one each<template v-if="usingNode">, a hop behind the board</template></dd>
+              <dt>Relay runs on</dt><dd>{{ usingNode ? 'the board' : `meshtasticd ${hostedCheck?.version ?? ''} (${hostedVia === 'docker' ? 'Docker' : 'installed'})` }}</dd>
               <dt>Admin password</dt><dd>{{ '•'.repeat(Math.min(password.length, 16)) }}</dd>
             </dl>
             <BoardMqttNotice v-if="usingNode" class="mt-4" />
-            <p v-if="hosted" class="mt-4 text-[13px] text-ink-3">RepeaterTastic restarts once to start the relay on meshtasticd, then opens the dashboard.</p>
-            <p v-else class="mt-4 text-[13px] text-ink-3">Next you'll land on the dashboard, where you can create your first identity.</p>
+            <p class="mt-4 text-[13px] text-ink-3">RepeaterTastic restarts once to start the nodes on meshtasticd, then opens the dashboard, where you can create your first identity.</p>
             <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
           </section>
         </div>

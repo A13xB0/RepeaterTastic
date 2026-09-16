@@ -20,6 +20,9 @@ many open tabs don't use up the browser's connections to the host, and catches u
   radio only listens and transmits nothing) and **Off** (the radio is ignored). Both ask before
   switching. In either, sends from identities, the relay persona and plugins fail with "the radio
   isn't transmitting". The same switch is under Configuration → Relay, with the rebroadcast mode.
+- **meshtasticd chip:** how the site's nodes are doing — green "OK", blue "starting", amber "N of M
+  down", or red "meshtasticd not running"/"relay down" (hover for the reasons). Click it for
+  Configuration → meshtasticd.
 - A **restart banner** appears under the bar when saved changes need a restart, listing them.
 
 ## Pages
@@ -27,14 +30,14 @@ many open tabs don't use up the browser's connections to the host, and catches u
 | Page | What it's for |
 | --- | --- |
 | **Dashboard** | Radio health, noise floor, airtime, traffic and recent activity at a glance |
-| **Identities** | Create, import, edit, move and delete virtual nodes. Each shows its app port, connected apps, airtime and channels. The relay persona is created for you and can't be deleted |
+| **Identities** | Create, import, edit, move and delete identities. Each shows its app port, connected apps, airtime and channels. The relay persona is created for you and can't be deleted |
 | **Chat** | Channel conversations and DMs for any identity, the relay persona included (**Speaking as**), with delivery ticks |
 | **Channels** | Every identity's eight channel slots: add, edit and remove channels, or add one to several identities at once |
 | **Nodes & map** | Nodes heard, with signal, hops and position on a map. A node's drawer sends a traceroute, NodeInfo request or message from the identity picked in **Send from** |
 | **Packets** | Live packet log with decoded summaries |
 | **Statistics** | Airtime per identity, traffic and RF history |
 | **Links** | UDP multicast and each MQTT connection's state and counters |
-| **Configuration** | Radios, Relay, Airtime & duty, Position & hardware, MQTT, Web & API tokens, Experimental, Backup & restore |
+| **Configuration** | Radios, Relay, Airtime & duty, Position & hardware, MQTT, Web & API tokens, meshtasticd, Backup & restore |
 | **Plugins** | Install, attach, enable and configure plugins; their status, log and panel; **Send limits** for every plugin ([Plugins](plugins.md)) |
 | **Logs** | The daemon's log, live |
 
@@ -77,9 +80,9 @@ primary channel becomes the new radio's. Connected apps reconnect, and unsent me
   (`Authorization: Bearer …`, see [the API](api.md)).
 - **Configuration → Backup & restore** downloads everything, or restores a backup at the next restart.
 
-## Experimental
+## meshtasticd
 
-**Configuration → Experimental → Identities on several radios** lets an identity use more than one
-radio. With it on, the channel slot dialog gets a **Radio** choice, the identity editor gets a
-**Default radio** and DM routing, and the Channels page shows each slot's radio. See
-[Several radios](radios.md#experimental-identities-on-several-radios).
+**Configuration → meshtasticd** (also reached from the chip in the top bar) shows how every node is
+doing, with the problems listed; the installed or Docker choice and the meshtasticd program or
+image; the API port base; and a table of every running instance (radio, port, state, restarts, last
+error). See [meshtasticd nodes](meshtasticd-nodes.md).

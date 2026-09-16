@@ -160,8 +160,9 @@ Picking its serial port in the wizard detects the firmware and switches to this 
   RepeaterTastic writes the radio settings (region, preset, primary channel, TX power, hop limit)
   and the relay role to it.
 - **Identities are one hop behind it.** They run on meshtasticd (installed or Docker, see
-  [`hosted`](configuration.md#hosted-nodes-on-meshtasticd-experimental)), or in RepeaterTastic
-  when meshtasticd can't run. Their packets go to the board through its **MQTT client proxy**. The
+  [`hosted`](configuration.md#hosted-meshtasticd)). There's no fallback: an identity stays off air,
+  retrying with backoff, until meshtasticd can run. Their packets go to the board through its
+  **MQTT client proxy**. The
   board repeats them onto the air one hop lower, so identities get a hop limit one higher. Everything
   the board hears comes back the same way, with the RSSI and SNR it measured.
 - **Identities show as MQTT traffic.** The firmware marks everything it takes in over MQTT as
