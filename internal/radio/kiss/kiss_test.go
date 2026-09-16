@@ -34,17 +34,17 @@ type fakeModem struct {
 	unplugged   bool
 
 	// state
-	conn                            net.Conn
-	dials                           int
-	freq, bw                        uint32
-	sf, cr                          byte
-	power                           int8
-	sync                            byte
-	preamble                        uint16
-	kissTxDelay, persist            byte
-	txPending                       bool
-	dataWhilePending, sent, cmdSeen int
-	cmdCount                        map[byte]int
+	conn                   net.Conn
+	dials                  int
+	freq, bw               uint32
+	sf, cr                 byte
+	power                  int8
+	sync                   byte
+	preamble               uint16
+	kissTxDelay, persist   byte
+	txPending              bool
+	dataWhilePending, sent int
+	cmdCount               map[byte]int
 }
 
 func newFake() *fakeModem {

@@ -235,7 +235,7 @@ func (c *Config) validateRadios() error {
 				return fmt.Errorf("radios: id %q is used twice (%q is the top-level radio)", rc.ID, MainRadioID)
 			}
 			seenID[rc.ID] = true
-			if err := rc.Config.validateOne(); err != nil {
+			if err := rc.validateOne(); err != nil {
 				return fmt.Errorf("radios[%s]: %w", rc.ID, err)
 			}
 		}
@@ -621,7 +621,7 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("log_level must be debug, info, warn or error, not %q", c.LogLevel)
 	}
-	if u := c.Web.MapTileURL; u != "" && (!(strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://")) ||
+	if u := c.Web.MapTileURL; u != "" && (!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") ||
 		!strings.Contains(u, "{z}") || !strings.Contains(u, "{x}") || !strings.Contains(u, "{y}")) {
 		return errors.New("web.map_tile_url must be an http(s) URL containing {z}, {x} and {y}")
 	}

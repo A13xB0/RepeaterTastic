@@ -61,9 +61,9 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
 <template>
   <header class="card mb-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-2.5 sm:px-4">
     <div class="flex w-full min-w-0 items-center gap-2 lg:hidden">
-      <button class="icon-btn lg:hidden" aria-label="Open menu" @click="emit('menu')"><Menu class="size-5" /></button>
+      <button type="button" class="icon-btn lg:hidden" aria-label="Open menu" @click="emit('menu')"><Menu class="size-5" /></button>
       <h1 class="truncate text-[15px] font-semibold tracking-tight">{{ route.meta.title }}</h1>
-      <button class="icon-btn ml-auto" :title="`Theme: ${themeMode}`" @click="cycleTheme">
+      <button type="button" class="icon-btn ml-auto" :title="`Theme: ${themeMode}`" @click="cycleTheme">
         <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />
       </button>
       <AccountMenu />
@@ -125,12 +125,12 @@ const syncHex = computed(() => (s.value ? '0x' + s.value.phy.sync_word.toString(
         <div class="seg" role="group" aria-label="Relay mode">
           <template v-for="(r, i) in relayModes" :key="r.id">
             <span v-if="i > 0 && relayModes[i - 1]!.group !== r.group" class="mx-0.5 my-1 w-px bg-line" aria-hidden="true" />
-            <button :title="r.title" :aria-pressed="s.relay.role === r.id" :disabled="busy" @click="setRole(r.id)">
+            <button type="button" :title="r.title" :aria-pressed="s.relay.role === r.id" :disabled="busy" @click="setRole(r.id)">
               <span :class="s.relay.role === r.id ? r.tone : ''">{{ r.label }}</span>
             </button>
           </template>
         </div>
-        <button class="icon-btn max-lg:hidden" :title="`Theme: ${themeMode}`" @click="cycleTheme">
+        <button type="button" class="icon-btn max-lg:hidden" :title="`Theme: ${themeMode}`" @click="cycleTheme">
           <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />
         </button>
         <AccountMenu class="max-lg:hidden" />

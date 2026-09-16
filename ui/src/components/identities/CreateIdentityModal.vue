@@ -166,8 +166,8 @@ async function save() {
 
     <div class="mt-5">
       <div class="seg">
-        <button :aria-pressed="tab === 'generate'" @click="tab = 'generate'">Generate new key</button>
-        <button :aria-pressed="tab === 'import'" @click="tab = 'import'">Import existing key</button>
+        <button type="button" :aria-pressed="tab === 'generate'" @click="tab = 'generate'">Generate new key</button>
+        <button type="button" :aria-pressed="tab === 'import'" @click="tab = 'import'">Import existing key</button>
       </div>
       <div v-if="tab === 'import'" class="mt-3">
         <label class="label" for="pk">Private key (base64)</label>
@@ -179,7 +179,7 @@ async function save() {
     <div class="mt-4 rounded-xl border border-line-soft bg-raised p-4">
       <div class="flex items-center justify-between">
         <span class="eyebrow">Node number preview</span>
-        <button v-if="tab === 'generate'" class="btn btn-sm btn-ghost" :disabled="previewing" @click="generate">
+        <button type="button" v-if="tab === 'generate'" class="btn btn-sm btn-ghost" :disabled="previewing" @click="generate">
           <RefreshCw :class="['size-3.5', previewing && 'animate-spin']" />Regenerate
         </button>
       </div>
@@ -212,8 +212,8 @@ async function save() {
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
 
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="!canSave || saving" @click="save"><Spinner v-if="saving" />Create identity</button>
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="!canSave || saving" @click="save"><Spinner v-if="saving" />Create identity</button>
     </template>
   </Modal>
 </template>

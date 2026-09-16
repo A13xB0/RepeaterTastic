@@ -192,7 +192,7 @@ func (h *ch341HAL) Transfer(tx []byte) ([]byte, error) {
 	if err := h.setPin(h.cs, false); err != nil {
 		return nil, err
 	}
-	defer h.setPin(h.cs, true)
+	defer func() { _ = h.setPin(h.cs, true) }()
 	rx := make([]byte, 0, len(tx))
 	for _, p := range ch341SPIPackets(tx) {
 		if _, err := h.bulk(ch341EPOut, p); err != nil {

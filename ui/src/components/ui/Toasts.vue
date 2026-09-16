@@ -17,7 +17,7 @@ import { dismiss, toasts } from '@/composables/toast'
           <CircleAlert v-else-if="t.kind === 'error'" class="mt-px size-4 shrink-0 text-bad" />
           <Info v-else class="mt-px size-4 shrink-0 text-info" />
           <span class="min-w-0 flex-1 break-words">{{ t.text }}</span>
-          <button class="-mr-1 text-ink-3 hover:text-ink" aria-label="Dismiss" @click="dismiss(t.id)"><X class="size-3.5" /></button>
+          <button type="button" class="-mr-1 text-ink-3 hover:text-ink" aria-label="Dismiss" @click="dismiss(t.id)"><X class="size-3.5" /></button>
         </div>
       </TransitionGroup>
     </div>

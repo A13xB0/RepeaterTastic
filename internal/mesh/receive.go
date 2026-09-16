@@ -95,7 +95,7 @@ func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
 	if dec.data.Bitfield != nil && *dec.data.Bitfield&2 != 0 {
 		dec.data.WantResponse = true
 	}
-	h.fillRecordFromDecoded(&rec, p, dec)
+	h.fillRecordFromDecoded(&rec, dec)
 
 	// Pre-2.3 firmware never set hop_start; 2.8 skips handling such packets (MESHTASTIC_PREHOP_DROP).
 	if p.HopStart == 0 && dec.data.Bitfield == nil {
@@ -174,7 +174,7 @@ func (h *Host) decode(p *pb.MeshPacket) decodeResult {
 				continue
 			}
 			if p.To == wire.Broadcast || p.To == m.id.NodeNum {
-				r.deliveries = append(r.deliveries, delivery{m.id, m.index})
+				r.deliveries = append(r.deliveries, delivery(m))
 			}
 		}
 		return r
@@ -254,7 +254,7 @@ func (h *Host) describe(rec *PacketRecord, p *pb.MeshPacket) {
 	}
 	if dec := h.decode(p); dec.ok {
 		kind := rec.Kind
-		h.fillRecordFromDecoded(rec, p, dec)
+		h.fillRecordFromDecoded(rec, dec)
 		rec.Kind = kind
 	}
 }

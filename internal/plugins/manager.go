@@ -340,7 +340,7 @@ func (m *Manager) Run(ctx context.Context) error {
 // Start listens for plugins and starts the enabled ones; they run until ctx ends. It fails when
 // the Plugin API can't listen (a taken plugins.listen port).
 func (m *Manager) Start(ctx context.Context) error {
-	srv, err := m.serve(ctx)
+	srv, err := m.serve()
 	if err != nil {
 		m.mu.Lock()
 		m.startErr = err.Error()

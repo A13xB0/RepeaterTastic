@@ -196,7 +196,7 @@ func (s *session) write(typ byte, parts ...[]byte) error {
 	s.wbuf = appendFrame(s.wbuf[:0], typ, parts...)
 	if _, err := s.rwc.Write(s.wbuf); err != nil {
 		s.fail(err)
-		return fmt.Errorf("%w: %v", radio.ErrNotConnected, err)
+		return fmt.Errorf("%w: %w", radio.ErrNotConnected, err)
 	}
 	return nil
 }
@@ -728,7 +728,7 @@ func (m *Modem) Send(ctx context.Context, frame []byte) error {
 	cancelled, err := wait(ctx.Done())
 	if cancelled {
 		go func() {
-			wait(nil)
+			_, _ = wait(nil) // the modem still reports the transmission; only then is it free
 			t.Stop()
 			release()
 		}()

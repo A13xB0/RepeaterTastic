@@ -266,7 +266,7 @@ func BoardSettings(s mtclient.Snapshot) []*pb.AdminMessage {
 		if cur != nil {
 			m = proto.Clone(cur).(*pb.ModuleConfig_MQTTConfig)
 		}
-		m.Enabled, m.ProxyToClientEnabled, m.EncryptionEnabled, m.JsonEnabled = true, true, true, false
+		m.Enabled, m.ProxyToClientEnabled, m.EncryptionEnabled = true, true, true
 		m.Address = "127.0.0.1"
 		m.MapReportingEnabled = false
 		if !proto.Equal(m, cur) {

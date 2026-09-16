@@ -179,8 +179,8 @@ async function save() {
     <RadioNodesPanel v-if="radioId && form" :radio-id="radioId" :board="form.type === 'meshtastic'" />
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="saving || !form || !dirty" @click="save"><Spinner v-if="saving" />Save radio</button>
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="saving || !form || !dirty" @click="save"><Spinner v-if="saving" />Save radio</button>
     </template>
   </Modal>
 </template>

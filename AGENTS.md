@@ -17,6 +17,7 @@ work, and `docs/api.md` for the HTTP API.
 ```bash
 go vet ./... && go test ./...        # must pass before every commit
 go test -race ./...                  # for changes to internal/mesh, internal/site, internal/links
+make lint                            # golangci-lint (.golangci.yml) and vue-tsc; must report 0 issues
 cd ui && npm ci && npm run build     # vue-tsc + vite; writes internal/web/dist (commit it)
 make build | make dist               # binaries; MAP_API_KEY=... bakes in the map tile key
 docker build -t repeatertastic .     # container image
@@ -37,7 +38,9 @@ RT_TEST_MQTT_BROKER=host:1883 go test ./internal/links/mqtt   # MQTT against a r
   (`hosting.go`, `hosted.go`, `board.go`), health for the status bar (`hosting.go`'s `Health`).
 - `internal/phoneapi` the Meshtastic client API each identity serves (TCP stream + HTTP); packets
   addressed to the identity itself, admin included, are forwarded to its meshtasticd.
-- `internal/web` REST/SSE API and auth; `server.go` registers routes (`pub`, `setup`, `priv`).
+- `internal/web` REST/SSE API and auth; `server.go` registers routes (`pub`, `setup`, `priv`), and
+  each area has its own file (`setup.go`, `identities.go`, `channels.go`, `messages.go`, `nodes.go`,
+  `stats.go`, `config.go`, `links.go`, `radios.go`, `meshtasticd.go`, `plugins.go`, `backup.go`).
 - `internal/config` YAML config, defaults, validation, `ApplyEnv`.
 - `internal/links/mqtt`, `internal/links/udp`, `internal/site` (several radios on one host).
 - `ui/src` GUI: `views/` pages, `components/` (identities, config, packets, nodes, layout, ui),
@@ -78,6 +81,6 @@ RT_TEST_MQTT_BROKER=host:1883 go test ./internal/links/mqtt   # MQTT against a r
 
 ## Before you finish
 
-1. `go vet ./... && go test ./...` pass; `npm run build` passes if `ui/` changed, and `dist` is committed.
+1. `go vet ./... && go test ./...` pass, `make lint` reports 0 issues; `npm run build` passes if `ui/` changed, and `dist` is committed.
 2. README, `docs/api.md` and the example config match the change.
 3. No secrets in code, logs, tests or commit messages.

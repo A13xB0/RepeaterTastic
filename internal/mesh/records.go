@@ -28,13 +28,13 @@ func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) 
 	}
 	r.AirtimeMs = h.RadioParams().AirtimeMs(r.Size)
 	r.Mesh = p
-	if gs := h.channelGroups(uint8(p.Channel)); len(gs) > 0 && !(p.Channel == 0 && h.Identity(p.To) != nil) {
+	if gs := h.channelGroups(uint8(p.Channel)); len(gs) > 0 && (p.Channel != 0 || h.Identity(p.To) == nil) {
 		r.Channel = gs[0].name
 	}
 	return r
 }
 
-func (h *Host) fillRecordFromDecoded(r *PacketRecord, p *pb.MeshPacket, dec decodeResult) {
+func (h *Host) fillRecordFromDecoded(r *PacketRecord, dec decodeResult) {
 	r.Port = dec.data.Portnum.String()
 	r.Data = dec.data
 	r.Holders = nil

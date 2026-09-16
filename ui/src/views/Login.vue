@@ -33,7 +33,7 @@ async function submit() {
 
 <template>
   <div class="app-bg flex min-h-dvh flex-col items-center justify-center px-4 py-10">
-    <button class="icon-btn fixed right-4 top-4" :title="`Theme: ${themeMode}`" @click="cycleTheme">
+    <button type="button" class="icon-btn fixed right-4 top-4" :title="`Theme: ${themeMode}`" @click="cycleTheme">
       <Sun v-if="themeMode === 'light'" class="size-4" /><Moon v-else-if="themeMode === 'dark'" class="size-4" /><Monitor v-else class="size-4" />
     </button>
     <div class="card w-full max-w-sm !bg-surface-solid/90 px-6 pb-6 pt-8 sm:px-8">
@@ -53,7 +53,7 @@ async function submit() {
           </div>
           <p v-if="error" class="mt-2 text-xs text-bad">{{ error }}</p>
         </div>
-        <button class="btn btn-primary w-full" :disabled="!password || busy">
+        <button type="submit" class="btn btn-primary w-full" :disabled="!password || busy">
           <Spinner v-if="busy" />Sign in
         </button>
       </form>

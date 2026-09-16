@@ -82,11 +82,16 @@ Dockerfile             container image: the official meshtasticd image, with rep
 
 ```bash
 make test race          # unit tests, simulated multi-host mesh tests, golden vectors
+make lint               # golangci-lint and vue-tsc
 make ui                 # rebuild the GUI into internal/web/dist (commit the result)
 cd ui && npm run dev    # GUI against a mock API
 RT_TEST_MQTT_BROKER=127.0.0.1:1883 go test ./internal/links/mqtt   # MQTT against a real broker
 cd tests/interop && ./run_meshtasticd.sh up 2 && ./run_repeatertastic.sh up   # real firmware interop
 ```
+
+SonarQube (`sonar-project.properties`) is for reading, on demand: cognitive complexity, duplication
+and coverage per package. Run `go test ./... -coverprofile=coverage.out`, then the scanner as the
+file describes.
 
 ### Checks before a pull request
 

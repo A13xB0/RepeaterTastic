@@ -75,18 +75,18 @@ async function changePassword() {
 
 <template>
   <div ref="root" class="relative">
-    <button class="icon-btn" title="Account" aria-label="Account" :aria-expanded="open" aria-haspopup="menu" @click.stop="open = !open">
+    <button type="button" class="icon-btn" title="Account" aria-label="Account" :aria-expanded="open" aria-haspopup="menu" @click.stop="open = !open">
       <UserRound class="size-4" />
     </button>
     <div v-if="open" role="menu" class="card absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden p-1 shadow-xl">
       <div class="px-3 py-2 text-2xs text-ink-3">Signed in as <span class="font-medium text-ink-2">admin</span></div>
-      <button role="menuitem" class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-raised" @click="openPassword">
+      <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-raised" @click="openPassword">
         <KeyRound class="size-4 text-ink-3" />Change password
       </button>
-      <button role="menuitem" class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-raised" @click="signOut">
+      <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-raised" @click="signOut">
         <LogOut class="size-4 text-ink-3" />Sign out
       </button>
-      <button role="menuitem" class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] text-bad hover:bg-raised" @click="signOutEverywhere">
+      <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] text-bad hover:bg-raised" @click="signOutEverywhere">
         <MonitorX class="size-4" />Sign out everywhere
       </button>
     </div>

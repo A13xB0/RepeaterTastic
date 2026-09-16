@@ -33,7 +33,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               <p v-if="subtitle" class="mt-0.5 truncate text-[13px] text-ink-3">{{ subtitle }}</p>
             </slot>
           </div>
-          <button class="icon-btn -mr-1.5" aria-label="Close" @click="emit('close')"><X class="size-4" /></button>
+          <button type="button" class="icon-btn -mr-1.5" aria-label="Close" @click="emit('close')"><X class="size-4" /></button>
         </header>
         <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <slot />

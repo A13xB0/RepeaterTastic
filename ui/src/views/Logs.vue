@@ -74,6 +74,7 @@ const chipCls: Record<LogLevel, string> = {
         <div class="flex flex-wrap gap-1">
           <button
             v-for="l in LEVELS"
+            type="button"
             :key="l"
             :aria-pressed="enabled[l]"
             :class="['chip h-7 cursor-pointer rounded-lg px-2.5 text-xs transition-opacity', chipCls[l], enabled[l] ? '' : 'opacity-40 grayscale']"
@@ -84,11 +85,11 @@ const chipCls: Record<LogLevel, string> = {
         </div>
         <div class="relative min-w-40 flex-1 sm:max-w-72">
           <Search class="pointer-events-none absolute left-2.5 top-2 size-3.5 text-ink-3" />
-          <input v-model="q" class="input h-7 rounded-lg pl-8 text-xs" placeholder="Filter messages" />
+          <input id="logs-filter" v-model="q" aria-label="Filter messages" class="input h-7 rounded-lg pl-8 text-xs" placeholder="Filter messages" />
         </div>
         <div class="ml-auto flex gap-1.5">
-          <button class="btn btn-sm" @click="togglePause"><Play v-if="paused" class="size-3.5" /><Pause v-else class="size-3.5" />{{ paused ? 'Resume' : 'Pause' }}</button>
-          <button v-if="!follow" class="btn btn-sm" @click="follow = true; toEnd()"><ArrowDownToLine class="size-3.5" />Follow</button>
+          <button type="button" class="btn btn-sm" @click="togglePause"><Play v-if="paused" class="size-3.5" /><Pause v-else class="size-3.5" />{{ paused ? 'Resume' : 'Pause' }}</button>
+          <button type="button" v-if="!follow" class="btn btn-sm" @click="follow = true; toEnd()"><ArrowDownToLine class="size-3.5" />Follow</button>
         </div>
       </div>
       <div ref="box" class="mono scroll-thin min-h-0 flex-1 overflow-auto bg-sunken/50 py-2 text-[12px] leading-[1.65]" @scroll="onScroll">

@@ -48,7 +48,6 @@ type Identity struct {
 	OwnPosition *IdentityPosition
 	// PositionSecs is this identity's position broadcast interval (0 = the radio's).
 	PositionSecs uint32
-	MACAddr      []byte
 	// remote is the real node this identity stands for (nil = a virtual node run by the host).
 	remote Remote
 
@@ -86,7 +85,6 @@ func NewIdentity(priv []byte, longName, shortName string) (*Identity, error) {
 		PublicKey:  pub,
 		Enabled:    true,
 		CreatedAt:  time.Now(),
-		MACAddr:    mac,
 		User: &pb.User{
 			Id:        wire.NodeID(num),
 			LongName:  truncate(longName, 39),

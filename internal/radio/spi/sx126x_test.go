@@ -128,7 +128,7 @@ func openFake(t *testing.T, b Board) (*Radio, *fakeChip) {
 	if b.Module == "" {
 		b.Module = ModuleSX1262
 	}
-	r, err := newRadio(context.Background(), chip, b, t.Logf)
+	r, err := newRadio(chip, b, t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func openFake(t *testing.T, b Board) (*Radio, *fakeChip) {
 func TestOpenChecksTheChipAnswers(t *testing.T) {
 	chip := newFakeChip()
 	chip.answer = false
-	if _, err := newRadio(context.Background(), chip, Board{Module: ModuleSX1262}, t.Logf); err == nil {
+	if _, err := newRadio(chip, Board{Module: ModuleSX1262}, t.Logf); err == nil {
 		t.Fatal("opened a chip that reads all zeros")
 	}
 }

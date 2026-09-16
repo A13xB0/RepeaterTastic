@@ -72,7 +72,7 @@ primary channel becomes the new radio's. Connected apps reconnect, and unsent me
 
 - **Configuration → Radios → Add radio** ([Several radios](radios.md)).
 - **Configuration → MQTT → Add connection** ([MQTT](mqtt.md)).
-- **Configuration → Position & hardware** for the site position, broadcast interval and advertised hardware.
+- **Configuration → Position & hardware** for the site position (drop a pin on the map or type it in), broadcast interval and advertised hardware.
 
 ### API tokens and backups
 

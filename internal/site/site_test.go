@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
-	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func host(t *testing.T, preset pb.Config_LoRaConfig_ModemPreset, id string) *mesh.Host {
 	t.Helper()
-	h, err := mesh.NewHost(mesh.Config{Region: "EU_868", Preset: phy.Preset(preset), RadioID: id, StateDir: t.TempDir()}, null.New(), nil)
+	h, err := mesh.NewHost(mesh.Config{Region: "EU_868", Preset: preset, RadioID: id, StateDir: t.TempDir()}, null.New(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

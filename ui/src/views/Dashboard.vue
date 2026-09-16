@@ -195,7 +195,7 @@ const lastPacket = computed(() => packets.value[0])
         </div>
         <div class="flex items-center gap-2">
           <span v-if="paused" class="text-xs text-warn">Paused</span>
-          <button class="btn btn-sm" @click="togglePause">
+          <button type="button" class="btn btn-sm" @click="togglePause">
             <Play v-if="paused" class="size-3.5" /><Pause v-else class="size-3.5" />{{ paused ? 'Resume' : 'Pause' }}
           </button>
           <RouterLink to="/packets" class="btn btn-sm btn-ghost">Archive</RouterLink>

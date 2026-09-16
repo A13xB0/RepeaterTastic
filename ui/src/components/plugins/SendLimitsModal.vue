@@ -78,8 +78,8 @@ async function save() {
     </div>
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="busy || !valid" @click="save"><Spinner v-if="busy" />Save limits</button>
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="busy || !valid" @click="save"><Spinner v-if="busy" />Save limits</button>
     </template>
   </Modal>
 </template>

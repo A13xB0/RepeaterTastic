@@ -80,17 +80,18 @@ onBeforeUnmount(() => {
         <p class="page-sub">Programs that extend RepeaterTastic: uploaders, bots, dashboards. Each runs as its own program; its permissions limit what it gets from RepeaterTastic, so only install plugins you trust.</p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
+        <button type="button" class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
         <button
           v-if="data?.enabled"
+          type="button"
           class="btn btn-sm"
           :title="`Each plugin may send ${data.messages_per_hour} messages and ${data.traceroutes_per_hour} traceroutes an hour`"
           @click="limitsOpen = true"
         >
           <Gauge class="size-3.5" />Send limits
         </button>
-        <button v-if="data?.enabled" class="btn btn-sm" @click="attachOpen = true"><Link2 class="size-3.5" />Attach</button>
-        <button v-if="data?.enabled" class="btn btn-sm btn-primary" @click="installOpen = true"><Plus class="size-3.5" />Install plugin</button>
+        <button type="button" v-if="data?.enabled" class="btn btn-sm" @click="attachOpen = true"><Link2 class="size-3.5" />Attach</button>
+        <button type="button" v-if="data?.enabled" class="btn btn-sm btn-primary" @click="installOpen = true"><Plus class="size-3.5" />Install plugin</button>
       </div>
     </div>
 
@@ -112,8 +113,8 @@ onBeforeUnmount(() => {
         Install a plugin bundle (.zip) from your computer or a URL, drop one into the plugins folder, or attach a plugin that runs elsewhere.
       </p>
       <div class="mt-4 flex gap-2">
-        <button class="btn btn-primary" @click="installOpen = true"><Plus class="size-4" />Install plugin</button>
-        <button class="btn" @click="attachOpen = true"><Link2 class="size-4" />Attach</button>
+        <button type="button" class="btn btn-primary" @click="installOpen = true"><Plus class="size-4" />Install plugin</button>
+        <button type="button" class="btn" @click="attachOpen = true"><Link2 class="size-4" />Attach</button>
       </div>
     </div>
 

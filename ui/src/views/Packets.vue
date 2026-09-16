@@ -106,36 +106,36 @@ function reset() {
 
     <section class="card mb-4 p-3 sm:p-4">
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-        <input v-model="filters.q" class="input col-span-2 sm:col-span-3 lg:col-span-4 xl:col-span-2" placeholder="Search summary text" />
-        <select v-model="filters.node" class="input">
+        <input id="packets-search" v-model="filters.q" aria-label="Search packets" class="input col-span-2 sm:col-span-3 lg:col-span-4 xl:col-span-2" placeholder="Search summary text" />
+        <select id="packets-node" v-model="filters.node" aria-label="Node" class="input">
           <option value="">Any node</option>
           <option v-for="n in nodes" :key="n.node_id" :value="n.node_id">{{ n.short_name }} · {{ n.long_name }}</option>
         </select>
-        <select v-model="filters.port" class="input">
+        <select id="packets-port" v-model="filters.port" aria-label="Port" class="input">
           <option value="">Any port</option>
           <option v-for="p in PORTS" :key="p" :value="p">{{ portLabel(p) }}</option>
         </select>
-        <select v-model="filters.kind" class="input">
+        <select id="packets-kind" v-model="filters.kind" aria-label="Kind" class="input">
           <option value="">Any kind</option>
           <option v-for="k in KINDS" :key="k" :value="k">{{ k }}</option>
         </select>
-        <select v-model="filters.channel" class="input">
+        <select id="packets-channel" v-model="filters.channel" aria-label="Channel" class="input">
           <option value="">Any channel</option>
           <option v-for="c in channels" :key="c" :value="c">{{ c }}</option>
         </select>
         <div class="flex gap-2">
-          <select v-model="filters.range" class="input">
+          <select id="packets-range" v-model="filters.range" aria-label="Time range" class="input">
             <option v-for="r in RANGES" :key="r.id" :value="r.id">{{ r.label }}</option>
           </select>
         </div>
       </div>
       <div class="mt-2.5 flex flex-wrap items-center gap-2">
         <div class="seg">
-          <button :aria-pressed="filters.direction === ''" @click="filters.direction = ''">RX + TX</button>
-          <button :aria-pressed="filters.direction === 'rx'" @click="filters.direction = 'rx'">RX</button>
-          <button :aria-pressed="filters.direction === 'tx'" @click="filters.direction = 'tx'">TX</button>
+          <button type="button" :aria-pressed="filters.direction === ''" @click="filters.direction = ''">RX + TX</button>
+          <button type="button" :aria-pressed="filters.direction === 'rx'" @click="filters.direction = 'rx'">RX</button>
+          <button type="button" :aria-pressed="filters.direction === 'tx'" @click="filters.direction = 'tx'">TX</button>
         </div>
-        <button v-if="active" class="btn btn-sm btn-ghost" @click="reset"><RotateCcw class="size-3.5" />Clear {{ active }} filter{{ active === 1 ? '' : 's' }}</button>
+        <button type="button" v-if="active" class="btn btn-sm btn-ghost" @click="reset"><RotateCcw class="size-3.5" />Clear {{ active }} filter{{ active === 1 ? '' : 's' }}</button>
         <Spinner v-if="loading" class="ml-auto text-ink-3" />
       </div>
     </section>
@@ -143,7 +143,7 @@ function reset() {
     <section class="card overflow-hidden">
       <PacketTable :packets="list" :flash-seq="flashSeq" @select="selected = $event" />
       <div v-if="list.length" class="flex justify-center border-t border-line-soft p-3">
-        <button v-if="more" class="btn btn-sm" :disabled="loading" @click="load(true)"><Spinner v-if="loading" />Load older</button>
+        <button type="button" v-if="more" class="btn btn-sm" :disabled="loading" @click="load(true)"><Spinner v-if="loading" />Load older</button>
         <span v-else class="text-xs text-ink-3">End of archive</span>
       </div>
     </section>

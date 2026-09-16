@@ -337,6 +337,7 @@ async function finish() {
       <ol class="mb-4 flex items-center gap-1.5 overflow-x-auto pb-1">
         <li v-for="(label, i) in steps" :key="label" class="flex shrink-0 items-center gap-1.5">
           <button
+            type="button"
             :disabled="i > step"
             :class="['flex items-center gap-2 rounded-full py-1 pl-1 pr-3 text-xs font-medium transition-colors', i === step ? 'bg-brand/12 text-ink' : i < step ? 'text-ink-2 hover:bg-sunken' : 'text-ink-3']"
             @click="step = i"
@@ -431,8 +432,8 @@ async function finish() {
               </div>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
-              <button class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
-              <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />{{ usingNode || usingBoard ? 'Test board' : 'Detect' }}</button>
+              <button type="button" class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
+              <button type="button" class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />{{ usingNode || usingBoard ? 'Test board' : 'Detect' }}</button>
 
             </div>
             <div v-if="probe" :class="['mt-3 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[13px]', probe.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
@@ -468,7 +469,7 @@ async function finish() {
             <div class="mt-4 rounded-xl border border-line-soft px-3.5 py-3">
               <div class="flex items-center justify-between gap-2">
                 <div class="eyebrow">Found on this machine</div>
-                <button class="btn btn-sm" :disabled="loadingRuntimes" @click="loadRuntimes"><RefreshCw :class="['size-3.5', loadingRuntimes && 'animate-spin']" />Look again</button>
+                <button type="button" class="btn btn-sm" :disabled="loadingRuntimes" @click="loadRuntimes"><RefreshCw :class="['size-3.5', loadingRuntimes && 'animate-spin']" />Look again</button>
               </div>
               <div v-if="!runtimes" class="mt-2 flex items-center gap-2 text-[13px] text-ink-3"><Spinner v-if="loadingRuntimes" />{{ loadingRuntimes ? 'Looking for meshtasticd and Docker…' : 'Couldn’t check this machine.' }}</div>
               <ul v-else class="mt-2 space-y-1.5 text-[13px]">
@@ -514,7 +515,7 @@ async function finish() {
                   </div>
                   <input v-if="hostedVia === 'exec'" id="setup-hosted-bin" v-model="hostedBinary" class="input h-8 mono min-w-0 flex-1 text-xs" :placeholder="canInstalled || !runtimes ? 'meshtasticd (on PATH) or /usr/bin/meshtasticd' : 'where it is, e.g. /opt/meshtasticd/bin/meshtasticd'" spellcheck="false" aria-label="meshtasticd program" />
                   <input v-else id="setup-hosted-image" v-model="hostedImage" class="input h-8 mono min-w-0 flex-1 text-xs" spellcheck="false" aria-label="meshtasticd image" />
-                  <button class="btn btn-sm" :disabled="checkingHosted" @click="checkHosted"><Spinner v-if="checkingHosted" />Check</button>
+                  <button type="button" class="btn btn-sm" :disabled="checkingHosted" @click="checkHosted"><Spinner v-if="checkingHosted" />Check</button>
                 </div>
                 <p v-if="hostedVia === 'exec' && runtimes && !runtimes.meshtasticd.found && !hostedCheck" class="hint !mt-1">Not found on the PATH. If it's installed somewhere else, enter the full path to the meshtasticd program and check it.</p>
                 <div v-if="hostedCheck" :class="['flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-[13px]', hostedCheck.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
@@ -540,8 +541,8 @@ async function finish() {
               </div>
               <table class="mt-2 w-full text-xs">
                 <tbody>
-                  <tr class="border-b border-line-soft"><td class="py-1.5 font-medium">Relay persona</td><td class="py-1.5 text-ink-3">{{ usingNode ? 'the board (Meshtastic firmware)' : hostedCheck?.ok ? `meshtasticd ${hostedCheck.version}` : 'meshtasticd' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
-                  <tr><td class="py-1.5 font-medium">Your identities</td><td class="py-1.5 text-ink-3">meshtasticd, one each</td><td class="py-1.5 text-right"><span :class="['chip', identityHops ? 'bg-warn/15 text-warn' : 'bg-brand/12 text-brand']">{{ identityHops }} hop{{ identityHops === 1 ? '' : 's' }}</span></td></tr>
+                  <tr class="border-b border-line-soft"><th scope="row" class="py-1.5 text-left font-medium">Relay persona</th><td class="py-1.5 text-ink-3">{{ usingNode ? 'the board (Meshtastic firmware)' : hostedCheck?.ok ? `meshtasticd ${hostedCheck.version}` : 'meshtasticd' }}</td><td class="py-1.5 text-right"><span class="chip bg-brand/12 text-brand">0 hops</span></td></tr>
+                  <tr><th scope="row" class="py-1.5 text-left font-medium">Your identities</th><td class="py-1.5 text-ink-3">meshtasticd, one each</td><td class="py-1.5 text-right"><span :class="['chip', identityHops ? 'bg-warn/15 text-warn' : 'bg-brand/12 text-brand']">{{ identityHops }} hop{{ identityHops === 1 ? '' : 's' }}</span></td></tr>
                 </tbody>
               </table>
               <p v-if="usingNode" class="mt-2 text-2xs text-ink-3">The board repeats your identities' packets onto the air, so the mesh hears them one hop away. Its role must be one that repeats (Client or Router), and its MQTT module is used for this.</p>
@@ -573,6 +574,7 @@ async function finish() {
               <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                 <button
                   v-for="p in regionInfo?.presets ?? ['LONG_FAST']"
+                  type="button"
                   :key="p"
                   :class="['rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors', preset === p ? 'border-brand/60 bg-brand/10 text-ink' : 'border-line text-ink-2 hover:bg-raised']"
                   @click="preset = p"
@@ -611,6 +613,7 @@ async function finish() {
             <div class="mt-4 grid gap-2 sm:grid-cols-3">
               <button
                 v-for="r in roles"
+                type="button"
                 :id="`role-${r.id}`"
                 :key="r.id"
                 :class="['rounded-xl border p-3.5 text-left transition-colors', role === r.id ? 'border-brand/60 bg-brand/8' : 'border-line hover:bg-raised']"
@@ -665,9 +668,9 @@ async function finish() {
         </div>
 
         <div class="flex items-center justify-between gap-2 border-t border-line-soft px-5 py-3 sm:px-7">
-          <button class="btn btn-ghost" :disabled="step === 0" @click="step--">Back</button>
-          <button v-if="step < steps.length - 1" class="btn btn-primary" :disabled="!canNext" @click="step++">Continue</button>
-          <button v-else class="btn btn-primary" :disabled="finishing" @click="finish"><Spinner v-if="finishing" />Finish setup</button>
+          <button type="button" class="btn btn-ghost" :disabled="step === 0" @click="step--">Back</button>
+          <button type="button" v-if="step < steps.length - 1" class="btn btn-primary" :disabled="!canNext" @click="step++">Continue</button>
+          <button type="button" v-else class="btn btn-primary" :disabled="finishing" @click="finish"><Spinner v-if="finishing" />Finish setup</button>
         </div>
       </div>
     </div>

@@ -157,8 +157,8 @@ async function save() {
     </div>
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="saving || !form.long_name.trim()" @click="save"><Spinner v-if="saving" />Save changes</button>
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="saving || !form.long_name.trim()" @click="save"><Spinner v-if="saving" />Save changes</button>
     </template>
   </Modal>
 </template>

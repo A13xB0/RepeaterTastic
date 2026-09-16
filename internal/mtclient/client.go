@@ -721,7 +721,7 @@ func mergeOneof(dst, src proto.Message) {
 		return
 	}
 	dr := dst.ProtoReflect()
-	df := dr.Descriptor().Fields().ByName(protoreflect.Name(f.Name()))
+	df := dr.Descriptor().Fields().ByName(f.Name())
 	if df == nil || df.Message() == nil || df.Message().FullName() != f.Message().FullName() {
 		return
 	}

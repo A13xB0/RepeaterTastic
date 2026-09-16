@@ -97,6 +97,7 @@ func (x *Hosting) HostIdentity(ctx context.Context, h *mesh.Host, rec mesh.Ident
 		in = Instance{Name: x.opts.Radio + "-" + nodeID, Dir: filepath.Join(x.opts.Dir, nodeID),
 			Port: x.opts.PortBase + slot, HWID: HWIDFor(x.opts.Radio + "/" + nodeID)}
 	}
+	// The node lives as long as the hosting (x.ctx), not the request that started it.
 	hn, err := StartHosted(x.ctx, x.opts.Launcher, in, x.opts.Logf)
 	if err != nil {
 		return nil, err

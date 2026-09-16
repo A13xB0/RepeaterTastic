@@ -265,7 +265,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
                 {{ i.long_name }} ({{ i.short_name }}){{ i.is_relay ? ' · relay persona' : '' }}{{ i.enabled ? '' : ' · disabled' }}{{ i.unread ? ` · ${i.unread} unread` : '' }}
               </option>
             </select>
-            <button class="btn shrink-0 px-2.5" title="New direct message" @click="newDm = true"><MessageCirclePlus class="size-4" /></button>
+            <button type="button" class="btn shrink-0 px-2.5" title="New direct message" @click="newDm = true"><MessageCirclePlus class="size-4" /></button>
           </div>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto p-1.5">
@@ -274,6 +274,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
           </div>
           <button
             v-for="c in conversations"
+            type="button"
             :key="c.key"
             :class="['flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors', c.key === convKey ? 'bg-brand/10' : 'hover:bg-sunken']"
             @click="openConv(c.key)"
@@ -301,7 +302,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
       <section :class="['flex min-w-0 flex-1 flex-col', !convKey ? 'max-md:hidden' : '']">
         <template v-if="current">
           <header class="flex items-center gap-3 border-b border-line-soft px-3 py-2.5 sm:px-4">
-            <button class="icon-btn md:hidden" aria-label="Back to conversations" @click="router.push({ name: 'chat', params: { identity: identityId } })">
+            <button type="button" class="icon-btn md:hidden" aria-label="Back to conversations" @click="router.push({ name: 'chat', params: { identity: identityId } })">
               <ArrowLeft class="size-4" />
             </button>
             <span v-if="current.kind === 'channel'" class="flex h-8 min-w-11 items-center justify-center rounded-lg bg-brand/12 text-brand"><Hash class="size-4" /></span>
@@ -314,7 +315,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
 
           <div ref="scroller" class="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5">
             <div v-if="hasOlder" class="mb-3 flex justify-center">
-              <button class="btn btn-sm" :disabled="loadingMsgs" @click="loadMessages(true)"><Spinner v-if="loadingMsgs" />Load older</button>
+              <button type="button" class="btn btn-sm" :disabled="loadingMsgs" @click="loadMessages(true)"><Spinner v-if="loadingMsgs" />Load older</button>
             </div>
             <div v-if="loadingMsgs && !messages.length" class="flex justify-center py-10 text-ink-3"><Spinner /></div>
             <div v-else-if="!messages.length" class="empty h-full">
@@ -368,7 +369,9 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
             <div class="flex items-end gap-2">
               <div class="relative min-w-0 flex-1">
                 <textarea
+                  id="chat-composer"
                   ref="composer"
+                  aria-label="Message"
                   v-model="text"
                   rows="1"
                   class="input max-h-32 min-h-9 resize-none pr-14 leading-snug"
@@ -377,7 +380,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
                 />
                 <span :class="['pointer-events-none absolute bottom-2.5 right-3 text-2xs tabular-nums', bytes > 200 ? 'text-bad' : 'text-ink-3']">{{ bytes }}/200</span>
               </div>
-              <button class="btn btn-primary h-9 shrink-0 px-3" :disabled="!canSend" aria-label="Send">
+              <button type="submit" class="btn btn-primary h-9 shrink-0 px-3" :disabled="!canSend" aria-label="Send">
                 <Spinner v-if="sending" /><Send v-else class="size-4" />
               </button>
             </div>
@@ -393,11 +396,12 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
     <Modal :open="newDm" title="New direct message" :subtitle="identity ? `from ${identity.long_name}` : ''" @close="newDm = false">
       <div class="relative mb-3">
         <Search class="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-3" />
-        <input v-model="dmSearch" class="input pl-9" placeholder="Search nodes by name or id" autofocus />
+        <input id="dm-search" v-model="dmSearch" aria-label="Search nodes" class="input pl-9" placeholder="Search nodes by name or id" autofocus />
       </div>
       <div class="-mx-2 max-h-80 overflow-y-auto">
         <button
           v-for="n in dmCandidates"
+          type="button"
           :key="n.node_id"
           class="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left hover:bg-sunken"
           @click="startDm(n.node_id)"

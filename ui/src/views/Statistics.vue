@@ -109,7 +109,7 @@ const windows: { id: StatsWindow; label: string }[] = [
         <p class="page-sub">Who is using the shared airtime, and how the channel is doing</p>
       </div>
       <div class="seg" role="group" aria-label="Window">
-        <button v-for="w in windows" :key="w.id" :aria-pressed="win === w.id" :disabled="loading" @click="win = w.id">{{ w.label }}</button>
+        <button type="button" v-for="w in windows" :key="w.id" :aria-pressed="win === w.id" :disabled="loading" @click="win = w.id">{{ w.label }}</button>
       </div>
     </div>
 

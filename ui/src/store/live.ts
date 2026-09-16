@@ -118,6 +118,7 @@ export function upsertIdentity(i: Identity) {
   // keep the cross-radio list current too
   const ai = live.allIdentities.findIndex((x) => x.node_id === i.node_id)
   if (ai >= 0) live.allIdentities[ai] = i
+  else if (live.radios.length > 1) live.allIdentities.push(i)
   const idx = live.identities.findIndex((x) => x.node_id === i.node_id)
   if (idx >= 0) live.identities[idx] = i
   // an identity created or moved onto another radio doesn't join this radio's list
@@ -126,6 +127,7 @@ export function upsertIdentity(i: Identity) {
 
 export function removeIdentity(id: string) {
   live.identities = live.identities.filter((i) => i.node_id !== id)
+  live.allIdentities = live.allIdentities.filter((i) => i.node_id !== id)
 }
 
 export async function refreshStatus() {

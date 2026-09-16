@@ -92,7 +92,6 @@ func (id *Identity) applyRemoteState(st RemoteState) {
 		id.User = proto.Clone(st.User).(*pb.User)
 		id.User.Id = wire.NodeID(id.NodeNum)
 		id.PublicKey = st.User.GetPublicKey()
-		id.MACAddr = st.User.GetMacaddr()
 	}
 	if id.User == nil {
 		id.User = &pb.User{Id: wire.NodeID(id.NodeNum)}
@@ -171,7 +170,7 @@ func (h *Host) sendRemote(from *Identity, r Remote, p *pb.MeshPacket) error {
 	h.Counters.Tx.Add(1)
 	rec := h.baseRecord(p, nil, "tx", "sent")
 	rec.Size = 0
-	h.fillRecordFromDecoded(&rec, p, decodeResult{ok: true, data: p.GetDecoded(), pki: p.To != wire.Broadcast && p.Channel == 0})
+	h.fillRecordFromDecoded(&rec, decodeResult{ok: true, data: p.GetDecoded(), pki: p.To != wire.Broadcast && p.Channel == 0})
 	h.remoteChannel(&rec, from, p)
 	h.publishPacket(rec)
 	return nil
@@ -208,7 +207,7 @@ func (h *Host) RemoteReceived(id *Identity, p *pb.MeshPacket) {
 	if h.remoteOnly() { // with an air bridge the host logs the frame itself
 		rec := h.baseRecord(p, nil, "rx", "delivered")
 		rec.Size = 0
-		h.fillRecordFromDecoded(&rec, p, dec)
+		h.fillRecordFromDecoded(&rec, dec)
 		h.remoteChannel(&rec, id, p)
 		if p.From == id.NodeNum {
 			rec.Direction, rec.Kind = "local", "local" // the node talking to its own client

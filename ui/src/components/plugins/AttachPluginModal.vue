@@ -81,8 +81,8 @@ async function attach() {
 
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
-      <button class="btn" @click="emit('close')">{{ result ? 'Done' : 'Cancel' }}</button>
-      <button v-if="!result" class="btn btn-primary" :disabled="busy || !idOk" @click="attach"><Spinner v-if="busy" />Attach</button>
+      <button type="button" class="btn" @click="emit('close')">{{ result ? 'Done' : 'Cancel' }}</button>
+      <button type="button" v-if="!result" class="btn btn-primary" :disabled="busy || !idOk" @click="attach"><Spinner v-if="busy" />Attach</button>
     </template>
   </Modal>
 </template>
