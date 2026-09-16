@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,14 +59,16 @@ func TCPAddress(addr string) (string, error) {
 	if addr == "" {
 		return "", errors.New("mtclient: empty address")
 	}
-	if _, _, err := net.SplitHostPort(addr); err == nil {
-		return addr, nil
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		bare := addr
+		if strings.Count(addr, ":") > 1 && !strings.HasPrefix(addr, "[") { // bare IPv6
+			bare = "[" + addr + "]"
+		}
+		host, port, err = net.SplitHostPort(fmt.Sprintf("%s:%d", bare, DefaultPort))
 	}
-	if strings.Count(addr, ":") > 1 && !strings.HasPrefix(addr, "[") { // bare IPv6
-		addr = "[" + addr + "]"
-	}
-	host, port, err := net.SplitHostPort(fmt.Sprintf("%s:%d", addr, DefaultPort))
-	if err != nil || host == "" {
+	if n, perr := strconv.Atoi(port); err != nil || host == "" || perr != nil || n < 1 || n > 65535 ||
+		(strings.Contains(host, ":") && net.ParseIP(host) == nil) {
 		return "", fmt.Errorf("mtclient: bad address %q", addr)
 	}
 	return net.JoinHostPort(host, port), nil
@@ -307,7 +310,7 @@ func (c *Client) write(conn io.Writer, tr *pb.ToRadio) error {
 	if err != nil {
 		return err
 	}
-	frame, err := appendFrame(nil, b)
+	frame, err := AppendFrame(nil, b)
 	if err != nil {
 		return err
 	}
@@ -517,7 +520,7 @@ func (c *Client) session(ctx context.Context) (configured bool, err error) {
 		}
 	}()
 
-	rerr := readFrames(conn, func(b []byte) bool {
+	rerr := ReadFrames(conn, func(b []byte) bool {
 		fr := &pb.FromRadio{}
 		if proto.Unmarshal(b, fr) != nil {
 			return true

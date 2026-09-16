@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
@@ -208,9 +209,11 @@ func (c *Config) validateRadios() error {
 				return fmt.Errorf("radios[%s]: %w", rc.ID, err)
 			}
 		}
-		if (rc.Radio.Driver == "kiss" || rc.Radio.Driver == "spi") && rc.Radio.Device != "" {
+		if (rc.Radio.Driver == "kiss" || rc.Radio.Driver == "spi" || rc.Radio.Driver == "meshtastic") && rc.Radio.Device != "" {
 			dev := rc.Radio.Device
-			if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
+			if addr, err := mtclient.TCPAddress(dev); rc.Radio.Driver == "meshtastic" && !strings.HasPrefix(dev, "/dev/") && err == nil {
+				dev = strings.ToLower(addr) // one node, one client
+			} else if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
 				dev = real
 			}
 			if other, ok := seenDev[dev]; ok {
@@ -232,9 +235,10 @@ func (c *Config) validateRadios() error {
 }
 
 type Radio struct {
-	Driver string `yaml:"driver" json:"driver"` // kiss | spi | sim | none
+	Driver string `yaml:"driver" json:"driver"` // kiss | spi | meshtastic | sim | none
 	// Device is the serial port for kiss. For spi it is a meshtasticd board file
-	// (/etc/meshtasticd/config.d/lora-….yaml), a built-in board name, or auto.
+	// (/etc/meshtasticd/config.d/lora-….yaml), a built-in board name, or auto. For meshtastic it is
+	// the board's serial port or a meshtasticd address (host or host:port).
 	Device string `yaml:"device" json:"device"`
 	Baud   int    `yaml:"baud" json:"baud"`
 }
@@ -617,8 +621,18 @@ func (c *Config) validateOne() error {
 		if strings.TrimSpace(c.Radio.Device) == "" {
 			return errors.New("radio.driver spi needs radio.device: a meshtasticd board file, a built-in board name such as MeshAdv-900M30S, or auto")
 		}
+	case "meshtastic":
+		dev := strings.TrimSpace(c.Radio.Device)
+		if dev == "" {
+			return errors.New("radio.driver meshtastic needs radio.device: the board's serial port (/dev/ttyACM0, /dev/serial/by-id/…) or a meshtasticd address (host or host:port)")
+		}
+		if !strings.HasPrefix(dev, "/dev/") {
+			if _, err := mtclient.TCPAddress(dev); err != nil {
+				return fmt.Errorf("radio.device: %w", err)
+			}
+		}
 	default:
-		return fmt.Errorf("radio.driver must be kiss, spi or none, not %q", c.Radio.Driver)
+		return fmt.Errorf("radio.driver must be kiss, spi, meshtastic or none, not %q", c.Radio.Driver)
 	}
 	if name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel)); name != "" && name != "AUTO" {
 		if _, ok := pb.HardwareModel_value[name]; !ok {

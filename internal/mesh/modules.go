@@ -24,20 +24,7 @@ func (h *Host) runModules(id *Identity, p *pb.MeshPacket) *pb.MeshPacket {
 	toUs := p.To == id.NodeNum
 	switch d.Portnum {
 	case pb.PortNum_TEXT_MESSAGE_APP:
-		m := &Message{ID: p.Id, From: wire.NodeID(p.From), To: wire.NodeID(p.To), Channel: int(p.Channel),
-			Text: string(d.Payload), Time: time.Now().UnixMilli(), Direction: "in", Status: "received", PKI: p.PkiEncrypted,
-			SNR: p.RxSnr, Hops: wire.HopsAway(p)}
-		if h.multiRadioOf(id) != nil {
-			m.Radio = h.RadioID()
-		}
-		if p.RxRssi != nil {
-			m.RSSI = *p.RxRssi
-		}
-		if p.To == wire.Broadcast {
-			m.To = "!ffffffff"
-		}
-		h.storeFor(id).Add(id.NodeNum, m)
-		h.publishMessage(id, *m)
+		h.storeIncomingText(id, p)
 
 	case pb.PortNum_NODEINFO_APP:
 		if d.WantResponse && p.From != id.NodeNum && h.Identity(p.From) == nil {
@@ -208,6 +195,9 @@ func (h *Host) replyNodeInfo(id *Identity, req *pb.MeshPacket) {
 func (h *Host) periodicNodeInfo(now time.Time) {
 	interval := h.Config().NodeInfoInterval
 	for _, id := range h.Identities() {
+		if id.Remote() != nil {
+			continue // the node announces itself
+		}
 		id.mu.Lock()
 		due := id.Enabled && !id.nextNodeInfo.IsZero() && !now.Before(id.nextNodeInfo)
 		if due {

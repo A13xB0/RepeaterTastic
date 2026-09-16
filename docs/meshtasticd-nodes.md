@@ -12,6 +12,10 @@ Meshtastic firmware through the client API, the protocol the apps use:
   radio (a KISS modem or the `spi` driver) and everything the radio hears is fed back to them, the
   way Meshtasticator connects simulated nodes.
 
+**Status:** attached nodes work (`radio.driver: meshtastic`, see
+[Nodes running Meshtastic firmware](hardware.md#nodes-running-meshtastic-firmware)). Hosted nodes
+are next.
+
 This page records what the firmware does, as measured, so the design rests on facts. The work is
 tracked in the epic pull request, [ScotMesh/RepeaterTastic#5](https://github.com/ScotMesh/RepeaterTastic/pull/5).
 
@@ -79,3 +83,23 @@ payload is a `Compressed` message:
 
 Injecting the same shape with `rx_rssi`, `rx_snr` and `rx_time` set makes the instance treat it as a
 frame heard off air.
+
+## Attached nodes: how they fit
+
+- `internal/nodes.Attached` is both the radio and the one identity's `mesh.Remote`. The identity is
+  the node: no private key, its user and channels mirrored from the node after every handshake.
+- `mesh.Host` hands a remote identity's sends to the node (`from` 0, the node fills it in) and takes
+  what the node delivers through `Host.RemoteReceived`: messages, ACK/NAK results, node DB updates,
+  traceroute results, the packet log and app clients. It never answers NodeInfo, position or admin
+  requests for the node, and ignores frames a link would inject.
+- Settings go both ways: `Host.UpdateConfig` writes region, preset, frequency slot, power, hop limit,
+  primary channel name and role to the node in one `begin_edit_settings` … `commit_edit_settings`
+  transaction; after each handshake the node's settings are mirrored into the host
+  (`Host.MirrorConfig`) and the config file.
+- App clients on the identity's port have admin messages to the node forwarded to it, so the app
+  edits the real node.
+- The node's last state is kept in `attached-node.json` in the radio's state dir. With neither the
+  node nor saved state, a placeholder identity stands in and is swapped for the real one
+  (`Host.SwapRemote`) when the node first answers.
+- A sim-radio meshtasticd hands its own transmissions to the client as `SIMULATOR_APP` packets;
+  nothing bridges them on an attached radio, so they are dropped.

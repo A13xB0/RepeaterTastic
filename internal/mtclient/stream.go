@@ -28,8 +28,8 @@ var wakeup = func() []byte {
 
 var errFrameTooBig = errors.New("mtclient: frame larger than 512 bytes")
 
-// appendFrame appends one framed payload to dst.
-func appendFrame(dst, payload []byte) ([]byte, error) {
+// AppendFrame appends one framed payload to dst.
+func AppendFrame(dst, payload []byte) ([]byte, error) {
 	if len(payload) > MaxFrame {
 		return dst, errFrameTooBig
 	}
@@ -37,9 +37,9 @@ func appendFrame(dst, payload []byte) ([]byte, error) {
 	return append(dst, payload...), nil
 }
 
-// readFrames calls fn with each frame's payload until fn returns false or r fails. Bytes outside
+// ReadFrames calls fn with each frame's payload until fn returns false or r fails. Bytes outside
 // frames (a serial console's log text) are skipped, and so are oversize frames.
-func readFrames(r io.Reader, fn func([]byte) bool) error {
+func ReadFrames(r io.Reader, fn func([]byte) bool) error {
 	br := bufio.NewReader(r)
 	for {
 		b, err := br.ReadByte()

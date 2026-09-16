@@ -738,6 +738,9 @@ func (h *Host) SaveIdentities() error {
 	}
 	var recs []IdentityRecord
 	for _, id := range h.Identities() {
+		if id.Remote() != nil {
+			continue // a real node keeps its own identity
+		}
 		recs = append(recs, id.Record())
 	}
 	return writeJSONAtomic(filepath.Join(h.stateDir, "identities.json"), recs)
@@ -759,6 +762,25 @@ func clonePacket(p *pb.MeshPacket) *pb.MeshPacket { return proto.Clone(p).(*pb.M
 // primary channel, frequency, power) the radio is retuned and every identity's primary channel
 // name follows.
 func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
+	if err := h.MirrorConfig(ctx, cfg); err != nil {
+		return err
+	}
+	if ca, ok := h.radio.(ConfigApplier); ok {
+		if err := ca.ApplyConfig(ctx, h.Config()); err != nil {
+			return fmt.Errorf("settings saved but the node didn't take them: %w", err)
+		}
+	}
+	return nil
+}
+
+// ConfigApplier is a radio that keeps its own copy of the host settings: a real Meshtastic node.
+type ConfigApplier interface {
+	ApplyConfig(ctx context.Context, cfg Config) error
+}
+
+// MirrorConfig applies a host configuration without handing it to a ConfigApplier radio (the
+// settings came from there).
+func (h *Host) MirrorConfig(ctx context.Context, cfg Config) error {
 	if cfg.HopLimit == 0 || cfg.HopLimit > wire.HopMax {
 		cfg.HopLimit = defaultHopLimit
 	}

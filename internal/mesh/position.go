@@ -147,7 +147,7 @@ func (h *Host) RecordOwnPositions() {
 func (h *Host) periodicPosition(now time.Time) {
 	for _, id := range h.Identities() {
 		pos, ok := h.positionFor(id)
-		if !id.Enabled || !ok {
+		if !id.Enabled || !ok || id.Remote() != nil {
 			continue
 		}
 		id.mu.Lock()
