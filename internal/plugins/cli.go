@@ -45,137 +45,130 @@ func CLI(cfg *config.Config, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer chownLike(dir)
-	need := func(n int) error {
-		if len(args) < n+1 {
-			return fmt.Errorf("%s needs %d argument(s)\n\n%s", args[0], n, cliUsage)
-		}
-		return nil
-	}
 	switch args[0] {
 	case "list", "ls":
-		tw := tabwriter.NewWriter(stdout, 2, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tVERSION\tKIND\tSWITCH\tGRANTED")
-		for _, in := range m.List() {
-			var granted []string
-			for _, p := range in.Permissions {
-				if p.Granted {
-					granted = append(granted, p.Key)
-				}
-			}
-			// This process isn't the daemon, so it can only say whether a plugin is on and whether
-			// something stops it running.
-			state := "off"
-			if in.Enabled {
-				state = "on"
-			}
-			switch in.State {
-			case "needs_review", "needs_settings", "unsupported", "waiting":
-				state += ", " + strings.ReplaceAll(in.State, "_", " ")
-			}
-			if in.Pinned {
-				state += " (config file)"
-			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", in.ID, in.Name, in.Version, in.Kind, state, strings.Join(granted, ","))
-		}
-		return tw.Flush()
+		return cliList(m, stdout)
 	case "permissions":
 		for _, k := range sortedKeys(Permissions) {
 			fmt.Fprintf(stdout, "%-16s %s\n", k, Permissions[k])
 		}
 		return nil
-	case "install":
-		if err := need(1); err != nil {
-			return err
-		}
-		return cliInstall(m, args[1], stdout)
-	case "enable":
-		if err := need(1); err != nil {
-			return err
-		}
-		in, err := m.Get(args[1])
-		if err != nil {
-			return err
-		}
-		granted := args[2:]
-		if len(granted) == 1 && granted[0] == "all" {
-			granted = nil
-			for _, p := range in.Permissions {
-				granted = append(granted, p.Key)
-			}
-		}
-		if err := m.Enable(args[1], granted); err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "%s enabled with %s\n", in.Name, permList(granted))
-		return nil
-	case "disable":
-		if err := need(1); err != nil {
-			return err
-		}
-		if err := m.Disable(args[1]); err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "%s disabled\n", args[1])
-		return nil
-	case "remove", "rm":
-		fsx := flag.NewFlagSet("remove", flag.ContinueOnError)
-		keep := fsx.Bool("keep-data", false, "keep the plugin's data folder")
-		if err := need(1); err != nil {
-			return err
-		}
-		id := args[1]
-		if err := fsx.Parse(args[2:]); err != nil {
-			return err
-		}
-		if err := m.Remove(id, *keep); err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "%s removed\n", id)
-		return nil
 	}
-	return fmt.Errorf("unknown command %q\n\n%s", args[0], cliUsage)
+	run, ok := cliCommands[args[0]]
+	if !ok {
+		return fmt.Errorf("unknown command %q\n\n%s", args[0], cliUsage)
+	}
+	if len(args) < 2 {
+		return fmt.Errorf("%s needs %d argument(s)\n\n%s", args[0], 1, cliUsage)
+	}
+	return run(m, args[1], args[2:], stdout)
+}
+
+// cliCommands are the commands that act on one plugin (or bundle): the argument, then the rest.
+var cliCommands = map[string]func(m *Manager, arg string, rest []string, stdout io.Writer) error{
+	"install": func(m *Manager, src string, _ []string, stdout io.Writer) error {
+		return cliInstall(m, src, stdout)
+	},
+	"enable":  cliEnable,
+	"disable": cliDisable,
+	"remove":  cliRemove,
+	"rm":      cliRemove,
+}
+
+// cliList prints the installed plugins as a table.
+func cliList(m *Manager, stdout io.Writer) error {
+	tw := tabwriter.NewWriter(stdout, 2, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tVERSION\tKIND\tSWITCH\tGRANTED")
+	for _, in := range m.List() {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", in.ID, in.Name, in.Version, in.Kind, cliSwitch(in), strings.Join(grantedKeys(in), ","))
+	}
+	return tw.Flush()
+}
+
+// cliSwitch describes a plugin's switch. This process isn't the daemon, so it can only say whether
+// a plugin is on and whether something stops it running.
+func cliSwitch(in Info) string {
+	state := "off"
+	if in.Enabled {
+		state = "on"
+	}
+	switch in.State {
+	case "needs_review", "needs_settings", "unsupported", "waiting":
+		state += ", " + strings.ReplaceAll(in.State, "_", " ")
+	}
+	if in.Pinned {
+		state += " (config file)"
+	}
+	return state
+}
+
+// grantedKeys lists the permissions the plugin has been granted.
+func grantedKeys(in Info) []string {
+	var granted []string
+	for _, p := range in.Permissions {
+		if p.Granted {
+			granted = append(granted, p.Key)
+		}
+	}
+	return granted
+}
+
+// cliEnable turns a plugin on with the listed permissions ("all" for every one it asks for).
+func cliEnable(m *Manager, id string, granted []string, stdout io.Writer) error {
+	in, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	if len(granted) == 1 && granted[0] == "all" {
+		granted = nil
+		for _, p := range in.Permissions {
+			granted = append(granted, p.Key)
+		}
+	}
+	if err := m.Enable(id, granted); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%s enabled with %s\n", in.Name, permList(granted))
+	return nil
+}
+
+// cliDisable turns a plugin off.
+func cliDisable(m *Manager, id string, _ []string, stdout io.Writer) error {
+	if err := m.Disable(id); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%s disabled\n", id)
+	return nil
+}
+
+// cliRemove deletes a plugin, and its data folder unless -keep-data is given.
+func cliRemove(m *Manager, id string, rest []string, stdout io.Writer) error {
+	fsx := flag.NewFlagSet("remove", flag.ContinueOnError)
+	keep := fsx.Bool("keep-data", false, "keep the plugin's data folder")
+	if err := fsx.Parse(rest); err != nil {
+		return err
+	}
+	if err := m.Remove(id, *keep); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%s removed\n", id)
+	return nil
 }
 
 // cliInstall installs directly, or hands the bundle to a running daemon through the inbox so it
 // can stop the old version first.
 func cliInstall(m *Manager, src string, stdout io.Writer) error {
-	var f *os.File
-	var err error
-	if strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "http://") {
-		if f, err = Download(context.Background(), src, filepath.Join(m.inboxDir(), ".tmp")); err != nil {
-			return err
-		}
-		defer os.Remove(f.Name())
-	} else if f, err = os.Open(src); err != nil {
+	f, done, err := openBundle(m, src)
+	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer done()
 	st, err := f.Stat()
 	if err != nil {
 		return err
 	}
 	if daemonRunning(m.socketPath()) {
-		dst := filepath.Join(m.inboxDir(), bundleName(src))
-		if !strings.HasSuffix(strings.ToLower(dst), ".zip") {
-			dst += ".zip"
-		}
-		out, err := os.Create(dst + ".part")
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(out, io.NewSectionReader(f, 0, st.Size())); err != nil {
-			out.Close()
-			return err
-		}
-		if err := out.Close(); err != nil {
-			return err
-		}
-		if err := os.Rename(dst+".part", dst); err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "Handed %s to the running RepeaterTastic; it installs within a few seconds.\n", bundleName(src))
-		fmt.Fprintf(stdout, "Rejected bundles go to %s with the reason.\n", filepath.Join(m.inboxDir(), ".rejected"))
-		return nil
+		return handToDaemon(m, src, io.NewSectionReader(f, 0, st.Size()), stdout)
 	}
 	man, err := m.Install(f, st.Size(), "cli")
 	if err != nil {
@@ -183,6 +176,55 @@ func cliInstall(m *Manager, src string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Installed %s %s (%s). It is off: repeatertastic plugin enable %s all\n", man.Name, man.Version, man.ID, man.ID)
 	return nil
+}
+
+// openBundle opens a bundle file, or downloads one from a URL; done closes it and removes any
+// download.
+func openBundle(m *Manager, src string) (f *os.File, done func(), err error) {
+	if !isHTTPURL(src) {
+		if f, err = os.Open(src); err != nil {
+			return nil, nil, err
+		}
+		return f, func() { f.Close() }, nil
+	}
+	if f, err = Download(context.Background(), src, filepath.Join(m.inboxDir(), ".tmp")); err != nil {
+		return nil, nil, err
+	}
+	return f, func() {
+		f.Close()
+		os.Remove(f.Name())
+	}, nil
+}
+
+// handToDaemon drops the bundle into the inbox for the running daemon. It's written under a
+// temporary name first so the daemon never picks up half a file.
+func handToDaemon(m *Manager, src string, r io.Reader, stdout io.Writer) error {
+	dst := filepath.Join(m.inboxDir(), bundleName(src))
+	if !strings.HasSuffix(strings.ToLower(dst), ".zip") {
+		dst += ".zip"
+	}
+	if err := copyToFile(dst+".part", r); err != nil {
+		return err
+	}
+	if err := os.Rename(dst+".part", dst); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Handed %s to the running RepeaterTastic; it installs within a few seconds.\n", bundleName(src))
+	fmt.Fprintf(stdout, "Rejected bundles go to %s with the reason.\n", filepath.Join(m.inboxDir(), ".rejected"))
+	return nil
+}
+
+// copyToFile writes r to a new file at name.
+func copyToFile(name string, r io.Reader) error {
+	out, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, r); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func daemonRunning(sock string) bool {

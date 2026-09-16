@@ -18,8 +18,8 @@ import { confirmState, settleConfirm } from '@/composables/confirm'
       </div>
     </div>
     <template #footer>
-      <button class="btn" @click="settleConfirm(false)">Cancel</button>
-      <button :class="['btn', confirmState.opts.danger ? 'btn-danger' : 'btn-primary']" @click="settleConfirm(true)">
+      <button type="button" class="btn" @click="settleConfirm(false)">Cancel</button>
+      <button type="button" :class="['btn', confirmState.opts.danger ? 'btn-danger' : 'btn-primary']" @click="settleConfirm(true)">
         {{ confirmState.opts.confirm ?? 'Confirm' }}
       </button>
     </template>

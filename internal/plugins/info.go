@@ -89,23 +89,10 @@ func (m *Manager) infoLocked(p *plugin) Info {
 	}
 	var asked []string
 	if man := p.manifest; man != nil {
-		in.Name, in.Version, in.Description, in.Author, in.Homepage, in.License = man.Name, man.Version, man.Description, man.Author, man.Homepage, man.License
-		if p.rec.Attached && p.rec.Name != "" {
-			in.Name = p.rec.Name
-		}
-		in.Network, in.Settings = man.Network, man.Settings
-		in.HasLogo = man.Logo != "" && p.dir != ""
-		in.HasPanel = man.UI.Panel != "" && p.dir != ""
+		in.fromManifest(p, man)
 		asked = man.Permissions
 	}
-	for _, g := range granted {
-		if !slices.Contains(asked, g) {
-			asked = append(asked, g)
-		}
-	}
-	for _, k := range asked {
-		in.Permissions = append(in.Permissions, Permission{Key: k, Text: Permissions[k], Granted: slices.Contains(granted, k)})
-	}
+	in.Permissions = permissionList(asked, granted)
 	in.Values, in.SecretsSet = maskSettings(in.Settings, settings)
 	if in.SecretsSet == nil {
 		in.SecretsSet = []string{}
@@ -120,6 +107,32 @@ func (m *Manager) infoLocked(p *plugin) Info {
 		in.StartedAt = p.startedAt.UnixMilli()
 	}
 	return in
+}
+
+// fromManifest fills in what the plugin's manifest says about it.
+func (in *Info) fromManifest(p *plugin, man *Manifest) {
+	in.Name, in.Version, in.Description, in.Author, in.Homepage, in.License = man.Name, man.Version, man.Description, man.Author, man.Homepage, man.License
+	if p.rec.Attached && p.rec.Name != "" {
+		in.Name = p.rec.Name
+	}
+	in.Network, in.Settings = man.Network, man.Settings
+	in.HasLogo = man.Logo != "" && p.dir != ""
+	in.HasPanel = man.UI.Panel != "" && p.dir != ""
+}
+
+// permissionList is the permissions asked for, then any granted that weren't asked for, each
+// marked with whether it's granted.
+func permissionList(asked, granted []string) []Permission {
+	out := []Permission{}
+	for _, g := range granted {
+		if !slices.Contains(asked, g) {
+			asked = append(asked, g)
+		}
+	}
+	for _, k := range asked {
+		out = append(out, Permission{Key: k, Text: Permissions[k], Granted: slices.Contains(granted, k)})
+	}
+	return out
 }
 
 func statusJSON(s *pluginv1.Status) *Status {

@@ -1,7 +1,10 @@
 // Types for the RepeaterTastic HTTP API — see docs/api.md (including "Proposed additions").
 // Shared by the SPA and the dev mock, so keep this file free of runtime imports.
 
-export type RelayRole = 'client' | 'router' | 'mute' | 'monitor' | 'off'
+/** Meshtastic device roles the relay can take, plus monitor (listen only) and off. */
+export type RelayRole = 'client' | 'client_base' | 'client_mute' | 'router' | 'router_late' | 'monitor' | 'off'
+/** Meshtastic rebroadcast modes ('' = all). */
+export type RebroadcastMode = '' | 'all' | 'all_skip_decoding' | 'local_only' | 'known_only' | 'none' | 'core_portnums_only'
 export type ChannelRole = 'PRIMARY' | 'SECONDARY' | 'DISABLED'
 export type PacketKind = 'ours' | 'relayed' | 'dup' | 'undecryptable' | 'delivered' | 'local'
 export type MessageStatus = 'queued' | 'sent' | 'acked' | 'failed' | 'received'
@@ -57,6 +60,8 @@ export interface Status {
   map?: { tile_url: string }
   /** Saved changes the running daemon hasn't picked up yet. */
   restart_reasons?: string[] | null
+  /** How the meshtasticd nodes are doing across the site. */
+  nodes?: NodesHealth
   uptime_s: number
   radio: {
     driver: string
@@ -103,13 +108,6 @@ export interface Channel {
   uplink: boolean
   downlink: boolean
   locked: boolean
-  /** With identities on several radios (experimental): the one radio this slot is on. */
-  radio?: string
-  radio_name?: string
-  /** Set when the slot's chosen radio left the site; it runs on the default radio meanwhile. */
-  radio_removed?: string
-  /** Set when the slot's radio was added but hasn't started; it runs on the default radio until the restart. */
-  radio_pending?: string
 }
 
 export interface Identity {
@@ -121,13 +119,20 @@ export interface Identity {
   hw_model: string
   public_key: string
   is_relay: boolean
+  /** Runs on meshtasticd rather than in RepeaterTastic. */
+  real_node?: boolean
+  /** Runs on a meshtasticd RepeaterTastic starts, with the key RepeaterTastic keeps. */
+  hosted?: boolean
   enabled: boolean
-  api: { bind: string; port: number; clients: number } | null
+  /** The app port; listening is false when the port couldn't be opened. */
+  api: { bind: string; port: number; clients: number; listening: boolean } | null
   outbox: number
   airtime_ms_1h: number
   share_pct: number
   /** Proposed: configured slice of the hourly duty budget (percent of the budget). */
   share_limit_pct?: number
+  /** The app may change the node's radio, device, module and position settings, and reboot it. */
+  app_settings?: boolean
   /** Cap on the hop limit of packets this identity sends; 0 = the radio's hop limit. */
   hop_limit?: number
   /** Own fixed position (null = uses the radio's site position). */
@@ -138,10 +143,6 @@ export interface Identity {
   created_at: number
   channels: Channel[]
   api_bind?: string
-  /** Experimental routing across radios (kept while the switch is off). */
-  multi_radio?: MultiRadio | null
-  /** Radios the identity is on right now (home first). */
-  radios?: string[]
   /** The radio this identity is on. */
   radio_id?: string
   radio_name?: string
@@ -178,13 +179,13 @@ export interface Message {
   rssi: number | null
   snr: number | null
   hops: number | null
-  /** The radio a multi-radio identity heard or sent it on. */
-  radio?: string
 }
 
 export interface MeshNode {
   node_id: string
   node_num: number
+  /** The radios that heard it (empty for this site's own identities). */
+  heard_by?: string[]
   long_name: string
   short_name: string
   hw_model: string
@@ -206,6 +207,8 @@ export interface MeshNode {
 export interface Packet {
   seq: number
   time: number
+  /** The radio that heard or sent it. */
+  radio_id?: string
   direction: 'rx' | 'tx'
   kind: PacketKind
   id: number
@@ -246,6 +249,10 @@ export interface LogLine {
   time: number
   level: LogLevel
   msg: string
+  /** The radio the line is about (absent on single-radio sites and for site-wide lines). */
+  radio?: string
+  /** The identity (node ID) the line is about. */
+  identity?: string
 }
 
 export interface AirtimeBucket {
@@ -276,6 +283,7 @@ export interface RfStats {
 /** Proposed: GET /stats/identities */
 export interface IdentityStat {
   node_id: string
+  radio_id?: string
   tx: number
   rx: number
   ack_ok: number
@@ -295,7 +303,20 @@ export interface Region {
   power_limit_dbm: number
 }
 
-/** Proposed: POST /setup/probe */
+/** GET /boards: a LoRa board the experimental spi driver can run; `id` goes in radio.device. */
+export interface Board {
+  host: string
+  file: string
+  id: string
+  name: string
+  module: string
+  bus: string
+  source: 'auto' | 'config.d' | 'available.d' | 'built-in'
+  supported: boolean
+  error: string
+}
+
+/** POST /setup/probe */
 export interface ProbeResult {
   ok: boolean
   driver: string
@@ -303,6 +324,12 @@ export interface ProbeResult {
   name: string
   sync_word_ok: boolean
   error: string
+  /** spi: the chip's diagnostic lines */
+  details?: string[]
+  /** meshtastic: the board's current region, preset and role */
+  region?: string
+  preset?: string
+  role?: string
 }
 
 export interface ApiToken {
@@ -316,6 +343,8 @@ export interface ApiToken {
 export interface Link {
   name: string
   type: string
+  radio_id?: string
+  radio_name?: string
   enabled: boolean
   connected: boolean
   rx: number
@@ -340,17 +369,6 @@ export interface Link {
   // UDP only
   group?: string
   map_report?: boolean
-}
-
-/** Experimental: an identity's routing across radios. */
-export interface MultiRadio {
-  /** Where slot 0 lives, new channels start and DMs fall back ("" = home). */
-  default_radio?: string
-  /** Slot index → the one radio that slot is on. */
-  channels?: Record<string, string>
-  /** "auto" (best heard), "default", or a radio id. */
-  dm?: string
-  fallback?: boolean
 }
 
 export type MqttMode = 'gateway' | 'uplink_only' | 'map_only' | 'monitor' | 'bridge'
@@ -402,7 +420,7 @@ export interface Config {
     channel_num: number
     override_frequency_mhz: number
   }
-  relay: { role: RelayRole; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
+  relay: { role: RelayRole; rebroadcast: RebroadcastMode; favorites: string[]; long_name: string; short_name: string; local_dm: 'software' | 'also_rf' }
   airtime: {
     duty_cycle_percent: number
     identity_share_percent: number
@@ -504,4 +522,63 @@ export interface PluginLogLine {
   level: 'debug' | 'info' | 'warn' | 'error'
   source: 'plugin' | 'stdout' | 'stderr' | 'host'
   message: string
+}
+
+/** A meshtasticd the daemon runs (GET /hosted). */
+export interface HostedInstance {
+  radio: string
+  role: 'persona' | 'identity'
+  name: string
+  launcher: string
+  port: number
+  running: boolean
+  connected: boolean
+  /** When the current process started (0 while it isn't running). */
+  since: number
+  /** Unexpected stops. */
+  restarts: number
+  /** Stops that applied settings RepeaterTastic had just given it. */
+  reboots: number
+  last_error?: string
+  stops: HostedStop[]
+  firmware?: string
+  node_id?: string
+}
+
+export interface HostedStop {
+  time: number
+  reason: string
+  reboot: boolean
+}
+
+/** GET /hosted/{name}/log: a line meshtasticd printed. */
+export interface HostedLogLine {
+  time: number
+  text: string
+}
+
+/** What this machine can run hosted nodes with (GET /setup/runtimes). */
+export interface Runtimes {
+  meshtasticd: { found: boolean; path?: string; version?: string; ok: boolean; error?: string }
+  docker: { found: boolean; ok: boolean; version?: string; error?: string; image: string; image_present: boolean }
+  min_version: string
+}
+
+/** GET /status nodes: ok, starting, warning (some identities down) or error (meshtasticd isn't running). */
+export interface NodesHealth {
+  state: 'ok' | 'starting' | 'warning' | 'error'
+  nodes: number
+  up: number
+  problems: string[]
+  version?: string
+  launcher: string
+}
+
+export interface HostedSettings {
+  meshtasticd: string
+  docker_image: string
+  port_base: number
+  min_version: string
+  instances: HostedInstance[]
+  restart_required: boolean
 }

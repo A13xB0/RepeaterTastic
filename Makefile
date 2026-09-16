@@ -7,7 +7,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X main.mapAPIKey=$(MAP_API_KEY)
 GOFLAGS := -trimpath
 DIST := dist
 
-.PHONY: all build ui test race interop dist clean proto firmware plugin-example
+.PHONY: all build ui test race lint interop dist clean proto firmware plugin-example
 
 all: build
 
@@ -25,6 +25,10 @@ test:
 
 race:
 	go test -race ./...
+
+lint:
+	golangci-lint run ./...
+	cd ui && npx vue-tsc --build
 
 proto:
 	./scripts/gen-proto.sh

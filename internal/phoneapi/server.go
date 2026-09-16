@@ -26,6 +26,11 @@ const (
 	maxFrame     = 512
 	idleTimeout  = 15 * time.Minute
 	sendQueueLen = 512
+
+	headerContentType    = "Content-Type"
+	headerProtobufSchema = "X-Protobuf-Schema"
+	contentTypeProtobuf  = "application/x-protobuf"
+	meshProtoSchemaURL   = "https://raw.githubusercontent.com/meshtastic/protobufs/master/meshtastic/mesh.proto"
 )
 
 // Server listens on one identity's port. A TCP client speaking the stream protocol (0x94 0xC3 framing,
@@ -128,44 +133,13 @@ func (s *Server) route(ctx context.Context, c net.Conn) {
 func (s *Server) serveStream(ctx context.Context, c net.Conn) {
 	s.log.Info("client connected", "remote", c.RemoteAddr())
 	out := make(chan *pb.FromRadio, sendQueueLen)
-	sess := NewSession(s.host, s.id, s.log, func(fr *pb.FromRadio) bool {
-		select {
-		case out <- fr:
-			return true
-		default:
-			return false
-		}
-	})
+	sess := NewSession(s.host, s.id, s.log, queueSender(out))
 	done := make(chan struct{})
 	var writerDone sync.WaitGroup
 	writerDone.Add(1)
 	go func() {
 		defer writerDone.Done()
-		bw := bufio.NewWriter(c)
-		for {
-			select {
-			case <-done:
-				return
-			case fr := <-out:
-				b, err := proto.Marshal(fr)
-				if err != nil || len(b) > maxFrame {
-					continue
-				}
-				hdr := []byte{start1, start2, byte(len(b) >> 8), byte(len(b))}
-				_ = c.SetWriteDeadline(time.Now().Add(30 * time.Second))
-				if _, err := bw.Write(hdr); err != nil {
-					_ = c.Close()
-					return
-				}
-				_, _ = bw.Write(b)
-				if len(out) == 0 {
-					if err := bw.Flush(); err != nil {
-						_ = c.Close()
-						return
-					}
-				}
-			}
-		}
+		writeFrames(c, out, done)
 	}()
 	go func() {
 		select {
@@ -190,26 +164,62 @@ func (s *Server) serveStream(ctx context.Context, c net.Conn) {
 	s.log.Info("client disconnected", "remote", c.RemoteAddr(), "err", err)
 }
 
+// queueSender is a session's send function onto q, dropping frames rather than blocking when full.
+func queueSender(q chan<- *pb.FromRadio) func(*pb.FromRadio) bool {
+	return func(fr *pb.FromRadio) bool {
+		select {
+		case q <- fr:
+			return true
+		default:
+			return false
+		}
+	}
+}
+
+// writeFrames writes out's frames to c until done, flushing once the queue is drained. A write
+// error closes c, which ends the reader too.
+func writeFrames(c net.Conn, out <-chan *pb.FromRadio, done <-chan struct{}) {
+	bw := bufio.NewWriter(c)
+	for {
+		select {
+		case <-done:
+			return
+		case fr := <-out:
+			written, ok := writeFrame(c, bw, fr)
+			if !ok {
+				_ = c.Close()
+				return
+			}
+			if written && len(out) == 0 && bw.Flush() != nil {
+				_ = c.Close()
+				return
+			}
+		}
+	}
+}
+
+// writeFrame buffers one framed FromRadio, skipping (written false) any that can't be framed;
+// ok false means the connection has failed.
+func writeFrame(c net.Conn, bw *bufio.Writer, fr *pb.FromRadio) (written, ok bool) {
+	b, err := proto.Marshal(fr)
+	if err != nil || len(b) > maxFrame {
+		return false, true
+	}
+	hdr := []byte{start1, start2, byte(len(b) >> 8), byte(len(b))}
+	_ = c.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	if _, err := bw.Write(hdr); err != nil {
+		return false, false
+	}
+	_, _ = bw.Write(b)
+	return true, true
+}
+
 // readFrames parses 0x94 0xC3 len16 frames, skipping any text (a client's debug console noise).
 func readFrames(r io.Reader, fn func([]byte) bool) error {
 	br := bufio.NewReader(r)
 	for {
-		b, err := br.ReadByte()
-		if err != nil {
+		if err := skipToFrameStart(br); err != nil {
 			return err
-		}
-		if b != start1 {
-			continue
-		}
-		b, err = br.ReadByte()
-		if err != nil {
-			return err
-		}
-		if b != start2 {
-			if b == start1 {
-				_ = br.UnreadByte()
-			}
-			continue
 		}
 		var lenBuf [2]byte
 		if _, err := io.ReadFull(br, lenBuf[:]); err != nil {
@@ -225,6 +235,29 @@ func readFrames(r io.Reader, fn func([]byte) bool) error {
 		}
 		if !fn(payload) {
 			return nil
+		}
+	}
+}
+
+// skipToFrameStart reads up to and including the next 0x94 0xC3 start marker.
+func skipToFrameStart(br *bufio.Reader) error {
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			return err
+		}
+		if b != start1 {
+			continue
+		}
+		b, err = br.ReadByte()
+		if err != nil {
+			return err
+		}
+		if b == start2 {
+			return nil
+		}
+		if b == start1 {
+			_ = br.UnreadByte()
 		}
 	}
 }
@@ -253,7 +286,7 @@ func (s *Server) serveHTTP(ctx context.Context) {
 	mux.HandleFunc("/api/v1/toradio", s.handleToRadio)
 	mux.HandleFunc("/api/v1/fromradio", s.handleFromRadio)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set(headerContentType, "text/plain")
 		fmt.Fprintf(w, "RepeaterTastic virtual node %s (%s)\nMeshtastic HTTP API: /api/v1/toradio, /api/v1/fromradio\n",
 			s.id.NodeID(), s.id.UserCopy().GetLongName())
 	})
@@ -269,8 +302,8 @@ func cors(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Protobuf-Schema")
+		w.Header().Set("Access-Control-Allow-Headers", headerContentType)
+		w.Header().Set("Access-Control-Expose-Headers", headerProtobufSchema)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -286,17 +319,15 @@ func (s *Server) httpSession() *Session {
 	s.httpTouched = time.Now()
 	if s.httpSess == nil {
 		s.httpQueue = make(chan *pb.FromRadio, sendQueueLen)
-		q := s.httpQueue
-		s.httpSess = NewSession(s.host, s.id, s.log, func(fr *pb.FromRadio) bool {
-			select {
-			case q <- fr:
-				return true
-			default:
-				return false
-			}
-		})
+		s.httpSess = NewSession(s.host, s.id, s.log, queueSender(s.httpQueue))
 	}
 	return s.httpSess
+}
+
+// setProtobufHeaders marks a response as a Meshtastic protobuf, as the firmware's web API does.
+func setProtobufHeaders(w http.ResponseWriter) {
+	w.Header().Set(headerContentType, contentTypeProtobuf)
+	w.Header().Set(headerProtobufSchema, meshProtoSchemaURL)
 }
 
 func (s *Server) handleToRadio(w http.ResponseWriter, r *http.Request) {
@@ -321,16 +352,14 @@ func (s *Server) handleToRadio(w http.ResponseWriter, r *http.Request) {
 		s.httpSess = nil
 		s.httpSessMu.Unlock()
 	}
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.Header().Set("X-Protobuf-Schema", "https://raw.githubusercontent.com/meshtastic/protobufs/master/meshtastic/mesh.proto")
+	setProtobufHeaders(w)
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleFromRadio(w http.ResponseWriter, r *http.Request) {
 	s.httpSession()
 	all, _ := strconv.ParseBool(r.URL.Query().Get("all"))
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.Header().Set("X-Protobuf-Schema", "https://raw.githubusercontent.com/meshtastic/protobufs/master/meshtastic/mesh.proto")
+	setProtobufHeaders(w)
 	s.httpSessMu.Lock()
 	q := s.httpQueue
 	s.httpSessMu.Unlock()
@@ -357,18 +386,18 @@ type Manager struct {
 
 	mu      sync.Mutex
 	servers map[uint32]*managed
-	runCtx  context.Context // Run's context: servers live as long as the manager, never a request
+	failed  map[uint32]string // the last error starting each identity's server, logged once
+	runCtx  context.Context   // Run's context: servers live as long as the manager, never a request
 }
 
 type managed struct {
 	srv    *Server
 	addr   string
 	cancel context.CancelFunc
-	err    string
 }
 
 func NewManager(h *mesh.Host, log *slog.Logger) *Manager {
-	return &Manager{host: h, log: log, servers: map[uint32]*managed{}}
+	return &Manager{host: h, log: log, servers: map[uint32]*managed{}, failed: map[uint32]string{}}
 }
 
 // Run syncs servers now and whenever an identity changes.
@@ -385,12 +414,8 @@ func (m *Manager) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			m.mu.Lock()
-			for num, s := range m.servers {
-				s.cancel()
-				if s.srv != nil {
-					_ = s.srv.Close()
-				}
-				delete(m.servers, num)
+			for num := range m.servers {
+				m.stopLocked(num)
 			}
 			m.mu.Unlock()
 			return
@@ -408,8 +433,23 @@ func (m *Manager) Run(ctx context.Context) {
 func (m *Manager) Sync(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	want := map[uint32]string{}
-	byNum := map[uint32]*mesh.Identity{}
+	want, byNum := m.wantedServers()
+	for num, s := range m.servers {
+		if addr, ok := want[num]; !ok || addr != s.addr || (s.srv == nil) {
+			m.stopLocked(num)
+		}
+	}
+	for num, addr := range want {
+		if _, running := m.servers[num]; !running {
+			m.startLocked(ctx, byNum[num], addr)
+		}
+	}
+}
+
+// wantedServers lists the listen address for every enabled, non-relay identity with an API port.
+func (m *Manager) wantedServers() (want map[uint32]string, byNum map[uint32]*mesh.Identity) {
+	want = map[uint32]string{}
+	byNum = map[uint32]*mesh.Identity{}
 	for _, id := range m.host.Identities() {
 		if id.IsRelay || !id.Enabled || id.APIPort <= 0 {
 			continue
@@ -421,31 +461,39 @@ func (m *Manager) Sync(ctx context.Context) {
 		want[id.NodeNum] = net.JoinHostPort(bind, strconv.Itoa(id.APIPort))
 		byNum[id.NodeNum] = id
 	}
-	for num, s := range m.servers {
-		if addr, ok := want[num]; !ok || addr != s.addr || (s.srv == nil) {
-			s.cancel()
-			if s.srv != nil {
-				_ = s.srv.Close()
-			}
-			delete(m.servers, num)
+	return want, byNum
+}
+
+// startLocked starts id's server on addr, logging a failure only when it changes; a failed
+// server is retried on the next sync. The caller holds m.mu.
+func (m *Manager) startLocked(ctx context.Context, id *mesh.Identity, addr string) {
+	num := id.NodeNum
+	sctx, cancel := context.WithCancel(ctx)
+	srv, err := Listen(sctx, m.host, id, addr, m.log)
+	if err != nil {
+		cancel()
+		if m.failed[num] != err.Error() {
+			m.failed[num] = err.Error()
+			m.log.Error("client API not started; retrying quietly", "identity", id.NodeID(), "addr", addr, "err", err)
 		}
+		return
 	}
-	for num, addr := range want {
-		if _, running := m.servers[num]; running {
-			continue
-		}
-		sctx, cancel := context.WithCancel(ctx)
-		srv, err := Listen(sctx, m.host, byNum[num], addr, m.log)
-		ms := &managed{srv: srv, addr: addr, cancel: cancel}
-		if err != nil {
-			cancel()
-			ms.srv, ms.err = nil, err.Error()
-			m.log.Error("client API not started", "identity", byNum[num].NodeID(), "addr", addr, "err", err)
-			continue // retried on the next sync
-		}
-		m.log.Info("client API listening", "identity", byNum[num].NodeID(), "addr", addr)
-		m.servers[num] = ms
+	delete(m.failed, num)
+	m.log.Info("client API listening", "identity", id.NodeID(), "addr", addr)
+	m.servers[num] = &managed{srv: srv, addr: addr, cancel: cancel}
+}
+
+// stopLocked closes an identity's server, if it has one. The caller holds m.mu.
+func (m *Manager) stopLocked(num uint32) {
+	s, ok := m.servers[num]
+	if !ok {
+		return
 	}
+	s.cancel()
+	if s.srv != nil {
+		_ = s.srv.Close()
+	}
+	delete(m.servers, num)
 }
 
 // Status reports the listening address or error for an identity.
@@ -475,13 +523,7 @@ func (m *Manager) Restart(ctx context.Context, num uint32) {
 func (m *Manager) Stop(num uint32) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if s, ok := m.servers[num]; ok {
-		s.cancel()
-		if s.srv != nil {
-			_ = s.srv.Close()
-		}
-		delete(m.servers, num)
-	}
+	m.stopLocked(num)
 }
 
 // SyncNow is Sync with the manager's own context, for callers outside Run (after a move).

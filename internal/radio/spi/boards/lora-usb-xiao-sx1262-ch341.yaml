@@ -1,0 +1,23 @@
+# Seeed XIAO nRF52840 + Wio-SX1262 running the CH341 bridge firmware
+# (github.com/A13xB0/xiao-ch341-lora-bridge): the board presents itself as a CH341A
+# USB-to-SPI adapter with the SX1262 wired like a Meshtoad. Its USB product string is
+# XIAO-SX1262-CH341, so "auto" finds this file. Not one of meshtasticd's own board files.
+Meta:
+  name: XIAO nRF52840 + Wio-SX1262 (CH341 bridge)
+  support: community
+  compatible:
+    - usb
+
+Lora:
+  Module: sx1262
+  CS: 0
+  IRQ: 6
+  Reset: 2
+  Busy: 4
+  RXen: 1
+  DIO2_AS_RF_SWITCH: true
+  DIO3_TCXO_VOLTAGE: true
+  spidev: ch341
+  USB_PID: 0x5512
+  USB_VID: 0x1A86
+  SX126X_MAX_POWER: 22

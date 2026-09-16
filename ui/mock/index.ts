@@ -131,7 +131,7 @@ async function handle(req: IncomingMessage, res: Res) {
     case 'GET /status': return json(res, 200, status())
     case 'PUT /relay': {
       const role = body.role as typeof state.relayRole
-      if (!['client', 'router', 'mute'].includes(role)) return fail(res, 400, 'role must be client, router or mute')
+      if (!['client', 'client_base', 'client_mute', 'router', 'router_late', 'monitor', 'off'].includes(role)) return fail(res, 400, 'unknown relay role')
       state.relayRole = role
       state.config.relay.role = role
       log('info', `relay: role set to ${role}`, emit)
@@ -151,7 +151,7 @@ async function handle(req: IncomingMessage, res: Res) {
       const ident: Identity = {
         node_id: pv.node_id, node_num: pv.node_num, long_name: long, short_name: String(body.short_name ?? long.slice(0, 4)).slice(0, 4),
         role: String(body.role ?? 'CLIENT'), hw_model: 'PORTDUINO', public_key: pv.public_key, is_relay: false, enabled: true,
-        api: { bind: '0.0.0.0', port, clients: 0 }, outbox: 0, airtime_ms_1h: 0, share_pct: 0, share_limit_pct: state.config.airtime.identity_share_percent,
+        api: { bind: '0.0.0.0', port, clients: 0, listening: true }, outbox: 0, airtime_ms_1h: 0, share_pct: 0, share_limit_pct: state.config.airtime.identity_share_percent,
         unread: 0, created_at: Date.now(), channels: channelSlots(),
       }
       state.identities.push(ident)

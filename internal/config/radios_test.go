@@ -46,7 +46,7 @@ radios:
 	}
 	mf := rcs[1]
 	if mf.StateDir != filepath.Join("/var/lib/rt", "radios", "mf") || mf.Mesh.Region != "EU_868" ||
-		mf.Relay.Role != "mute" || mf.Radio.Driver != "kiss" || mf.Radio.Baud != 115200 || mf.MeshConfig().RadioID != "mf" {
+		mf.Relay.Role != "client_mute" || mf.Radio.Driver != "kiss" || mf.Radio.Baud != 115200 || mf.MeshConfig().RadioID != "mf" {
 		t.Fatalf("mf radio = %+v", mf)
 	}
 	if rcs[0].Mesh.Preset != "LONG_FAST" || len(rcs[0].Identities) != 0 {
@@ -65,5 +65,60 @@ func TestRadioValidation(t *testing.T) {
 		if _, err := load(t, yml); err == nil || !strings.Contains(err.Error(), "") {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+func TestHostedConfig(t *testing.T) {
+	// persona and experimental: settings from before every node ran on meshtasticd, ignored
+	c, err := load(t, "hosted: {persona: true, identities: true, meshtasticd: /usr/local/bin/meshtasticd}\nexperimental: {multi_radio_identities: true}\n")
+	if err != nil || c.Hosted.Meshtasticd != "/usr/local/bin/meshtasticd" || c.Hosted.HostedPortBase() != 4500 {
+		t.Fatalf("hosted %+v %v", c.Hosted, err)
+	}
+	for yml, want := range map[string]string{
+		"hosted: {meshtasticd: /bin/sh}\n":         "meshtasticd program",
+		"hosted: {port_base: 80}\n":                "port_base",
+		"hosted: {docker_image: '--privileged'}\n": "docker_image",
+		"hosted: {docker_image: 'a b'}\n":          "docker_image",
+	} {
+		if _, err := load(t, yml); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", yml, err, want)
+		}
+	}
+}
+
+func TestRelayRolesUseMeshtasticNames(t *testing.T) {
+	c, err := load(t, `relay: {role: mute, rebroadcast: LOCAL_ONLY}
+radios:
+  - id: mf
+    radio: {device: /dev/rt-mf}
+    mesh: {preset: MEDIUM_FAST}
+    relay: {role: router_late}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Relay.Role != "client_mute" || c.Relay.Rebroadcast != "local_only" || c.MeshConfig().Rebroadcast != "local_only" {
+		t.Fatalf("relay = %+v", c.Relay)
+	}
+	if c.Radios[0].Relay.Role != "router_late" {
+		t.Fatalf("extra radio relay = %+v", c.Radios[0].Relay)
+	}
+	for _, bad := range []string{"relay: {role: repeater}", "relay: {rebroadcast: sometimes}"} {
+		if _, err := load(t, bad); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+}
+
+func TestRelayFavorites(t *testing.T) {
+	c, err := load(t, "relay: {role: client_base, favorites: ['!a1b2c3d4']}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := c.MeshConfig().Favorites; len(f) != 1 || f[0] != 0xa1b2c3d4 {
+		t.Fatalf("favorites %v", f)
+	}
+	if _, err := load(t, "relay: {favorites: [bob]}\n"); err == nil || !strings.Contains(err.Error(), "isn't a node ID") {
+		t.Fatalf("bad favourite: %v", err)
 	}
 }

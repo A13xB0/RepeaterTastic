@@ -1,0 +1,212 @@
+package web
+
+import (
+	"context"
+	"encoding/base64"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
+	"github.com/ScotMesh/RepeaterTastic/pb"
+)
+
+// fakeRemote is a node that takes everything.
+type fakeRemote struct {
+	mu     sync.Mutex
+	admins int
+	// fail, when set, is what admin messages and config pushes return.
+	fail error
+}
+
+func (f *fakeRemote) SendPacket(*pb.MeshPacket) (uint32, error) { return 1, nil }
+func (f *fakeRemote) Admin(context.Context, *pb.AdminMessage) (*pb.AdminMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.admins++
+	return nil, f.fail
+}
+func (f *fakeRemote) ApplyConfig(context.Context, mesh.Config) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.admins++
+	return f.fail
+}
+
+// adminCount is how many admin messages and config pushes the node has had.
+func (f *fakeRemote) adminCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.admins
+}
+
+// fakeHoster hosts every identity on a node that takes everything.
+type fakeHoster struct {
+	mu       sync.Mutex
+	unhosted []uint32
+	remote   *fakeRemote
+}
+
+func (x *fakeHoster) HostIdentity(_ context.Context, h *mesh.Host, rec mesh.IdentityRecord) (*mesh.Identity, error) {
+	st, err := mesh.RecordState(rec)
+	if err != nil {
+		return nil, err
+	}
+	id, err := mesh.NewHostedIdentity(x.remote, st, rec)
+	if err != nil {
+		return nil, err
+	}
+	return id, h.AddIdentity(id)
+}
+
+func (x *fakeHoster) Unhost(id *mesh.Identity) {
+	x.mu.Lock()
+	x.unhosted = append(x.unhosted, id.NodeNum)
+	x.mu.Unlock()
+}
+
+func TestHostedIdentities(t *testing.T) {
+	srv, hosts := testWebTwoRadiosHosts(t)
+	hs := &fakeHoster{remote: &fakeRemote{}}
+	hosts[0].SetHoster(hs)
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	_, obj, _ := call(t, srv, "POST", "/api/v1/auth/login", "", map[string]any{"password": "correct horse"})
+	tok := obj["token"].(string)
+
+	if code, res, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Rep", "role": "CLIENT"}); code != 400 {
+		t.Fatalf("a repeating role on meshtasticd accepted: %d %v", code, res)
+	}
+	node := createHostedIdentity(t, srv, tok)
+	checkHostedPatch(t, srv, tok, node, hs)
+	checkHostedMoveAndDelete(t, srv, tok, node, hs)
+
+	// Choosing a meshtasticd checks it can run first.
+	if code, _, _ := call(t, srv, "PUT", "/api/v1/hosted", tok, map[string]any{"meshtasticd": "/nonexistent/meshtasticd"}); code != 400 {
+		t.Fatalf("a meshtasticd that can't run accepted: %d", code)
+	}
+	if _, h, _ := call(t, srv, "GET", "/api/v1/hosted", tok, nil); h["meshtasticd"] != "" {
+		t.Fatalf("hosted = %v", h)
+	}
+}
+
+// createHostedIdentity imports an identity onto the main radio's meshtasticd and returns its node id.
+func createHostedIdentity(t *testing.T, srv *httptest.Server, tok string) string {
+	t.Helper()
+	key := freeLastByteKey(t, srv, tok)
+	code, a, _ := call(t, srv, "POST", "/api/v1/identities", tok, map[string]any{"long_name": "Desk", "short_name": "DESK", "private_key": key})
+	if code != 201 || a["hosted"] != true || a["real_node"] != true || a["role"] != "CLIENT_MUTE" {
+		t.Fatalf("create %d %v", code, a)
+	}
+	node := a["node_id"].(string)
+	if code, k, _ := call(t, srv, "GET", "/api/v1/identities/"+node+"/key", tok, nil); code != 200 || k["private_key"] == "" {
+		t.Fatalf("key of a hosted identity %d %v", code, k)
+	}
+	return node
+}
+
+// freeLastByteKey is a key whose last byte is free on every radio, so moves can't clash.
+func freeLastByteKey(t *testing.T, srv *httptest.Server, tok string) string {
+	t.Helper()
+	_, _, mfIDs := call(t, srv, "GET", "/api/v1/identities?radio=all", tok, nil)
+	taken := map[uint8]bool{}
+	for _, x := range mfIDs {
+		taken[uint8(x.(map[string]any)["last_byte"].(float64))] = true
+	}
+	for {
+		id, _ := mesh.NewIdentity(nil, "Desk", "DESK")
+		if !taken[wire.LastByte(id.NodeNum)] {
+			return base64.StdEncoding.EncodeToString(id.PrivateKey)
+		}
+	}
+}
+
+// checkHostedPatch checks a hosted identity refuses a repeating role and pushes settings to its node.
+func checkHostedPatch(t *testing.T, srv *httptest.Server, tok, node string, hs *fakeHoster) {
+	t.Helper()
+	if code, _, _ := call(t, srv, "PATCH", "/api/v1/identities/"+node, tok, map[string]any{"role": "ROUTER"}); code != 400 {
+		t.Fatalf("repeating role accepted on patch: %d", code)
+	}
+	if code, res, _ := call(t, srv, "PATCH", "/api/v1/identities/"+node, tok, map[string]any{"role": "TRACKER", "hop_limit": 2}); code != 200 || res["hop_limit"] != float64(2) {
+		t.Fatalf("patch %d %v", code, res)
+	}
+	if hs.remote.admins == 0 {
+		t.Fatal("settings not pushed to the node")
+	}
+}
+
+// checkHostedMoveAndDelete moves a hosted identity to the mf radio and back, then deletes it,
+// checking its node is stopped each time it leaves a radio.
+func checkHostedMoveAndDelete(t *testing.T, srv *httptest.Server, tok, node string, hs *fakeHoster) {
+	t.Helper()
+	// Moving it to another radio runs it on that radio's meshtasticd, with the same number.
+	code, m, _ := call(t, srv, "POST", "/api/v1/identities/"+node+"/move", tok, map[string]any{"radio_id": "mf"})
+	if code != 200 || m["node_id"] != node || m["hosted"] != true || m["hop_limit"] != float64(2) {
+		t.Fatalf("move %d %v", code, m)
+	}
+	if len(hs.unhosted) != 1 {
+		t.Fatalf("the node wasn't stopped on the move: %v", hs.unhosted)
+	}
+	// And back again onto meshtasticd; deleting it stops the node.
+	if code, m, _ := call(t, srv, "POST", "/api/v1/identities/"+node+"/move?radio=mf", tok, map[string]any{"radio_id": "main"}); code != 200 || m["hosted"] != true {
+		t.Fatalf("move back %d %v", code, m)
+	}
+	if code, _, _ := call(t, srv, "DELETE", "/api/v1/identities/"+node, tok, nil); code != 204 {
+		t.Fatalf("delete %d", code)
+	}
+	if len(hs.unhosted) != 2 {
+		t.Fatalf("the node wasn't stopped on delete: %v", hs.unhosted)
+	}
+}
+
+func TestSetupMeshtasticBoard(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	// Before a password exists, a board's address must be local.
+	if code, res, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "meshtastic", "device": "8.8.8.8"}); code != 400 {
+		t.Fatalf("public board address probed before setup: %d %v", code, res)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "meshtastic", "device": "/etc/passwd"}); code != 400 {
+		t.Fatalf("non-serial path probed: %d", code)
+	}
+	// A local address that nothing answers on is reported, not refused.
+	if code, res, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "meshtastic", "device": "127.0.0.1:1"}); code != 200 || res["ok"] != false || res["error"] == "" {
+		t.Fatalf("probe of a closed port: %d %v", code, res)
+	}
+	if code, _, _ := call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse", "driver": "meshtastic"}); code != 400 {
+		t.Fatalf("board without a device accepted: %d", code)
+	}
+	code, res, _ := call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse", "driver": "meshtastic", "device": "127.0.0.1:4403"})
+	if code != 200 || res["restart_required"] != true {
+		t.Fatalf("setup with a board %d %v", code, res)
+	}
+}
+
+func TestDetectNeedsASerialPort(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	for _, dev := range []string{"", "127.0.0.1:4403", "/etc/passwd"} {
+		if code, _, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "auto", "device": dev}); code != 400 {
+			t.Errorf("detect on %q: %d", dev, code)
+		}
+	}
+	// Nothing on a port that doesn't exist: reported, with both attempts.
+	code, res, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "auto", "device": "/dev/ttyUSB-none"})
+	if code != 200 || res["ok"] != false || len(res["details"].([]any)) != 2 {
+		t.Fatalf("detect on a missing port: %d %v", code, res)
+	}
+}
+
+func TestRuntimesDuringSetup(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	code, res, _ := call(t, srv, "GET", "/api/v1/setup/runtimes", "", nil)
+	if code != 200 || res["min_version"] != "2.8.0" {
+		t.Fatalf("runtimes %d %v", code, res)
+	}
+	m, d := res["meshtasticd"].(map[string]any), res["docker"].(map[string]any)
+	if _, ok := m["found"].(bool); !ok || d["image"] == "" {
+		t.Fatalf("runtimes %v", res)
+	}
+	call(t, srv, "POST", "/api/v1/setup", "", map[string]any{"password": "correct horse"})
+	if code, _, _ := call(t, srv, "GET", "/api/v1/setup/runtimes", "", nil); code != 401 {
+		t.Fatalf("runtimes without a token after setup: %d", code)
+	}
+}

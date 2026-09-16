@@ -169,6 +169,14 @@ func (r *Radio) Send(ctx context.Context, frame []byte) error {
 		return radio.ErrNotConnected
 	}
 	r.txCount++
+	r.deliverLocked(frame, start, now)
+	return nil
+}
+
+// deliverLocked hands a frame sent from start to now to every radio that could hear it. h.mu must
+// be held.
+func (r *Radio) deliverLocked(frame []byte, start, now time.Time) {
+	h := r.hub
 	for o := range h.radios {
 		if o == r || o.closed || !o.configured || !sameChannel(r.cfg, o.cfg) {
 			continue
@@ -186,7 +194,6 @@ func (r *Radio) Send(ctx context.Context, frame []byte) error {
 		o.rxCount++
 		o.emitLocked(radio.Frame{Data: bytes.Clone(frame), RSSI: l.RSSI, SNR: l.SNR, At: now})
 	}
-	return nil
 }
 
 func (r *Radio) emitLocked(f radio.Frame) {

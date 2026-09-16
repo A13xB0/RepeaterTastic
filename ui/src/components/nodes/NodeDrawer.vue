@@ -8,7 +8,7 @@ import Drawer from '@/components/ui/Drawer.vue'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { live, nodeByLastByte, nodeLabel, on } from '@/store/live'
+import { live, nodeByLastByte, nodeLabel, on, radioName } from '@/store/live'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
@@ -218,13 +218,15 @@ const nextHop = computed(() => (node.value?.next_hop ? nodeByLastByte(node.value
         <h3 class="eyebrow mb-2">Actions</h3>
         <label class="label" for="nd-from">Send from</label>
         <select id="nd-from" v-model="from" class="input">
-          <option v-for="s in senders" :key="s.node_id" :value="s.node_id">{{ s.long_name }} ({{ s.node_id }}){{ s.is_relay ? ' · relay persona' : '' }}</option>
+          <option v-for="s in senders" :key="s.node_id" :value="s.node_id">
+            {{ s.long_name }} ({{ s.node_id }}){{ s.is_relay ? ' · relay persona' : '' }}{{ live.radios.length > 1 ? ` · ${s.radio_name ?? radioName(s.radio_id ?? 'main')}` : '' }}
+          </option>
         </select>
         <div class="mt-3 flex flex-wrap gap-2">
-          <button class="btn btn-sm" :disabled="pending || !from" @click="traceroute"><Spinner v-if="pending" /><RouteIcon v-else class="size-3.5" />Traceroute</button>
-          <button class="btn btn-sm" :disabled="nodeinfoBusy || !from" @click="requestNodeinfo"><Spinner v-if="nodeinfoBusy" /><IdCard v-else class="size-3.5" />Request NodeInfo</button>
-          <button class="btn btn-sm" @click="dm"><MessagesSquare class="size-3.5" />Message</button>
-          <button class="btn btn-sm btn-ghost ml-auto hover:!text-bad" @click="forget"><Trash class="size-3.5" />Forget</button>
+          <button type="button" class="btn btn-sm" :disabled="pending || !from" @click="traceroute"><Spinner v-if="pending" /><RouteIcon v-else class="size-3.5" />Traceroute</button>
+          <button type="button" class="btn btn-sm" :disabled="nodeinfoBusy || !from" @click="requestNodeinfo"><Spinner v-if="nodeinfoBusy" /><IdCard v-else class="size-3.5" />Request NodeInfo</button>
+          <button type="button" class="btn btn-sm" @click="dm"><MessagesSquare class="size-3.5" />Message</button>
+          <button type="button" class="btn btn-sm btn-ghost ml-auto hover:!text-bad" @click="forget"><Trash class="size-3.5" />Forget</button>
         </div>
 
         <div v-if="pending" class="mt-3 flex items-center gap-2 text-xs text-ink-3"><Spinner />Waiting for the route reply…</div>

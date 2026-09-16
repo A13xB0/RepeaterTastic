@@ -50,12 +50,27 @@ The GUI's restart shuts down cleanly and exits with status 75, so the service ma
 
 ```yaml
 radio:
-    driver: kiss          # kiss (a Mesh KISS modem), sim (tests), none (no radio: UDP link only)
+    driver: kiss          # kiss (a Mesh KISS modem), spi (experimental), meshtastic (a board on Meshtastic firmware), sim (tests), none
     device: /dev/serial/by-id/usb-…-if00-port0
     baud: 115200
 ```
 
 See [Hardware and modems](hardware.md) for device paths and permissions.
+
+`driver: spi` (experimental) drives the LoRa chip on meshtasticd hardware directly, with no
+meshtasticd. It covers SX1262/SX1268/LLCC68, SX1276 (RF95), SX1280 and LR1110/LR1120/LR1121, on
+a Linux SPI bus or a CH341 USB stick. `device` is the board:
+- a built-in meshtasticd board name, e.g. `MeshAdv-900M30S` (`kisstool boards` lists them);
+- a board file path, e.g. `/etc/meshtasticd/config.d/lora-MeshAdv-900M30S.yaml`;
+- `auto`, to detect a CH341 stick, a Pi HAT+ or a RAK board EEPROM.
+
+The setup wizard and Configuration → Radios offer the same choices under "Board". See
+[LoRa HATs and USB sticks](spi-radio-testing.md).
+
+`driver: meshtastic` uses a board running stock Meshtastic firmware, over USB or the network
+(`device: /dev/ttyACM0` or `device: 192.168.1.20`, port 4403 unless given). See
+[Boards on Meshtastic firmware](hardware.md#boards-on-meshtastic-firmware). The wizard and
+Configuration → Radios offer it under "Meshtastic firmware".
 
 ### `mesh`: how the radio joins the mesh
 
@@ -74,11 +89,16 @@ GUI: **Configuration → Radios → Edit**.
 
 ### `relay`: the relay persona
 
-Each radio has one relay persona, the only identity that repeats other nodes' packets.
+Each radio has one relay persona, the only identity that repeats other nodes' packets. Its role is
+a Meshtastic device role, applied as-is by the meshtasticd it runs on
+([`hosted`](#hosted-meshtasticd)) — unless the radio is a board on Meshtastic firmware, which keeps
+the board as its relay.
 
 ```yaml
 relay:
-    role: client          # client · router · mute · monitor · off
+    role: client          # client · client_base · client_mute · router · router_late · monitor · off
+    rebroadcast: all      # all · all_skip_decoding · local_only · known_only · none · core_portnums_only
+    favorites: ['!a1b2c3d4']  # client_base only: nodes whose packets it relays like router_late
     long_name: RepeaterTastic Relay
     short_name: RPTR
 ```
@@ -86,13 +106,21 @@ relay:
 | Role | The relay persona | Identities |
 | --- | --- | --- |
 | `client` | Repeats like a normal node: after routers, and cancels if another node relays first | Send and receive |
-| `router` | Repeats first; for a well-placed site the mesh relies on | Send and receive |
-| `mute` | Never repeats | Send and receive |
+| `client_base` | Repeats packets from or to its favourites like `router_late`, everything else like `client`. This host's identities are always favourites; add your own nodes in `favorites` (Configuration → Relay lists the nodes heard) | Send and receive |
+| `client_mute` | Never repeats. `mute`, the old name, still loads and is saved as `client_mute` | Send and receive |
+| `router` | Always repeats, with priority; for a well-placed site the mesh relies on | Send and receive |
+| `router_late` | Always repeats, but only after other nodes had their chance | Send and receive |
 | `monitor` | Never repeats | Receive only: **nothing is transmitted** (no messages, ACKs, NodeInfo or telemetry); sends fail |
 | `off` | The radio is ignored: nothing received or sent (the modem stays powered) | Local DMs, links and apps still work |
 
 Switching to monitor or off fails anything still queued. GUI: **Configuration → Relay**, or the
 switch in the top bar.
+
+`rebroadcast` is Meshtastic's rebroadcast mode (`device.rebroadcast_mode`) and defaults to `all`;
+meshtasticd (or the board) honours every mode. Repeater, tracker, sensor and TAK roles aren't
+offered: they make no sense for a relay persona.
+
+![Configuration → Relay: Meshtastic roles and the rebroadcast mode](images/relay-roles.png)
 
 ### `airtime`: duty cycle and background traffic
 
@@ -164,10 +192,58 @@ account menu) and stored in the state folder, not in this file.
 - `log_level`: `debug`, `info`, `warn` or `error`; applies live from the GUI.
 - `state_dir` holds identity keys, chats, the node database and login data: back it up.
 
-### `radios`, `site` and `experimental`
+### `hosted`: meshtasticd
 
-Extra radios, the site-wide airtime cap and the experimental identities on several radios are
-covered in [Several radios](radios.md).
+```yaml
+hosted:
+    meshtasticd: /usr/bin/meshtasticd   # "" = meshtasticd on PATH; must be 2.8.0 or newer
+    docker_image: ""                 # or run it in Docker, e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian
+    port_base: 4500                  # client API ports: radio n (0 = main) uses 100 ports from port_base + 100·n
+```
+
+RepeaterTastic doesn't run nodes itself. The relay persona of each modem or HAT radio, and every
+identity, is a meshtasticd on a simulated radio that RepeaterTastic starts, sets up and restarts.
+They transmit on this radio, at zero hops, and the relay hears the identities without repeating
+them. A board radio (`driver: meshtastic`) keeps the board itself as its relay; its identities still
+run on meshtasticd, one hop behind it. There's no fallback: an identity whose meshtasticd can't be
+started stays off air, retrying with backoff, until it can — the top bar and `GET /api/v1/status`
+say why (see [meshtasticd nodes](meshtasticd-nodes.md)).
+
+- **Same node numbers.** RepeaterTastic keeps each identity's key and gives it to its meshtasticd,
+  so node numbers, chats and app pairings stay. A meshtasticd that loses or changes its key gets it
+  back at the next connect; one that won't keep it after three tries stays off air.
+- **What RepeaterTastic sets on each node:** region, preset, frequency, power and the primary
+  channel name from the radio; hop limit, transmitter (on unless the identity is disabled, or the
+  radio is in monitor or off), fixed position and position interval from the identity; the role
+  and rebroadcast mode from `relay` for the persona; NodeInfo interval; device telemetry for the
+  persona only. A fresh node also gets the identity's names and channels. After that the node
+  keeps them, and edits in the GUI are written to it.
+- **Roles.** An identity never repeats: its role is `CLIENT_MUTE`, `TRACKER`, `SENSOR` or
+  `TAK_TRACKER` (the last three with rebroadcasting off). Any other role becomes `CLIENT_MUTE`.
+- **Apps connect as before**, to the identity's own app port. The meshtasticd API ports are
+  RepeaterTastic's; packets addressed to an identity itself, admin included, are forwarded to its
+  meshtasticd.
+- **Moving and deleting.** Moving an identity to another radio starts its meshtasticd there.
+  Deleting one stops its meshtasticd and removes its state.
+- **Ports.** An installed meshtasticd listens on every interface: firewall the ports on a shared
+  network, or use `docker_image`, which publishes them on 127.0.0.1 only. Each node takes about
+  3 MB of memory.
+- Takes effect at the next restart. Configuration → meshtasticd has the same settings, plus a
+  status chip and a table of every running instance.
+
+The setup wizard's meshtasticd step is mandatory: it shows whether meshtasticd is installed and new
+enough, and whether Docker answers and already has the image, then picks the one that works. You can
+carry on if the check fails and fix it under Configuration → meshtasticd afterwards. A meshtasticd
+that isn't on the PATH can still be used: pick Installed and enter where it is. Edit on a radio shows
+where the relay and each identity run:
+
+![Configuration → meshtasticd with one identity's node down](images/config-meshtasticd.png)
+
+![Radio settings with hosted nodes](images/radio-settings-hosted-relay.png)
+
+### `radios` and `site`
+
+Extra radios and the site-wide airtime cap are covered in [Several radios](radios.md).
 
 ### `plugins`
 

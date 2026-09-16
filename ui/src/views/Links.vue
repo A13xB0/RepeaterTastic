@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Cable, Cloud, Network, RefreshCw } from '@lucide/vue'
-import { api, enc } from '@/api/client'
+import { api, enc, withRadio } from '@/api/client'
 import type { Link } from '@/api/types'
+import RadioFilter from '@/components/ui/RadioFilter.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import { toast, toastError } from '@/composables/toast'
 import { compact } from '@/lib/format'
-import { refreshStatus } from '@/store/live'
+import { live, radioName, refreshStatus } from '@/store/live'
 
 const links = ref<Link[]>([])
+const radioFilter = ref('all')
+const severalRadios = computed(() => live.radios.length > 1)
+const filtered = computed(() => (radioFilter.value === 'all' ? links.value : links.value.filter((l) => (l.radio_id ?? 'main') === radioFilter.value)))
 const modeLabels: Record<string, string> = { gateway: 'gateway', uplink_only: 'uplink only', map_only: 'map only', monitor: 'monitor', bridge: 'bridge' }
 const loading = ref(false)
 
@@ -21,7 +25,7 @@ const meta: Record<string, { label: string; icon: typeof Cable; about: string }>
 async function load() {
   loading.value = true
   try {
-    links.value = await api.get<Link[]>('/links')
+    links.value = await api.get<Link[]>(withRadio('/links', 'all'))
   } catch (e) {
     toastError(e)
   } finally {
@@ -32,7 +36,7 @@ async function load() {
 const groupDraft = ref<Record<string, string>>({})
 async function saveGroup(l: Link) {
   try {
-    const updated = await api.patch<Link & { restart_required?: boolean }>(`/links/${enc(l.name)}`, { group: groupDraft.value[l.name] ?? '' })
+    const updated = await api.patch<Link & { restart_required?: boolean }>(withRadio(`/links/${enc(l.name)}`, l.radio_id ?? 'main'), { group: groupDraft.value[l.name] ?? '' })
     Object.assign(l, updated)
     delete groupDraft.value[l.name]
     refreshStatus().catch(() => {})
@@ -44,7 +48,7 @@ async function saveGroup(l: Link) {
 
 async function setEnabled(l: Link, enabled: boolean) {
   try {
-    const updated = await api.patch<Link>(`/links/${enc(l.name)}`, { enabled })
+    const updated = await api.patch<Link>(withRadio(`/links/${enc(l.name)}`, l.radio_id ?? 'main'), { enabled })
     Object.assign(l, updated)
     refreshStatus().catch(() => {})
     toast(`${l.name} ${enabled ? 'enabled' : 'disabled'}`)
@@ -68,11 +72,14 @@ onBeforeUnmount(() => clearInterval(timer))
         <h2 class="page-title">Links</h2>
         <p class="page-sub">Non-RF interfaces. Each has its own packet history entry and never uses airtime.</p>
       </div>
-      <button class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
+      <div class="flex flex-wrap items-center gap-2">
+        <RadioFilter v-model="radioFilter" id="links-radio" />
+        <button type="button" class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
+      </div>
     </div>
 
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <section v-for="l in links" :key="l.name" class="card flex flex-col p-4 sm:p-5">
+      <section v-for="l in filtered" :key="l.name" class="card flex flex-col p-4 sm:p-5">
         <div class="flex items-start gap-3">
           <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-sunken text-ink-2">
             <component :is="meta[l.type]?.icon ?? Cable" class="size-5" />
@@ -86,6 +93,7 @@ onBeforeUnmount(() => clearInterval(timer))
                 <span :class="['dot size-1.5', !l.enabled ? 'bg-ink-3' : l.connected ? 'bg-ok' : 'bg-warn']" />
                 {{ !l.enabled ? 'disabled' : l.connected ? 'connected' : 'reconnecting' }}
               </span>
+              <span v-if="severalRadios" class="chip bg-sunken text-ink-2">{{ l.radio_name ?? radioName(l.radio_id ?? 'main') }}</span>
             </div>
             <div class="text-xs text-ink-3">{{ meta[l.type]?.label ?? l.type }}<template v-if="l.mode"> · <span :class="l.mode === 'bridge' ? 'text-warn' : ''">{{ modeLabels[l.mode] ?? l.mode }}</span></template></div>
           </div>
@@ -99,7 +107,7 @@ onBeforeUnmount(() => clearInterval(timer))
             <label class="label" :for="`grp-${l.name}`">Multicast group</label>
             <input :id="`grp-${l.name}`" class="input mono !h-8" placeholder="239.0.0.69:4403" :value="groupDraft[l.name] ?? l.group ?? ''" @input="groupDraft[l.name] = ($event.target as HTMLInputElement).value" />
           </div>
-          <button class="btn btn-sm" :disabled="groupDraft[l.name] === undefined || groupDraft[l.name] === (l.group ?? '')">Save</button>
+          <button type="submit" class="btn btn-sm" :disabled="groupDraft[l.name] === undefined || groupDraft[l.name] === (l.group ?? '')">Save</button>
         </form>
         <dl v-if="l.type === 'mqtt' && l.enabled" class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
           <dt class="text-ink-3">Topic root</dt><dd class="mono truncate">{{ l.root || '—' }}{{ l.tls ? ' · TLS' : '' }}</dd>
@@ -127,6 +135,9 @@ onBeforeUnmount(() => clearInterval(timer))
         </div>
       </section>
     </div>
-    <div v-if="!links.length && !loading" class="card empty">No links configured. Add them under <span class="mono">links:</span> in the config file.</div>
+    <div v-if="!filtered.length && !loading" class="card empty">
+      <template v-if="links.length">No links on this radio.</template>
+      <template v-else>No links configured. Add them under <span class="mono">links:</span> in the config file.</template>
+    </div>
   </div>
 </template>

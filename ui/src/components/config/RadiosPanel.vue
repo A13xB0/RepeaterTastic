@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // The radios on this site: add, rename and remove them, and the airtime budget they share.
-// Each radio's own settings (preset, relay, MQTT…) are edited with the radio switcher.
+// Each radio's relay, airtime, position and MQTT settings are on their own tabs, with a radio selector.
 import { computed, onMounted, ref, watch } from 'vue'
 import { Pencil, Plus, Radio as RadioIcon, Settings2, Trash, TriangleAlert } from '@lucide/vue'
 import { api, enc } from '@/api/client'
@@ -8,7 +8,9 @@ import type { Phy, RadiosResponse, Region, SerialPort } from '@/api/types'
 import { refreshRadios } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import ModemDeviceField from '@/components/config/ModemDeviceField.vue'
 import RadioSettingsModal from '@/components/config/RadioSettingsModal.vue'
+import RemoveRadioModal from '@/components/config/RemoveRadioModal.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { num } from '@/lib/format'
@@ -30,7 +32,7 @@ async function load() {
 onMounted(() => load().catch(toastError))
 
 const presetLabel = (p: string) => p.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join('')
-const roleLabel: Record<string, string> = { mute: 'mute (never repeats)', client: 'client (repeats)', router: 'router', monitor: 'monitor (listens only)', off: 'off' }
+const roleLabel: Record<string, string> = { client_mute: 'client mute (never repeats)', client: 'client (repeats)', client_base: 'client base', router: 'router', router_late: 'router late', monitor: 'monitor (listens only)', off: 'off' }
 const usedDevices = computed(() => new Set([...(data.value?.radios ?? []).map((r) => r.device), ...(data.value?.pending ?? []).map((p) => p.device)]))
 
 // ---- rename
@@ -52,12 +54,23 @@ async function saveName(id: string) {
 }
 
 // ---- remove
+// A running radio gets the full dialog (what happens to its identities); one never started has none.
+const removing = ref<{ id: string; name: string } | null>(null)
+async function removed(restartRequired: boolean) {
+  const name = removing.value?.name ?? ''
+  removing.value = null
+  if (restartRequired) emit('restart')
+  await Promise.all([load(), refreshRadios()]).catch(toastError)
+  toast(`${name} removed`)
+}
 async function remove(id: string, name: string, running: boolean) {
+  if (running) {
+    removing.value = { id, name }
+    return
+  }
   const ok = await confirmDialog({
     title: `Remove ${name}?`,
-    body: running
-      ? 'It keeps running until the daemon restarts, then its identities go off air and their app connections stop. Its identity keys and history stay on disk, so adding a radio with the same ID brings them back.'
-      : 'It was never started, so nothing goes off air.',
+    body: 'It was never started, so nothing goes off air.',
     confirm: 'Remove radio',
     danger: true,
   })
@@ -93,7 +106,7 @@ const adding = ref(false)
 /** Set when the form edits a radio that hasn't started yet. */
 const editingId = ref<string | null>(null)
 const busy = ref(false)
-const form = ref({ id: '', name: '', device: '', region: 'EU_868', preset: 'MEDIUM_FAST', tx_power_dbm: 22, relay_role: 'mute', copy_position: true })
+const form = ref({ id: '', name: '', driver: 'kiss', device: '', region: 'EU_868', preset: 'MEDIUM_FAST', tx_power_dbm: 22, relay_role: 'client_mute', copy_position: true })
 const addError = ref('')
 const preview = ref<Phy | null>(null)
 const region = computed(() => props.regions.find((r) => r.name === form.value.region))
@@ -101,7 +114,7 @@ function openAdd() {
   const main = data.value?.radios[0]
   const taken = new Set([...(data.value?.radios ?? []).map((r) => r.phy.preset), ...(data.value?.pending ?? []).map((p) => p.preset)])
   const preset = (region.value?.presets ?? ['MEDIUM_FAST']).find((p) => !taken.has(p)) ?? 'MEDIUM_FAST'
-  form.value = { id: '', name: '', device: '', region: main?.phy.region ?? 'EU_868', preset, tx_power_dbm: main?.phy.tx_power_dbm ?? 22, relay_role: 'mute', copy_position: true }
+  form.value = { id: '', name: '', driver: 'kiss', device: '', region: main?.phy.region ?? 'EU_868', preset, tx_power_dbm: main?.phy.tx_power_dbm ?? 22, relay_role: 'client_mute', copy_position: true }
   addError.value = ''
   idTouched.value = false
   editingId.value = null
@@ -112,8 +125,8 @@ function openAdd() {
 function openEditPending(p: RadiosResponse['pending'][number]) {
   const main = data.value?.radios[0]
   form.value = {
-    id: p.id, name: p.name || '', device: p.device || '', region: p.region || main?.phy.region || 'EU_868', preset: p.preset || 'LONG_FAST',
-    tx_power_dbm: p.tx_power_dbm || main?.phy.tx_power_dbm || 22, relay_role: p.relay_role || 'mute', copy_position: true,
+    id: p.id, name: p.name || '', driver: p.driver || 'kiss', device: p.device || '', region: p.region || main?.phy.region || 'EU_868', preset: p.preset || 'LONG_FAST',
+    tx_power_dbm: p.tx_power_dbm || main?.phy.tx_power_dbm || 22, relay_role: p.relay_role || 'client_mute', copy_position: true,
   }
   addError.value = ''
   idTouched.value = true // keep the id and name as they are
@@ -150,7 +163,7 @@ async function add() {
   busy.value = true
   try {
     if (editingId.value) {
-      await api.put(`/radios/${enc(editingId.value)}`, { name: form.value.name, driver: 'kiss', device: form.value.device, region: form.value.region,
+      await api.put(`/radios/${enc(editingId.value)}`, { name: form.value.name, driver: form.value.driver, device: form.value.device, region: form.value.region,
         preset: form.value.preset, tx_power_dbm: form.value.tx_power_dbm, relay_role: form.value.relay_role })
       adding.value = false
       await load()
@@ -182,7 +195,7 @@ function openSettings(id: string) {
     <template v-else>
       <div class="flex flex-wrap items-end justify-between gap-3">
         <p class="max-w-2xl text-xs text-ink-3">
-          Each radio is its own modem on its own preset, with its own relay persona and identities. Radios on the same channel take turns to transmit. <b>Edit</b> changes a radio's name and LoRa &amp; modem settings; the Relay, Airtime, Position and MQTT tabs follow the radio picked at the top of the page. Adding or removing a radio takes effect after a restart.
+          Each radio is its own modem on its own preset, with its own relay persona and identities. Radios on the same channel take turns to transmit. <b>Edit</b> changes a radio's name and LoRa &amp; modem settings; the Relay, Airtime, Position and MQTT tabs have a selector for which radio they edit. Adding or removing a radio takes effect after a restart.
         </p>
         <button type="button" class="btn btn-primary" @click="openAdd"><Plus class="size-4" />Add radio</button>
       </div>
@@ -195,7 +208,7 @@ function openSettings(id: string) {
               <form v-if="renaming === r.id" class="flex items-center gap-2" @submit.prevent="saveName(r.id)">
                 <label class="sr-only" :for="`rn-${r.id}`">Radio name</label>
                 <input :id="`rn-${r.id}`" v-model="newName" class="input h-8 w-44" maxlength="40" autofocus @keydown.esc="renaming = null" />
-                <button class="btn btn-sm btn-primary">Save</button>
+                <button type="submit" class="btn btn-sm btn-primary">Save</button>
                 <button type="button" class="btn btn-sm" @click="renaming = null">Cancel</button>
               </form>
               <template v-else>
@@ -203,7 +216,7 @@ function openSettings(id: string) {
                 <button type="button" class="icon-btn size-6" :aria-label="`Rename ${r.name}`" title="Rename" @click="startRename(r.id, r.name)"><Pencil class="size-3" /></button>
               </template>
               <span class="chip mono">{{ r.id }}</span>
-              <span :class="['chip', r.connected ? 'bg-ok/14 text-ok' : 'bg-warn/15 text-warn']"><span :class="['dot size-1.5', r.connected ? 'bg-ok' : 'bg-warn']" />{{ r.connected ? 'on air' : 'modem not connected' }}</span>
+              <span :class="['chip', r.connected ? 'bg-ok/14 text-ok' : 'bg-warn/15 text-warn']"><span :class="['dot size-1.5', r.connected ? 'bg-ok' : 'bg-warn']" />{{ r.connected ? 'on air' : r.driver === 'meshtastic' ? 'board not connected' : 'modem not connected' }}</span>
               <span v-if="data.pending.some((p) => p.id === r.id && p.action === 'remove')" class="chip bg-bad/12 text-bad">removed · stops at restart</span>
             </div>
             <div class="mt-0.5 text-xs text-ink-3">
@@ -242,12 +255,12 @@ function openSettings(id: string) {
           </p>
         </div>
         <div class="flex items-end">
-          <button class="btn" :disabled="savingSite || !site || siteDuty === site.duty_cycle_percent"><Spinner v-if="savingSite" />Save cap</button>
+          <button type="submit" class="btn" :disabled="savingSite || !site || siteDuty === site.duty_cycle_percent"><Spinner v-if="savingSite" />Save cap</button>
         </div>
       </form>
     </template>
 
-    <Modal :open="adding" :title="editingId ? `Edit ${form.name || editingId}` : 'Add a radio'" :subtitle="editingId ? 'Not started yet: these settings apply when it starts at the next restart.' : 'Another Mesh KISS modem on this host, on its own preset.'" @close="adding = false">
+    <Modal :open="adding" :title="editingId ? `Edit ${form.name || editingId}` : 'Add a radio'" :subtitle="editingId ? 'Not started yet: these settings apply when it starts at the next restart.' : 'Another modem or LoRa board on this host, on its own preset.'" @close="adding = false">
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="add">
         <div>
           <label class="label" for="ar-region">Region</label>
@@ -271,10 +284,7 @@ function openSettings(id: string) {
           <input id="ar-name" v-model="form.name" class="input" placeholder="MediumFast" maxlength="40" />
         </div>
         <div class="sm:col-span-2">
-          <label class="label" for="ar-dev">Serial device</label>
-          <input id="ar-dev" v-model="form.device" class="input mono" list="ar-ports" placeholder="/dev/serial/by-id/…" required />
-          <datalist id="ar-ports"><option v-for="p in ports.filter((x) => !usedDevices.has(x.path))" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
-          <p class="hint">Use a <span class="mono">/dev/serial/by-id/</span> or udev name so it survives replugging. Flash the Mesh KISS firmware on it first.</p>
+          <ModemDeviceField id="ar-dev" v-model="form.device" v-model:driver="form.driver" :ports="ports.filter((x) => !usedDevices.has(x.path))" />
         </div>
         <div>
           <label class="label" for="ar-pwr">TX power · {{ form.tx_power_dbm }} dBm</label>
@@ -295,10 +305,11 @@ function openSettings(id: string) {
         <p v-if="addError" class="hint !text-bad sm:col-span-2">{{ addError }}</p>
         <div class="flex justify-end gap-2 sm:col-span-2">
           <button type="button" class="btn" @click="adding = false">Cancel</button>
-          <button class="btn btn-primary" :disabled="busy || !form.id || !form.device"><Spinner v-if="busy" />{{ editingId ? 'Save radio' : 'Add radio' }}</button>
+          <button type="submit" class="btn btn-primary" :disabled="busy || !form.id || !form.device"><Spinner v-if="busy" />{{ editingId ? 'Save radio' : 'Add radio' }}</button>
         </div>
       </form>
     </Modal>
+    <RemoveRadioModal :radio="removing" @close="removing = null" @removed="removed" />
     <RadioSettingsModal :radio-id="settingsFor" :ports="ports" :regions="regions" @close="settingsFor = null; load()" />
   </div>
 </template>

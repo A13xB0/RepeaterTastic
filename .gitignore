@@ -9,3 +9,10 @@
 /tests/interop/.venv/
 /ui/dist/
 /ui/node_modules/
+
+# local scratch tools
+zz-*/
+
+# built in place by `go build` in a command directory
+/cmd/*/repeatertastic
+/cmd/*/kisstool

@@ -4,6 +4,14 @@ Documentation=https://github.com/ScotMesh/RepeaterTastic
 After=network-online.target
 Wants=network-online.target
 
+# RepeaterTastic runs its nodes as meshtasticd instances (2.8.0 or newer). deploy/install.sh
+# installs the meshtasticd package and keeps the package's own service off, which would take the
+# radio and port 4403:
+#   systemctl disable --now meshtasticd
+# To run them in Docker instead (hosted.docker_image), add the docker group in a drop-in:
+#   [Service]
+#   SupplementaryGroups=dialout docker
+
 [Service]
 Type=simple
 User=repeatertastic
@@ -26,6 +34,10 @@ RestrictSUIDSGID=true
 ReadWritePaths=/var/lib/repeatertastic /etc/repeatertastic
 DeviceAllow=char-ttyUSB rw
 DeviceAllow=char-ttyACM rw
+# The spi driver: a CH341 USB adapter, or a Pi HAT on SPI and GPIO (add the spi and gpio groups).
+DeviceAllow=char-usb_device rw
+DeviceAllow=char-spidev rw
+DeviceAllow=char-gpiochip rw
 DevicePolicy=closed
 
 [Install]

@@ -32,23 +32,26 @@ type fakeModem struct {
 	dropReplies int  // replace the next N command replies with TxBusy (full output queue)
 	chanBusy    bool
 	unplugged   bool
+	replies     map[byte][]byte // canned reply (sub-command first) overriding the built-in one
+	silent      map[byte]bool   // commands never answered
 
 	// state
-	conn                            net.Conn
-	dials                           int
-	freq, bw                        uint32
-	sf, cr                          byte
-	power                           int8
-	sync                            byte
-	preamble                        uint16
-	kissTxDelay, persist            byte
-	txPending                       bool
-	dataWhilePending, sent, cmdSeen int
-	cmdCount                        map[byte]int
+	conn                   net.Conn
+	dials                  int
+	freq, bw               uint32
+	sf, cr                 byte
+	power                  int8
+	sync                   byte
+	preamble               uint16
+	kissTxDelay, persist   byte
+	txPending              bool
+	dataWhilePending, sent int
+	cmdCount               map[byte]int
 }
 
 func newFake() *fakeModem {
-	return &fakeModem{version: 2, name: "Heltec V3", txDelay: 10 * time.Millisecond, txResult: 1}
+	return &fakeModem{version: 2, name: "Heltec V3", txDelay: 10 * time.Millisecond, txResult: 1,
+		replies: map[byte][]byte{}, silent: map[byte]bool{}}
 }
 
 func (f *fakeModem) dial() (io.ReadWriteCloser, error) {
@@ -161,6 +164,12 @@ func (f *fakeModem) handle(c net.Conn, fr []byte) {
 func (f *fakeModem) command(cmd byte, a []byte) ([]byte, bool) {
 	ok := []byte{respOK}
 	u32 := binary.LittleEndian.AppendUint32
+	if r, found := f.replies[cmd]; found {
+		return r, true
+	}
+	if f.silent[cmd] {
+		return nil, false
+	}
 	switch cmd {
 	case cmdPing:
 		return []byte{0x97}, true
@@ -535,5 +544,20 @@ func TestOpenFailsAndClose(t *testing.T) {
 	}
 	if err := m.Send(ctx, []byte{1}); !errors.Is(err, radio.ErrNotConnected) {
 		t.Fatalf("send after close: %v", err)
+	}
+}
+
+// FESC FESC TFEND: the second FESC is an invalid escaped byte and is dropped, and TFEND is then a
+// literal 0xDC, matching the modem firmware's deframer.
+func TestDecoderConsecutiveFESC(t *testing.T) {
+	var d decoder
+	var got []byte
+	for _, b := range []byte{fend, 0x00, fesc, fesc, tfend, fend} {
+		if f := d.feed(b); f != nil {
+			got = append([]byte(nil), f...)
+		}
+	}
+	if string(got) != "\x00\xdc" {
+		t.Fatalf("decoded %x, want 00dc", got)
 	}
 }

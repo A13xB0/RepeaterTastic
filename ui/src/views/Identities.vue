@@ -1,15 +1,17 @@
 <script setup lang="ts">
 // Identities: the Meshtastic counterpart of openHop's Companions view.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Import, KeyRound, Layers, MessagesSquare, Pencil, Plus, RotateCcw, Trash } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Identity } from '@/api/types'
-import { live, refreshAllIdentities, removeIdentity, upsertIdentity } from '@/store/live'
+import { live, refreshIdentities, removeIdentity, upsertIdentity } from '@/store/live'
+import { muted } from '@/lib/relay'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import CreateIdentityModal from '@/components/identities/CreateIdentityModal.vue'
 import EditIdentityModal from '@/components/identities/EditIdentityModal.vue'
+import BoardMqttNotice from '@/components/config/BoardMqttNotice.vue'
 import KeyModal from '@/components/identities/KeyModal.vue'
 import ChannelsDrawer from '@/components/identities/ChannelsDrawer.vue'
 import { confirmDialog } from '@/composables/confirm'
@@ -21,10 +23,9 @@ const editing = ref<Identity | null>(null)
 const keyFor = ref<Identity | null>(null)
 const channelsFor = ref<string | null>(null)
 
-// With several radios the list can show this radio's identities or every radio's.
-const multiRadio = computed(() => live.radios.length > 1)
-const scope = ref<'radio' | 'all'>('radio')
-const source = computed(() => (multiRadio.value && scope.value === 'all' ? live.allIdentities : live.identities))
+// Every radio's identities in one table, by radio.
+const severalRadios = computed(() => live.radios.length > 1)
+const source = computed(() => live.identities)
 const radioOrder = computed(() => new Map(live.radios.map((r, i) => [r.id, i])))
 const list = computed(() =>
   [...source.value].sort(
@@ -34,13 +35,17 @@ const list = computed(() =>
       (a.api?.port ?? 0) - (b.api?.port ?? 0),
   ),
 )
-watch(scope, (s) => s === 'all' && refreshAllIdentities())
 let allTimer: number | undefined
 onMounted(() => {
-  allTimer = window.setInterval(() => scope.value === 'all' && refreshAllIdentities(), 10_000)
+  // App client counts change without an event: poll them.
+  allTimer = window.setInterval(() => refreshIdentities().catch(() => {}), 10_000)
 })
 onBeforeUnmount(() => clearInterval(allTimer))
-const budgetMs = computed(() => ((live.status?.airtime.duty_limit_pct ?? 10) / 100) * (live.status?.airtime.window_s ?? 3600) * 1000)
+// An identity's slice is of its own radio's duty budget.
+function budgetMsOf(i: Identity) {
+  const st = live.statuses[i.radio_id ?? 'main'] ?? live.status
+  return ((st?.airtime.duty_limit_pct ?? 10) / 100) * (st?.airtime.window_s ?? 3600) * 1000
+}
 const totals = computed(() => ({
   apps: source.value.reduce((s, i) => s + (i.api?.clients ?? 0), 0),
   outbox: source.value.reduce((s, i) => s + i.outbox, 0),
@@ -49,24 +54,26 @@ const totals = computed(() => ({
 
 type State = { label: string; cls: string; title: string }
 function stateOf(i: Identity): State {
-  const budgetPct = (i.airtime_ms_1h / budgetMs.value) * 100
+  const budgetPct = (i.airtime_ms_1h / budgetMsOf(i)) * 100
   if (i.is_relay) {
-    const role = live.status?.relay.role
+    const role = live.statuses[i.radio_id ?? 'main']?.relay.role
     if (role === 'off') return { label: 'Radio off', cls: 'bg-bad/12 text-bad', title: 'The radio is off: nothing is received or sent' }
     if (role === 'monitor') return { label: 'Listening', cls: 'bg-info/12 text-info', title: 'Monitor mode: the radio only listens' }
-    return role === 'mute'
-      ? { label: 'Muted', cls: 'bg-bad/12 text-bad', title: 'Relay mode is mute: nothing is rebroadcast' }
+    return muted(role)
+      ? { label: 'Muted', cls: 'bg-bad/12 text-bad', title: 'Relay role is client mute: nothing is rebroadcast' }
       : { label: 'Relaying', cls: 'bg-brand/14 text-brand', title: `Relay mode ${role}` }
   }
   if (!i.enabled) return { label: 'Disabled', cls: 'bg-ink-3/14 text-ink-3', title: 'Not transmitting; API port closed' }
   if (i.share_limit_pct && budgetPct > i.share_limit_pct)
     return { label: 'Over share', cls: 'bg-warn/15 text-warn', title: `Using ${budgetPct.toFixed(0)}% of the duty budget (limit ${i.share_limit_pct}%)` }
+  if (i.api && i.api.port > 0 && !i.api.listening)
+    return { label: 'Port busy', cls: 'bg-bad/12 text-bad', title: `App port ${i.api.port} couldn't be opened: something else is using it. Pick another port in Edit.` }
   if ((i.api?.clients ?? 0) > 0) return { label: 'Online', cls: 'bg-ok/14 text-ok', title: `${i.api?.clients} app(s) connected` }
   return { label: 'No app', cls: 'bg-info/12 text-info', title: 'Running; no client app connected' }
 }
 
 function budgetBar(i: Identity) {
-  const pct = (i.airtime_ms_1h / budgetMs.value) * 100
+  const pct = (i.airtime_ms_1h / budgetMsOf(i)) * 100
   const limit = i.is_relay ? 100 : (i.share_limit_pct ?? 100)
   return { width: Math.min(100, pct), limit: Math.min(100, limit), over: !i.is_relay && pct > limit, pct }
 }
@@ -113,26 +120,23 @@ async function remove(i: Identity) {
       <div>
         <h2 class="page-title">Identities</h2>
         <p class="page-sub">
-          {{ source.length }} nodes {{ multiRadio && scope === 'all' ? `on ${live.radios.length} radios` : 'on this modem' }} · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
+          {{ source.length }} {{ source.length === 1 ? 'node' : 'nodes' }} {{ severalRadios ? `on ${live.radios.length} radios` : '' }} · {{ totals.apps }} apps connected · {{ seconds(totals.airtime) }} airtime in the last hour
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <div v-if="multiRadio" class="tabs-pill flex rounded-lg border border-line-soft p-0.5" role="group" aria-label="Which identities">
-          <button v-for="o in [{ v: 'radio', l: 'This radio' }, { v: 'all', l: 'All radios' }] as const" :key="o.v" type="button"
-            :class="['rounded-md px-2.5 py-1 text-xs font-medium', scope === o.v ? 'bg-raised text-ink shadow-sm' : 'text-ink-3 hover:text-ink']"
-            :aria-pressed="scope === o.v" @click="scope = o.v">{{ o.l }}</button>
-        </div>
-        <button class="btn" @click="createMode = 'import'"><Import class="size-4" />Import key</button>
-        <button class="btn btn-primary" @click="createMode = 'create'"><Plus class="size-4" />New identity</button>
+        <button type="button" class="btn" @click="createMode = 'import'"><Import class="size-4" />Import key</button>
+        <button type="button" class="btn btn-primary" @click="createMode = 'create'"><Plus class="size-4" />New identity</button>
       </div>
     </div>
 
+    <BoardMqttNotice v-if="live.status?.radio.driver === 'meshtastic' || live.radios.some((r) => r.driver === 'meshtastic')" class="mb-3" />
     <section class="card overflow-hidden">
       <div class="scroll-thin overflow-x-auto">
         <table class="tbl">
           <thead>
             <tr>
               <th>Node</th>
+              <th v-if="severalRadios">Radio</th>
               <th>API</th>
               <th class="num">Apps</th>
               <th class="num max-2xl:hidden">Outbox</th>
@@ -148,18 +152,21 @@ async function remove(i: Identity) {
                 <div class="flex items-center gap-3">
                   <NodeAvatar :id="i.node_id" :short="i.short_name" />
                   <div class="min-w-0 leading-tight">
-                    <div class="flex items-center gap-1.5 truncate text-[13px] font-semibold">{{ i.long_name }}</div>
+                    <div class="flex items-center gap-1.5 truncate text-[13px] font-semibold">
+                      {{ i.long_name }}
+                      <span v-if="i.real_node" class="chip bg-brand/12 text-brand" title="Runs on meshtasticd with the key RepeaterTastic keeps: settings, names and channels are written to it">meshtasticd</span>
+                    </div>
                     <div class="flex items-center gap-1 text-xs text-ink-3">
                       <span class="mono">{{ i.node_id }}</span>
                       <CopyButton :text="i.node_id" label="Node id" />
                       <span>· {{ i.is_relay ? 'relay persona' : roleLabel(i.role) }}</span>
                     </div>
-                    <div v-if="multiRadio" class="mt-1 flex flex-wrap gap-1">
-                      <span class="chip bg-ink-3/12 text-ink-2" :title="`Home radio ${i.radio_name}`">{{ i.radio_name }}</span>
-                      <span v-if="(i.radios?.length ?? 1) > 1" class="chip bg-info/12 text-info" :title="`Also on ${i.radios!.slice(1).map((r) => live.radios.find((x) => x.id === r)?.name ?? r).join(', ')} (experimental)`">+{{ i.radios!.length - 1 }} radio{{ i.radios!.length > 2 ? 's' : '' }}</span>
-                    </div>
                   </div>
                 </div>
+              </td>
+              <td v-if="severalRadios" class="whitespace-nowrap text-[13px]">
+                {{ i.radio_name }}
+                <div class="text-2xs text-ink-3">{{ live.radios.find((r) => r.id === i.radio_id)?.phy.preset_name }}</div>
               </td>
               <td class="whitespace-nowrap">
                 <template v-if="i.api">
@@ -190,7 +197,7 @@ async function remove(i: Identity) {
                 <span :class="['chip', stateOf(i).cls]" :title="stateOf(i).title">{{ stateOf(i).label }}</span>
               </td>
               <td class="max-lg:hidden">
-                <button class="flex flex-wrap gap-1" title="Edit channels" @click="channelsFor = i.node_id">
+                <button type="button" class="flex flex-wrap gap-1" title="Edit channels" @click="channelsFor = i.node_id">
                   <span
                     v-for="c in i.channels.filter((c) => c.role !== 'DISABLED')"
                     :key="c.index"
@@ -202,11 +209,11 @@ async function remove(i: Identity) {
                 <div class="flex items-center justify-end gap-0.5">
                   <Toggle v-if="!i.is_relay" class="mr-2" :model-value="i.enabled" :label="`${i.enabled ? 'Disable' : 'Enable'} ${i.long_name}`" @update:model-value="setEnabled(i, $event)" />
                   <RouterLink :to="`/chat/${i.node_id}`" class="icon-btn" :title="i.is_relay ? 'Chat as the relay persona' : 'Open chat'"><MessagesSquare class="size-4" /></RouterLink>
-                  <button class="icon-btn" title="Edit" @click="editing = i"><Pencil class="size-4" /></button>
-                  <button class="icon-btn lg:hidden" title="Channels" @click="channelsFor = i.node_id"><Layers class="size-4" /></button>
-                  <button class="icon-btn" title="Show key" @click="keyFor = i"><KeyRound class="size-4" /></button>
-                  <button v-if="i.api" class="icon-btn max-sm:hidden" title="Restart API server" :disabled="!i.enabled" @click="restartApi(i)"><RotateCcw class="size-4" /></button>
-                  <button v-if="!i.is_relay" class="icon-btn hover:!text-bad" title="Delete" @click="remove(i)"><Trash class="size-4" /></button>
+                  <button type="button" class="icon-btn" title="Edit" @click="editing = i"><Pencil class="size-4" /></button>
+                  <button type="button" class="icon-btn lg:hidden" title="Channels" @click="channelsFor = i.node_id"><Layers class="size-4" /></button>
+                  <button type="button" v-if="!i.real_node || i.hosted" class="icon-btn" title="Show key" @click="keyFor = i"><KeyRound class="size-4" /></button>
+                  <button type="button" v-if="i.api" class="icon-btn max-sm:hidden" title="Restart API server" :disabled="!i.enabled" @click="restartApi(i)"><RotateCcw class="size-4" /></button>
+                  <button type="button" v-if="!i.is_relay" class="icon-btn hover:!text-bad" title="Delete" @click="remove(i)"><Trash class="size-4" /></button>
                 </div>
               </td>
             </tr>

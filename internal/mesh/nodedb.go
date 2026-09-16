@@ -30,8 +30,6 @@ type NodeEntry struct {
 	Ignored   bool
 	Channel   uint32
 	Local     bool
-
-	lastNodeInfoRequest time.Time
 }
 
 func (e *NodeEntry) PublicKey() []byte {

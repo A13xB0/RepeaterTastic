@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, KeyRound, Plus, RotateCcw, Trash, Upload } from '@lucide/vue'
-import { api, API_BASE, enc, setToken as setAuthToken, token as authToken } from '@/api/client'
+import { api, API_BASE, enc, MAIN_RADIO, setToken as setAuthToken, token as authToken, withRadio } from '@/api/client'
 import type { ApiToken, Config, ConfigPutResult, Region, SerialPort } from '@/api/types'
 import { live, refreshStatus } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
@@ -10,14 +10,18 @@ import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import MqttConnections from '@/components/config/MqttConnections.vue'
 import RadiosPanel from '@/components/config/RadiosPanel.vue'
-import ExperimentalPanel from '@/components/config/ExperimentalPanel.vue'
+import MeshtasticdPanel from '@/components/config/MeshtasticdPanel.vue'
+import RelayFavorites from '@/components/config/RelayFavorites.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { num, relTime } from '@/lib/format'
-import { relayModes } from '@/lib/relay'
+import { rebroadcastModes, relayModes } from '@/lib/relay'
 
-type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'experimental' | 'backup'
+// Leaflet stays in its own chunk until the Position tab opens.
+const PositionPicker = defineAsyncComponent({ loader: () => import('@/components/nodes/PositionPicker.vue'), loadingComponent: Spinner })
+
+type Tab = 'radio' | 'relay' | 'airtime' | 'position' | 'mqtt' | 'web' | 'meshtasticd' | 'backup'
 const allTabs: { id: Tab; label: string }[] = [
   { id: 'radio', label: 'Radios' },
   { id: 'relay', label: 'Relay' },
@@ -25,29 +29,89 @@ const allTabs: { id: Tab; label: string }[] = [
   { id: 'position', label: 'Position & hardware' },
   { id: 'mqtt', label: 'MQTT' },
   { id: 'web', label: 'Web & API tokens' },
-  { id: 'experimental', label: 'Experimental' },
+  { id: 'meshtasticd', label: 'meshtasticd' },
   { id: 'backup', label: 'Backup & restore' },
 ]
-// The radio list, web settings, tokens and backups belong to the host, so they only show on the main radio.
-const tabs = computed(() => allTabs.filter((t) => saved.value?.main !== false || !['web', 'backup', 'experimental'].includes(t.id)))
+// The Radios list, web settings, tokens and backups are site-wide: always shown, whichever radio
+// the tabs below are pointed at.
+const tabs = allTabs
+// Tabs whose form edits one radio's settings (GET/PUT /config for that radio).
+const radioTabs: Tab[] = ['relay', 'airtime', 'position', 'mqtt']
 const route = useRoute()
 const router = useRouter()
-const tab = computed<Tab>(() => (tabs.value.some((t) => t.id === route.params.tab) ? (route.params.tab as Tab) : 'radio')) // 'radios' (old link) → Radios
+const oldTabs: Record<string, Tab> = { experimental: 'meshtasticd' } // old links
+const tab = computed<Tab>(() => {
+  const want = oldTabs[route.params.tab as string] ?? route.params.tab
+  return tabs.some((t) => t.id === want) ? (want as Tab) : 'radio' // 'radios' (old link) → Radios
+})
 const setTab = (t: Tab) => router.replace({ name: 'config', params: { tab: t } })
 
+const severalRadios = computed(() => live.radios.length > 1)
+// Which radio the Relay / Airtime & duty / Position & hardware / MQTT tabs are showing and edit.
+const configRadio = ref(MAIN_RADIO)
 const saved = ref<Config | null>(null)
 const form = ref<Config | null>(null)
 const saving = ref(false)
 
 async function load() {
-  const c = await api.get<Config>('/config')
+  const c = await api.get<Config>(withRadio('/config', configRadio.value))
   saved.value = c
   form.value = structuredClone(c)
 }
 
-const section = computed(() => (['backup', 'experimental', 'radio'].includes(tab.value) ? null : tab.value === 'position' ? 'position' : tab.value))
+/** Switches which radio the form edits, asking first if there are unsaved changes on this tab. */
+async function switchRadio(id: string) {
+  if (id === configRadio.value) return
+  if (dirty.value) {
+    const ok = await confirmDialog({
+      title: 'Switch radios?',
+      body: `Unsaved changes on this tab will be lost.`,
+      confirm: 'Discard and switch',
+      danger: true,
+    })
+    if (!ok) return
+  }
+  configRadio.value = id
+  try {
+    await load()
+  } catch (e) {
+    toastError(e)
+  }
+}
+
+// The selector wants the main radio's real id, not the "main" sentinel, so it can highlight it;
+// live.radios loads asynchronously, so pick it up once it arrives (no reload: same radio either way).
+watch(
+  () => live.radios,
+  (radios) => {
+    if (configRadio.value !== MAIN_RADIO) return
+    const main = radios.find((r) => r.main)
+    if (main) configRadio.value = main.id
+  },
+  { immediate: true },
+)
+
+// Web settings belong to the main radio: that tab always shows (and saves) the main radio's.
+watch(tab, (t) => {
+  const main = live.radios.find((r) => r.main)?.id ?? MAIN_RADIO
+  if (t === 'web' && configRadio.value !== main) {
+    configRadio.value = main
+    load().catch(toastError)
+  }
+})
+
+/** The config section a tab edits; null for tabs with no single section (Radios, meshtasticd, backup). */
+function sectionForTab(t: Tab) {
+  if (['backup', 'meshtasticd', 'radio'].includes(t)) return null
+  if (t === 'position') return 'position'
+  return t
+}
+const section = computed(() => sectionForTab(tab.value))
 // The Position tab edits two config sections.
-const sections = computed<(keyof Config)[]>(() => (tab.value === 'position' ? ['position', 'hardware'] : section.value ? [section.value as keyof Config] : []))
+const sections = computed<(keyof Config)[]>(() => {
+  if (tab.value === 'position') return ['position', 'hardware']
+  return section.value ? [section.value as keyof Config] : []
+})
 const dirty = computed(() => {
   if (!form.value || !saved.value) return false
   return sections.value.some((s) => JSON.stringify(form.value![s]) !== JSON.stringify(saved.value![s]))
@@ -59,7 +123,7 @@ async function save() {
   try {
     const body: Record<string, unknown> = {}
     for (const s of sections.value) body[s] = form.value[s]
-    const r = await api.put<ConfigPutResult>('/config', body)
+    const r = await api.put<ConfigPutResult>(withRadio('/config', configRadio.value), body)
     saved.value = r.config
     const next = { ...form.value }
     for (const s of sections.value) (next as Record<string, unknown>)[s] = structuredClone(r.config[s])
@@ -229,12 +293,20 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
 
     <section class="card overflow-hidden">
       <div class="tabs px-3 sm:px-4" role="tablist">
-        <button v-for="t in tabs" :key="t.id" role="tab" :aria-selected="tab === t.id" @click="setTab(t.id)">{{ t.label }}</button>
+        <button type="button" v-for="t in tabs" :key="t.id" role="tab" :aria-selected="tab === t.id" @click="setTab(t.id)">{{ t.label }}</button>
       </div>
 
       <div v-if="!form" class="p-6"><div class="h-48 animate-pulse rounded-xl bg-sunken" /></div>
 
       <div v-else class="p-4 sm:p-6">
+        <!-- Relay / Airtime / Position / MQTT edit one radio's settings: pick which on a multi-radio site. -->
+        <div v-if="severalRadios && radioTabs.includes(tab)" class="mb-4 flex items-center gap-2">
+          <label class="label !mb-0" for="cfg-radio">Settings for</label>
+          <select id="cfg-radio" class="input !h-8 !w-auto !py-0 text-[13px]" :value="configRadio" @change="switchRadio(($event.target as HTMLSelectElement).value)">
+            <option v-for="r in live.radios" :key="r.id" :value="r.id">{{ r.name }}</option>
+          </select>
+        </div>
+
         <!-- RADIOS: the site's radios; each is edited in a modal -->
         <RadiosPanel v-if="tab === 'radio'" :ports="ports" :regions="regions" @restart="refreshStatus()" />
 
@@ -243,9 +315,17 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
           <div class="sm:col-span-2">
             <span class="label">Role</span>
             <div class="seg">
-              <button v-for="r in relayModes" :key="r.id" :title="r.title" :aria-pressed="form.relay.role === r.id" @click="form.relay.role = r.id">{{ r.label }}</button>
+              <button type="button" v-for="r in relayModes" :key="r.id" :title="r.title" :aria-pressed="form.relay.role === r.id" @click="form.relay.role = r.id">{{ r.label }}</button>
             </div>
-            <p class="hint">Same switch as in the top bar. Router rebroadcasts first; client waits and cancels if someone else relays; mute never relays. Monitor only listens (nothing is transmitted); off ignores the radio.</p>
+            <p class="hint">Meshtastic device roles, the same switch as in the top bar, applied to the relay's meshtasticd. Router always repeats and router late does so last; client repeats after routers and client base also favours its favourites; client mute never repeats. Monitor only listens (nothing is transmitted); off ignores the radio.</p>
+          </div>
+          <RelayFavorites v-if="form.relay.role === 'client_base'" v-model="form.relay.favorites" class="sm:col-span-2" />
+          <div class="sm:col-span-2">
+            <label class="label" for="c-rebroadcast">Rebroadcast mode</label>
+            <select id="c-rebroadcast" v-model="form.relay.rebroadcast" class="input">
+              <option v-for="m in rebroadcastModes" :key="m.id" :value="m.id" :title="m.title">{{ m.label }}</option>
+            </select>
+            <p class="hint">{{ rebroadcastModes.find((m) => m.id === form?.relay.rebroadcast)?.title }}. Meshtastic's device.rebroadcast_mode on the relay.</p>
           </div>
           <div>
             <label class="label" for="c-rln">Relay long name</label>
@@ -303,8 +383,14 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
         <!-- POSITION & HARDWARE -->
         <div v-else-if="tab === 'position'" class="grid max-w-3xl gap-4 sm:grid-cols-2">
           <div class="sm:col-span-2">
-            <h4 class="eyebrow mb-1">Site position</h4>
-            <p class="hint !mt-0">A fixed location broadcast like a fixed node and answered on request. Both zero means no position.</p>
+            <div class="flex items-end justify-between gap-2">
+              <h4 class="eyebrow mb-1">Site position</h4>
+              <button v-if="form.position.latitude || form.position.longitude" type="button" class="btn btn-sm btn-ghost" @click="form.position.latitude = 0; form.position.longitude = 0">Clear</button>
+            </div>
+            <p class="hint !mt-0">A fixed location broadcast like a fixed node and answered on request. Drop a pin on the map (click, or drag the pin) or type it in. Both zero means no position.</p>
+            <div class="mt-2 h-72 overflow-hidden rounded-xl border border-line-soft">
+              <PositionPicker v-model:latitude="form.position.latitude" v-model:longitude="form.position.longitude" />
+            </div>
           </div>
           <div>
             <label class="label" for="p-lat">Latitude</label>
@@ -353,8 +439,8 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
         <!-- MQTT -->
         <MqttConnections v-else-if="tab === 'mqtt'" v-model="form.mqtt" />
 
-        <!-- EXPERIMENTAL -->
-        <ExperimentalPanel v-else-if="tab === 'experimental'" />
+        <!-- MESHTASTICD -->
+        <MeshtasticdPanel v-else-if="tab === 'meshtasticd'" class="max-w-3xl" />
 
         <!-- WEB -->
         <div v-else-if="tab === 'web'" class="grid gap-8 xl:grid-cols-2">
@@ -402,13 +488,13 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             <form class="rounded-xl border border-line-soft p-4" @submit.prevent="changePassword">
               <h4 class="card-title mb-3">Change admin password</h4>
               <div class="grid gap-3 sm:grid-cols-3">
-                <input v-model="pw.current" type="password" class="input" placeholder="Current" autocomplete="current-password" />
-                <input v-model="pw.next" type="password" class="input" placeholder="New (8+ chars)" autocomplete="new-password" />
-                <input v-model="pw.repeat" type="password" class="input" placeholder="Repeat new" autocomplete="new-password" />
+                <input id="pw-current" v-model="pw.current" aria-label="Current password" type="password" class="input" placeholder="Current" autocomplete="current-password" />
+                <input id="pw-next" v-model="pw.next" aria-label="New password" type="password" class="input" placeholder="New (8+ chars)" autocomplete="new-password" />
+                <input id="pw-repeat" v-model="pw.repeat" aria-label="Repeat new password" type="password" class="input" placeholder="Repeat new" autocomplete="new-password" />
               </div>
               <div class="mt-3 flex items-center justify-between gap-2">
                 <span v-if="pw.repeat && pw.next !== pw.repeat" class="text-xs text-bad">Passwords don't match</span><span v-else />
-                <button class="btn btn-sm" :disabled="pwBusy || !pw.current || pw.next.length < 8 || pw.next !== pw.repeat"><Spinner v-if="pwBusy" />Change password</button>
+                <button type="submit" class="btn btn-sm" :disabled="pwBusy || !pw.current || pw.next.length < 8 || pw.next !== pw.repeat"><Spinner v-if="pwBusy" />Change password</button>
               </div>
             </form>
           </div>
@@ -417,8 +503,8 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             <h4 class="card-title">API tokens</h4>
             <p class="mb-3 mt-0.5 text-xs text-ink-3">For Home Assistant, scripts and Prometheus. A token is shown once when created.</p>
             <form class="mb-3 flex gap-2" @submit.prevent="createToken">
-              <input v-model="newTokenName" class="input" placeholder="Token name, e.g. Home Assistant" maxlength="40" />
-              <button class="btn btn-primary shrink-0" :disabled="!newTokenName.trim()"><Plus class="size-4" />Create</button>
+              <input id="token-name" v-model="newTokenName" aria-label="Token name" class="input" placeholder="Token name, e.g. Home Assistant" maxlength="40" />
+              <button type="submit" class="btn btn-primary shrink-0" :disabled="!newTokenName.trim()"><Plus class="size-4" />Create</button>
             </form>
             <div class="overflow-hidden rounded-xl border border-line-soft">
               <div v-for="t in tokens" :key="t.id" class="flex items-center gap-3 border-b border-line-soft px-3.5 py-2.5 last:border-b-0">
@@ -427,7 +513,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
                   <div class="truncate text-[13px] font-medium">{{ t.name }}</div>
                   <div class="text-2xs text-ink-3">created {{ relTime(t.created_at, now) }} · {{ t.last_used ? `last used ${relTime(t.last_used, now)}` : 'never used' }}</div>
                 </div>
-                <button class="icon-btn hover:!text-bad" title="Revoke" @click="revoke(t)"><Trash class="size-4" /></button>
+                <button type="button" class="icon-btn hover:!text-bad" title="Revoke" @click="revoke(t)"><Trash class="size-4" /></button>
               </div>
               <div v-if="!tokens.length" class="px-4 py-6 text-center text-xs text-ink-3">No API tokens yet.</div>
             </div>
@@ -440,7 +526,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
             <Download class="size-5 text-brand" />
             <h4 class="card-title mt-2">Download backup</h4>
             <p class="mt-1 text-[13px] text-ink-3">One JSON file with the config (including MQTT passwords) and every identity's private key. Store it like a password.</p>
-            <button class="btn mt-4" :disabled="downloading" @click="download"><Spinner v-if="downloading" /><Download v-else class="size-4" />Download backup</button>
+            <button type="button" class="btn mt-4" :disabled="downloading" @click="download"><Spinner v-if="downloading" /><Download v-else class="size-4" />Download backup</button>
           </div>
           <div class="rounded-xl border border-line-soft p-5">
             <Upload class="size-5 text-warn" />
@@ -451,7 +537,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
                 <Upload class="size-4" />{{ restoreFile ? restoreFile.name : 'Choose file…' }}
                 <input type="file" accept="application/json,.json" class="sr-only" @change="restoreFile = ($event.target as HTMLInputElement).files?.[0] ?? null" />
               </label>
-              <button class="btn btn-danger" :disabled="!restoreFile || restoring" @click="restore"><Spinner v-if="restoring" />Restore</button>
+              <button type="button" class="btn btn-danger" :disabled="!restoreFile || restoring" @click="restore"><Spinner v-if="restoring" />Restore</button>
             </div>
           </div>
         </div>
@@ -459,8 +545,8 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
 
       <div v-if="form && section" class="flex items-center justify-end gap-2 border-t border-line-soft bg-raised/60 px-4 py-3 sm:px-6">
         <span v-if="dirty" class="mr-auto text-xs text-warn">Unsaved changes</span>
-        <button class="btn btn-sm" :disabled="!dirty" @click="revert"><RotateCcw class="size-3.5" />Revert</button>
-        <button class="btn btn-sm btn-primary" :disabled="!dirty || saving" @click="save"><Spinner v-if="saving" />Save changes</button>
+        <button type="button" class="btn btn-sm" :disabled="!dirty" @click="revert"><RotateCcw class="size-3.5" />Revert</button>
+        <button type="button" class="btn btn-sm btn-primary" :disabled="!dirty || saving" @click="save"><Spinner v-if="saving" />Save changes</button>
       </div>
     </section>
 
@@ -472,7 +558,7 @@ const tokenExample = computed(() => `curl -H "Authorization: Bearer $TOKEN" ${lo
       </div>
       <p class="mt-3 text-xs text-ink-3">Example</p>
       <pre class="mono scroll-thin mt-1 overflow-x-auto rounded-lg bg-sunken px-3 py-2 text-[11.5px]">{{ tokenExample }}</pre>
-      <template #footer><button class="btn btn-primary" @click="created = null">I've copied it</button></template>
+      <template #footer><button type="button" class="btn btn-primary" @click="created = null">I've copied it</button></template>
     </Modal>
   </div>
 </template>

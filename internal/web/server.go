@@ -21,6 +21,7 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/links/udp"
 	"github.com/ScotMesh/RepeaterTastic/internal/logbuf"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/phoneapi"
 	"github.com/ScotMesh/RepeaterTastic/internal/plugins"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
@@ -45,12 +46,20 @@ type Options struct {
 	MapKeySource string
 	// LogLevel is the daemon's live log level; nil when the caller doesn't share it.
 	LogLevel *slog.LevelVar
-	// Federation joins the radios for experimental multi-radio identities (nil = not available).
-	Federation *mesh.Federation
 	// Restart shuts the daemon down cleanly for its supervisor to start again (nil = exit 75 at once).
 	Restart func()
 	// Plugins is the plugin manager (nil when plugins are turned off).
 	Plugins *plugins.Manager
+	// Hosted reports the meshtasticd instances the daemon runs (nil = none).
+	// Hosting runs each radio's nodes on meshtasticd, by radio ID.
+	Hosting map[string]*nodes.Hosting
+}
+
+// HostedInstance is a meshtasticd the daemon runs, for Configuration → Nodes.
+type HostedInstance struct {
+	Radio string `json:"radio"`
+	Role  string `json:"role"` // persona or identity
+	nodes.HostedStatus
 }
 
 // Radio is an additional radio served by the same web GUI.
@@ -121,28 +130,41 @@ func (s *Server) radioStats(ctx context.Context) radio.Stats { return s.radios[0
 // path, else ?radio=<id>, else the main radio. Every endpoint therefore keeps working
 // unchanged on a single-radio host.
 func (s *Server) radioFor(r *http.Request) *radioCtx {
-	if r != nil {
-		if raw := r.PathValue("id"); raw != "" {
-			if num, err := wire.ParseNodeID(raw); err == nil {
-				for _, rc := range s.radios {
-					if rc.host.Identity(num) != nil {
-						return rc
-					}
-				}
-			}
-		}
-		if want := r.URL.Query().Get("radio"); want != "" {
-			for _, rc := range s.radios {
-				if rc.id == want {
-					return rc
-				}
-			}
+	if r == nil {
+		return s.radios[0]
+	}
+	if rc := s.radioWithIdentity(r.PathValue("id")); rc != nil {
+		return rc
+	}
+	if want := r.URL.Query().Get("radio"); want != "" {
+		if rc := s.radioByID(want); rc != nil {
+			return rc
 		}
 	}
 	return s.radios[0]
 }
 
+// radioWithIdentity is the radio holding the identity with that node id, or nil.
+func (s *Server) radioWithIdentity(raw string) *radioCtx {
+	if raw == "" {
+		return nil
+	}
+	num, err := wire.ParseNodeID(raw)
+	if err != nil {
+		return nil
+	}
+	return s.radioHolding(num)
+}
+
 func (s *Server) hostFor(r *http.Request) *mesh.Host { return s.radioFor(r).host }
+
+// radiosFor is the radios a request is about: every radio with ?radio=all, else one.
+func (s *Server) radiosFor(r *http.Request) []*radioCtx {
+	if r.URL.Query().Get("radio") == "all" {
+		return s.radios
+	}
+	return []*radioCtx{s.radioFor(r)}
+}
 
 // radioOf finds the radio an identity lives on.
 func (s *Server) radioOf(id *mesh.Identity) *radioCtx {
@@ -236,9 +258,12 @@ func (s *Server) routes() {
 	pub("POST /api/v1/auth/login", s.login)
 	setup := func(pattern string, h http.HandlerFunc) { s.mux.HandleFunc(pattern, s.setupOrAuth(h)) }
 	setup("GET /api/v1/serial-ports", s.serialPorts)
+	setup("GET /api/v1/boards", s.boards)
 	setup("GET /api/v1/regions", s.regions)
 	setup("POST /api/v1/phy/preview", s.phyPreview)
 	setup("POST /api/v1/setup/probe", s.probe)
+	setup("POST /api/v1/setup/meshtasticd", s.checkMeshtasticd)
+	setup("GET /api/v1/setup/runtimes", s.runtimes)
 	priv("PUT /api/v1/auth/password", s.changePassword)
 	priv("POST /api/v1/auth/logout-all", s.logoutAll)
 
@@ -248,8 +273,9 @@ func (s *Server) routes() {
 	priv("PATCH /api/v1/radios/{id}", s.patchRadio)
 	priv("PUT /api/v1/radios/{id}", s.putRadio)
 	priv("DELETE /api/v1/radios/{id}", s.deleteRadio)
-	priv("GET /api/v1/experimental", s.getExperimental)
-	priv("PUT /api/v1/experimental", s.putExperimental)
+	priv("GET /api/v1/hosted", s.getHosted)
+	priv("PUT /api/v1/hosted", s.putHosted)
+	priv("GET /api/v1/hosted/{name}/log", s.hostedLog)
 	priv("GET /api/v1/site", s.getSite)
 	priv("PUT /api/v1/site", s.putSite)
 	priv("POST /api/v1/restart", s.restartDaemon)
@@ -261,7 +287,6 @@ func (s *Server) routes() {
 	priv("PATCH /api/v1/identities/{id}", s.patchIdentity)
 	priv("DELETE /api/v1/identities/{id}", s.deleteIdentity)
 	priv("POST /api/v1/identities/{id}/move", s.moveIdentity)
-	priv("GET /api/v1/identities/{id}/route", s.routePreview)
 	priv("GET /api/v1/nodes/{id}/sightings", s.nodeSightings)
 	priv("GET /api/v1/identities/{id}/key", s.getKey)
 	priv("PUT /api/v1/identities/{id}/channels/{index}", s.putChannel)
@@ -333,7 +358,7 @@ func (s *Server) spa() http.Handler {
 			// A missing asset is a 404, not the app page: a tab still running an older build asks
 			// for chunks that no longer exist, and must see the failure so it can reload.
 			if strings.HasPrefix(p, "assets/") {
-				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set(cacheControl, "no-store")
 				http.NotFound(w, r)
 				return
 			}
@@ -342,9 +367,9 @@ func (s *Server) spa() http.Handler {
 			p = "index.html"
 		}
 		if strings.HasPrefix(p, "assets/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.Header().Set(cacheControl, "public, max-age=31536000, immutable")
 		} else {
-			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set(cacheControl, "no-cache")
 		}
 		files.ServeHTTP(w, r)
 	})
@@ -360,6 +385,30 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// cacheControl is the header that says how long a browser may keep a response.
+const cacheControl = "Cache-Control"
+
+// statusError is an error a handler's helper returns with the HTTP status it should get.
+type statusError struct {
+	code int
+	msg  string
+}
+
+func (e *statusError) Error() string { return e.msg }
+
+// errStatus makes a statusError.
+func errStatus(code int, msg string) error { return &statusError{code: code, msg: msg} }
+
+// writeStatusError writes err with its status, or with fallback if it doesn't carry one.
+func writeStatusError(w http.ResponseWriter, fallback int, err error) {
+	var se *statusError
+	if errors.As(err, &se) {
+		writeError(w, se.code, se.msg)
+		return
+	}
+	writeError(w, fallback, err.Error())
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {

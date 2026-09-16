@@ -2,12 +2,13 @@
 // Create or import an identity. The key is previewed first so the node number and last-byte clash are visible before saving.
 import { computed, ref, watch } from 'vue'
 import { RefreshCw, TriangleAlert, CircleCheck } from '@lucide/vue'
-import { api, radio } from '@/api/client'
+import { MAIN_RADIO, api } from '@/api/client'
 import type { Identity, KeyPreview } from '@/api/types'
+import { hostedIdentityRoles } from '@/lib/relay'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import RadioFields from '@/components/identities/RadioFields.vue'
-import { live, nodeLabel, refreshAllIdentities, upsertIdentity } from '@/store/live'
+import { live, nodeLabel, refreshIdentities, upsertIdentity } from '@/store/live'
 import { toast } from '@/composables/toast'
 
 const props = defineProps<{ open: boolean; mode: 'create' | 'import' }>()
@@ -19,13 +20,7 @@ const shortTouched = ref(false)
 const port = ref(4403)
 // Only the relay persona repeats; other identities say so by default.
 const role = ref('CLIENT_MUTE')
-const radioId = ref(radio.value)
-// Follows the home radio until chosen separately.
-const defaultChosen = ref('')
-const defaultRadio = computed({
-  get: () => defaultChosen.value || radioId.value,
-  set: (v: string) => (defaultChosen.value = v === radioId.value ? '' : v),
-})
+const radioId = ref(MAIN_RADIO)
 const tab = ref<'generate' | 'import'>('generate')
 const importKey = ref('')
 const preview = ref<KeyPreview | null>(null)
@@ -35,10 +30,11 @@ const acceptClash = ref(false)
 const saving = ref(false)
 const error = ref('')
 
-const roles = ['CLIENT', 'CLIENT_MUTE', 'CLIENT_HIDDEN', 'TRACKER', 'SENSOR']
+// Every new identity runs on meshtasticd, so its role can't repeat.
+const roles = hostedIdentityRoles
 
 function nextPort() {
-  const used = new Set((live.allIdentities.length ? live.allIdentities : live.identities).map((i) => i.api?.port).filter(Boolean))
+  const used = new Set(live.identities.map((i) => i.api?.port).filter(Boolean))
   let p = 4403
   while (used.has(p)) p++
   return p
@@ -48,14 +44,13 @@ watch(
   () => props.open,
   (o) => {
     if (!o) return
-    refreshAllIdentities()
+    refreshIdentities().catch(() => {})
     longName.value = ''
     shortName.value = ''
     shortTouched.value = false
     port.value = nextPort()
     role.value = 'CLIENT_MUTE'
-    radioId.value = radio.value
-    defaultChosen.value = ''
+    radioId.value = MAIN_RADIO
     tab.value = props.mode === 'import' ? 'import' : 'generate'
     importKey.value = ''
     preview.value = null
@@ -108,7 +103,7 @@ watch(tab, (t) => {
 })
 
 const idParts = computed(() => (preview.value ? { head: preview.value.node_id.slice(0, 7), tail: preview.value.node_id.slice(7) } : null))
-const portClash = computed(() => (live.allIdentities.length ? live.allIdentities : live.identities).some((i) => i.api?.port === port.value))
+const portClash = computed(() => live.identities.some((i) => i.api?.port === port.value))
 const canSave = computed(
   () => !!longName.value.trim() && !!shortName.value.trim() && !!preview.value && !portClash.value && (!preview.value.collision || acceptClash.value),
 )
@@ -127,8 +122,6 @@ async function save() {
       radio_id: live.radios.length > 1 ? radioId.value : undefined,
     })
     upsertIdentity(ident)
-    if (defaultChosen.value && live.multiRadioIdentities)
-      upsertIdentity(await api.patch<Identity>(`/identities/${encodeURIComponent(ident.node_id)}`, { multi_radio: { default_radio: defaultChosen.value, dm: 'auto', fallback: false } }))
     toast(`${ident.long_name} created as ${ident.node_id}`)
     emit('close')
   } catch (e) {
@@ -161,8 +154,9 @@ async function save() {
         <select id="role" v-model="role" class="input">
           <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
         </select>
+        <p class="hint">Runs on meshtasticd, keeping the key RepeaterTastic generates.</p>
       </div>
-      <RadioFields v-model:home="radioId" v-model:default-radio="defaultRadio" creating class="sm:col-span-2" />
+      <RadioFields v-model:home="radioId" creating class="sm:col-span-2" />
       <div>
         <label class="label" for="port">API port</label>
         <input id="port" v-model.number="port" type="number" min="1024" max="65535" class="input tabular-nums" />
@@ -172,8 +166,8 @@ async function save() {
 
     <div class="mt-5">
       <div class="seg">
-        <button :aria-pressed="tab === 'generate'" @click="tab = 'generate'">Generate new key</button>
-        <button :aria-pressed="tab === 'import'" @click="tab = 'import'">Import existing key</button>
+        <button type="button" :aria-pressed="tab === 'generate'" @click="tab = 'generate'">Generate new key</button>
+        <button type="button" :aria-pressed="tab === 'import'" @click="tab = 'import'">Import existing key</button>
       </div>
       <div v-if="tab === 'import'" class="mt-3">
         <label class="label" for="pk">Private key (base64)</label>
@@ -185,7 +179,7 @@ async function save() {
     <div class="mt-4 rounded-xl border border-line-soft bg-raised p-4">
       <div class="flex items-center justify-between">
         <span class="eyebrow">Node number preview</span>
-        <button v-if="tab === 'generate'" class="btn btn-sm btn-ghost" :disabled="previewing" @click="generate">
+        <button type="button" v-if="tab === 'generate'" class="btn btn-sm btn-ghost" :disabled="previewing" @click="generate">
           <RefreshCw :class="['size-3.5', previewing && 'animate-spin']" />Regenerate
         </button>
       </div>
@@ -218,8 +212,8 @@ async function save() {
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
 
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="!canSave || saving" @click="save"><Spinner v-if="saving" />Create identity</button>
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="!canSave || saving" @click="save"><Spinner v-if="saving" />Create identity</button>
     </template>
   </Modal>
 </template>

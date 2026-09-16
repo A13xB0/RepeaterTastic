@@ -14,33 +14,13 @@ function readToken(): string | null {
 
 export const token = ref<string | null>(readToken())
 
-// The radio this browser is looking at on a multi-radio host. "main" (or nothing) is the default
-// radio, so single-radio hosts never see a ?radio= at all.
-const RADIO_KEY = 'rt-radio'
-function readRadio(): string {
-  try {
-    return localStorage.getItem(RADIO_KEY) || 'main'
-  } catch {
-    return 'main'
-  }
-}
-export const radio = ref<string>(readRadio())
+/** The site's main radio: requests without ?radio= are about it. */
+export const MAIN_RADIO = 'main'
 
-/** Switch radio and reload, so every view, cache and the event stream start clean. */
-export function setRadio(id: string) {
-  try {
-    localStorage.setItem(RADIO_KEY, id)
-  } catch {
-    /* storage unavailable: the switch lasts until the reload only */
-  }
-  radio.value = id
-  window.location.reload()
-}
-
-/** Adds ?radio= for a non-main radio. */
-export function withRadio(path: string): string {
-  if (!radio.value || radio.value === 'main' || /[?&]radio=/.test(path)) return path
-  return path + (path.includes('?') ? '&' : '?') + 'radio=' + encodeURIComponent(radio.value)
+/** Adds ?radio= to a path: a radio's id, or "all" for every radio of the site. */
+export function withRadio(path: string, radio: string): string {
+  if (!radio || radio === MAIN_RADIO) return path
+  return path + (path.includes('?') ? '&' : '?') + 'radio=' + encodeURIComponent(radio)
 }
 
 export function setToken(t: string | null) {
@@ -68,34 +48,50 @@ export function setUnauthorizedHandler(fn: () => void) {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
-export async function request<T>(method: Method, path: string, body?: unknown, opts: { auth?: boolean; raw?: boolean } = {}): Promise<T> {
+function buildRequestHeaders(body: unknown, opts: { auth?: boolean }): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (opts.auth !== false && token.value) headers.Authorization = `Bearer ${token.value}`
-  let res: Response
+  return headers
+}
+
+/** Runs the fetch, turning a network failure into an ApiError so callers only handle one error type. */
+async function fetchOrThrow(method: Method, path: string, headers: Record<string, string>, body: unknown): Promise<Response> {
   try {
-    res = await fetch(API_BASE + withRadio(path), { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+    return await fetch(API_BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   } catch {
     throw new ApiError(0, 'Cannot reach the RepeaterTastic daemon')
   }
-  if (res.status === 401 && opts.auth !== false) {
-    setToken(null)
-    onUnauthorized()
+}
+
+/** Reads a JSON {"error"} message from a failed response, falling back to the status line. */
+async function extractErrorMessage(res: Response): Promise<string> {
+  const fallback = `${res.status} ${res.statusText}`
+  try {
+    const j = await res.json()
+    return j && typeof j.error === 'string' ? j.error : fallback
+  } catch {
+    return fallback
   }
-  if (!res.ok) {
-    let msg = `${res.status} ${res.statusText}`
-    try {
-      const j = await res.json()
-      if (j && typeof j.error === 'string') msg = j.error
-    } catch {
-      /* not JSON */
-    }
-    throw new ApiError(res.status, msg)
-  }
+}
+
+/** Parses a successful response per the request options: raw Response, empty body, or JSON. */
+async function parseResponseBody<T>(res: Response, opts: { raw?: boolean }): Promise<T> {
   if (opts.raw) return res as unknown as T
   if (res.status === 204) return undefined as T
   const text = await res.text()
   return (text ? JSON.parse(text) : undefined) as T
+}
+
+export async function request<T>(method: Method, path: string, body?: unknown, opts: { auth?: boolean; raw?: boolean } = {}): Promise<T> {
+  const headers = buildRequestHeaders(body, opts)
+  const res = await fetchOrThrow(method, path, headers, body)
+  if (res.status === 401 && opts.auth !== false) {
+    setToken(null)
+    onUnauthorized()
+  }
+  if (!res.ok) throw new ApiError(res.status, await extractErrorMessage(res))
+  return parseResponseBody<T>(res, opts)
 }
 
 /** Upload a file as multipart form data (field name `field`). */

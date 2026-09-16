@@ -72,7 +72,7 @@ export const state = {
   password: 'meshtastic',
   sessions: new Set<string>(),
   startedAt: now() - 5234_000,
-  relayRole: 'client' as 'client' | 'router' | 'mute' | 'monitor' | 'off',
+  relayRole: 'client' as import('../src/api/types').RelayRole,
   identities: [] as Identity[],
   nodes: new Map<string, MeshNode>(),
   packets: [] as Packet[],
@@ -90,15 +90,15 @@ export const state = {
 state.identities = [
   identity({ node_id: '!3f0a91c2', long_name: 'RepeaterTastic Relay', short_name: 'RPTR', is_relay: true, role: 'ROUTER',
     airtime_ms_1h: 9800, share_limit_pct: 100, created_at: created - HOUR }),
-  identity({ node_id: '!a1c40e07', long_name: 'Base Camp', short_name: 'BASE', api: { bind: '0.0.0.0', port: 4403, clients: 1 },
+  identity({ node_id: '!a1c40e07', long_name: 'Base Camp', short_name: 'BASE', api: { bind: '0.0.0.0', port: 4403, clients: 1, listening: true },
     airtime_ms_1h: 3200 }),
-  identity({ node_id: '!5b9e2213', long_name: 'Ops Desk', short_name: 'OPS', api: { bind: '0.0.0.0', port: 4404, clients: 0 },
+  identity({ node_id: '!5b9e2213', long_name: 'Ops Desk', short_name: 'OPS', api: { bind: '0.0.0.0', port: 4404, clients: 0, listening: true },
     outbox: 12, airtime_ms_1h: 1100, created_at: created + 2 * 24 * HOUR,
     channels: channelSlots([{ index: 1, role: 'SECONDARY', name: 'LothianOps', psk: 'q2YH8n1Vx0bE3cE1s7w8pF0c6rJmKf9Qe2bT4yUuVhA=' }]) }),
-  identity({ node_id: '!7d21e4a9', long_name: 'Weather Bot', short_name: 'WX', role: 'SENSOR', api: { bind: '0.0.0.0', port: 4405, clients: 1 },
+  identity({ node_id: '!7d21e4a9', long_name: 'Weather Bot', short_name: 'WX', role: 'SENSOR', api: { bind: '0.0.0.0', port: 4405, clients: 1, listening: true },
     airtime_ms_1h: 133600, created_at: created + 6 * 24 * HOUR }),
   identity({ node_id: '!e41b6c58', long_name: 'Pentland Hut', short_name: 'PHUT', enabled: false,
-    api: { bind: '0.0.0.0', port: 4406, clients: 0 }, created_at: now() - 3 * 24 * HOUR }),
+    api: { bind: '0.0.0.0', port: 4406, clients: 0, listening: true }, created_at: now() - 3 * 24 * HOUR }),
 ]
 
 export const identityById = (id: string) => state.identities.find((i) => i.node_id === id)
@@ -532,7 +532,7 @@ function packetLog(p: Packet, emit?: Emit) {
     case 'relayed': return log('info', `relay: rebroadcast ${id} from ${who} (hop_limit ${p.hop_limit}→${Math.max(0, p.hop_limit - 1)})`, emit, p.time)
     case 'dup': return log('debug', `history: duplicate ${id} from ${who} via relay 0x${p.relay_node.toString(16)}, dropped`, emit, p.time)
     case 'undecryptable': return log('debug', `rx: ${p.size} B from ${who} on unknown channel hash 0x${p.channel_hash.toString(16).padStart(2, '0')}`, emit, p.time)
-    case 'ours': return log('info', `${p.direction} ${p.port} ${id} ${p.direction === 'tx' ? `${who} → ${nodeName(p.to)}` : `${who} → ${nodeName(p.to)}`} (${p.airtime_ms} ms)`, emit, p.time)
+    case 'ours': return log('info', `${p.direction} ${p.port} ${id} ${who} → ${nodeName(p.to)} (${p.airtime_ms} ms)`, emit, p.time)
     default: return log('debug', `rx ${p.port} ${id} from ${who} snr=${p.snr} rssi=${p.rssi} hops=${p.hop_start - p.hop_limit}`, emit, p.time)
   }
 }
@@ -569,6 +569,7 @@ export function status(): Status {
   const phy = resolvePhy(state.config.radio.region, state.config.radio.preset, state.config.radio.primary_channel, state.config.radio.tx_power_dbm)
   return {
     version: '0.1.0', uptime_s: Math.floor((now() - state.startedAt) / 1000),
+    nodes: { state: 'ok', nodes: state.identities.length, up: state.identities.length, problems: [], version: '2.8.0.47db0e3', launcher: 'meshtasticd' },
     radio: { driver: 'kiss', device: '/dev/ttyUSB0', firmware: 'Mesh KISS v2', name: 'Heltec V3', connected: true, reconnects: 0,
       rx: state.counters.rx, tx: state.counters.tx, errors: 2, noise_floor_dbm: state.noise },
     phy,
@@ -637,7 +638,7 @@ export function identityStats(w: StatsWindow): IdentityStat[] {
 
 state.config = {
   radio: { type: 'kiss', port: '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0', region: 'EU_868', preset: 'LONG_FAST', primary_channel: '', tx_power_dbm: 27, frequency_offset_mhz: 0, baud: 115200, hop_limit: 3, channel_num: 0, override_frequency_mhz: 0 },
-  relay: { role: 'client', long_name: 'RepeaterTastic Relay', short_name: 'RPTR', local_dm: 'software' },
+  relay: { role: 'client', rebroadcast: 'all', favorites: [], long_name: 'RepeaterTastic Relay', short_name: 'RPTR', local_dm: 'software' },
   airtime: { duty_cycle_percent: 10, identity_share_percent: 25, nodeinfo_interval: '3h', telemetry_interval: 'off', override_duty_cycle: false, cw_min: 3, cw_max: 8 },
   web: { bind: '0.0.0.0', port: 8080, session_ttl: '24h', map_tile_url: '', map_key_source: 'built in', mdns: true, log_level: 'info' },
   position: { latitude: 55.9533, longitude: -3.1883, altitude: 47, precision_bits: 32, interval: '3h', identities: 'relay' },

@@ -31,7 +31,7 @@ off**.
 | GUI | **Plugins → Install plugin**, then drop the .zip or paste a URL |
 | Folder | Copy the .zip into the plugins folder's `inbox/` (`<state_dir>/plugins/inbox/`, or `<plugins.dir>/inbox/` when `plugins.dir` is set). It installs within a few seconds; a bundle that can't be used moves to `inbox/.rejected/` next to a `.error.txt` giving the reason |
 | Command line | `sudo -u repeatertastic repeatertastic plugin install hello-plugin.zip` (a file or an `http(s)://` URL) |
-| Docker | `docker cp hello-plugin.zip repeatertastic:/data/plugins/inbox/`, or the command line inside the container: `docker exec repeatertastic /repeatertastic plugin list` |
+| Docker | `docker cp hello-plugin.zip repeatertastic:/data/plugins/inbox/`, or the command line inside the container: `docker exec repeatertastic repeatertastic plugin list` |
 
 Installing a bundle with the same `id` upgrades the plugin. The upgrade keeps the plugin's
 switch, settings and granted permissions and restarts it. If the new version asks for permissions

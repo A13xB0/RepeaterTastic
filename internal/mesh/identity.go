@@ -1,7 +1,6 @@
 package mesh
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -40,6 +39,9 @@ type Identity struct {
 	CreatedAt  time.Time
 	// ShareLimitPct is this identity's slice of the hourly duty budget (0 = host default).
 	ShareLimitPct float64
+	// AppSettings lets an app connected to the identity change its node's settings (radio,
+	// device, modules, position) and reboot or reset it. Off, those admin messages are refused.
+	AppSettings bool
 	// HopLimit caps the hop limit of every packet this identity originates, whatever its
 	// client asks for (0 = the radio's hop_limit). Keeps a chatty client, such as rnsd's
 	// RNS tunnel, from flooding the whole mesh.
@@ -49,18 +51,13 @@ type Identity struct {
 	OwnPosition *IdentityPosition
 	// PositionSecs is this identity's position broadcast interval (0 = the radio's).
 	PositionSecs uint32
-	MACAddr      []byte
-	// multiRadio is experimental routing across radios (nil = home radio only).
-	multiRadio *MultiRadio
+	// remote is the real node this identity stands for (nil = a virtual node run by the host).
+	remote Remote
 
-	sinks             map[ClientSink]struct{}
-	backlog           []*pb.FromRadio
-	lastNodeInfoTx    time.Time
-	nextNodeInfo      time.Time
-	nextPosition      time.Time
-	lastPositionReply time.Time
-	nodeInfoReplied   map[uint32]time.Time
-	lastTraceroute    time.Time
+	sinks          map[ClientSink]struct{}
+	backlog        []*pb.FromRadio
+	lastNodeInfoTx time.Time
+	lastTraceroute time.Time
 }
 
 // NewIdentity creates an identity from a private key (nil generates one).
@@ -91,7 +88,6 @@ func NewIdentity(priv []byte, longName, shortName string) (*Identity, error) {
 		PublicKey:  pub,
 		Enabled:    true,
 		CreatedAt:  time.Now(),
-		MACAddr:    mac,
 		User: &pb.User{
 			Id:        wire.NodeID(num),
 			LongName:  truncate(longName, 39),
@@ -101,8 +97,7 @@ func NewIdentity(priv []byte, longName, shortName string) (*Identity, error) {
 			PublicKey: pub,
 			Macaddr:   mac,
 		},
-		sinks:           map[ClientSink]struct{}{},
-		nodeInfoReplied: map[uint32]time.Time{},
+		sinks: map[ClientSink]struct{}{},
 	}
 	id.Channels[0] = &pb.Channel{Index: 0, Role: pb.Channel_PRIMARY,
 		Settings: &pb.ChannelSettings{Psk: []byte{1}, ModuleSettings: &pb.ModuleSettings{}}}
@@ -262,11 +257,11 @@ type IdentityRecord struct {
 	APIPort      int               `json:"api_port,omitempty"`
 	CreatedAt    int64             `json:"created_at"`
 	ShareLimit   float64           `json:"share_limit_pct,omitempty"`
+	AppSettings  bool              `json:"app_settings,omitempty"`
 	HopLimit     uint32            `json:"hop_limit,omitempty"`
 	Position     *IdentityPosition `json:"position,omitempty"`
 	PositionSecs uint32            `json:"position_secs,omitempty"`
 	Channels     []string          `json:"channels"` // base64 protobuf Channel
-	MultiRadio   *MultiRadio       `json:"multi_radio,omitempty"`
 }
 
 func (id *Identity) Record() IdentityRecord {
@@ -276,8 +271,8 @@ func (id *Identity) Record() IdentityRecord {
 		PrivateKey: base64.StdEncoding.EncodeToString(id.PrivateKey),
 		LongName:   id.User.LongName, ShortName: id.User.ShortName, Role: id.User.Role.String(),
 		IsRelay: id.IsRelay, Enabled: id.Enabled, APIBind: id.APIBind, APIPort: id.APIPort,
-		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct, HopLimit: id.HopLimit,
-		Position: id.OwnPosition, PositionSecs: id.PositionSecs, MultiRadio: id.multiRadio.clone(),
+		CreatedAt: id.CreatedAt.UnixMilli(), ShareLimit: id.ShareLimitPct, AppSettings: id.AppSettings, HopLimit: id.HopLimit,
+		Position: id.OwnPosition, PositionSecs: id.PositionSecs,
 	}
 	for _, ch := range id.Channels {
 		b, _ := proto.Marshal(ch)
@@ -286,26 +281,53 @@ func (id *Identity) Record() IdentityRecord {
 	return r
 }
 
-func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
+// Key is the record's private key.
+func (r IdentityRecord) Key() ([]byte, error) {
 	priv, err := base64.StdEncoding.DecodeString(r.PrivateKey)
 	if err != nil || len(priv) != 32 {
 		return nil, fmt.Errorf("bad private key for %q", r.LongName)
+	}
+	return priv, nil
+}
+
+// NodeNum is the node number the record's key gives.
+func (r IdentityRecord) NodeNum() uint32 {
+	priv, err := r.Key()
+	if err != nil {
+		return 0
+	}
+	pub, err := wire.PublicKey(priv)
+	if err != nil {
+		return 0
+	}
+	return wire.NodeNumFromPublicKey(pub)
+}
+
+// applyRecordSettings takes the settings the host keeps for an identity from a record.
+func (id *Identity) applyRecordSettings(r IdentityRecord) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	id.IsRelay, id.Enabled, id.APIBind, id.APIPort = r.IsRelay, r.Enabled, r.APIBind, r.APIPort
+	id.ShareLimitPct, id.AppSettings = r.ShareLimit, r.AppSettings
+	id.HopLimit = r.HopLimit
+	id.OwnPosition, id.PositionSecs = r.Position, r.PositionSecs
+	if r.CreatedAt > 0 {
+		id.CreatedAt = time.UnixMilli(r.CreatedAt)
+	}
+}
+
+func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
+	priv, err := r.Key()
+	if err != nil {
+		return nil, err
 	}
 	id, err := NewIdentity(priv, r.LongName, r.ShortName)
 	if err != nil {
 		return nil, err
 	}
-	id.IsRelay, id.Enabled, id.APIBind, id.APIPort = r.IsRelay, r.Enabled, r.APIBind, r.APIPort
-	id.ShareLimitPct = r.ShareLimit
-	id.HopLimit = r.HopLimit
-	id.OwnPosition, id.PositionSecs = r.Position, r.PositionSecs
-	id.multiRadio = r.MultiRadio.clone()
-	defer id.convertLegacy() // after the channels below are loaded
+	id.applyRecordSettings(r)
 	if v, ok := pb.Config_DeviceConfig_Role_value[r.Role]; ok {
 		id.User.Role = pb.Config_DeviceConfig_Role(v)
-	}
-	if r.CreatedAt > 0 {
-		id.CreatedAt = time.UnixMilli(r.CreatedAt)
 	}
 	for i, s := range r.Channels {
 		if i >= MaxChannels {
@@ -325,12 +347,6 @@ func IdentityFromRecord(r IdentityRecord) (*Identity, error) {
 		}
 	}
 	return id, nil
-}
-
-func randomBytes(n int) []byte {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return b
 }
 
 // SetChannel applies a client or web channel change. The primary channel's name and role are
@@ -353,16 +369,8 @@ func (h *Host) SetChannel(id *Identity, ch *pb.Channel) error {
 		return errors.New("only channel 0 can be primary")
 	}
 	id.mu.Lock()
-	old := id.Channels[nc.Index]
 	id.Channels[nc.Index] = nc
-	// Routing across radios is kept per slot: a different channel in the slot starts from the defaults.
-	if mr := id.multiRadio; mr != nil && nc.Index > 0 && !sameChannel(old, nc) {
-		delete(mr.Channels, int(nc.Index)) // back on the default radio
-	}
 	id.mu.Unlock()
-	if h.fed != nil {
-		h.fed.Changed()
-	}
 	h.ChannelsChanged()
 	h.Bus.Publish(Event{Type: "identity", Data: id.NodeID()})
 	return nil
@@ -428,7 +436,6 @@ func (id *Identity) SetFixedPosition(p *IdentityPosition) error {
 		cp := *p
 		id.OwnPosition = &cp
 	}
-	id.nextPosition = time.Time{} // broadcast the change soon
 	return nil
 }
 
@@ -446,29 +453,34 @@ func (id *Identity) SetPositionInterval(secs uint32) {
 	id.mu.Unlock()
 }
 
-// sameChannel reports whether two channel slots hold the same channel (role, name and key).
-func sameChannel(a, b *pb.Channel) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return a.Role == b.Role && a.GetSettings().GetName() == b.GetSettings().GetName() &&
-		string(a.GetSettings().GetPsk()) == string(b.GetSettings().GetPsk())
-}
-
 // IdentitySettings are the identity's plain settings, changed together under its lock.
 type IdentitySettings struct {
 	Enabled       bool
 	APIPort       int
 	APIBind       string
 	ShareLimitPct float64
+	AppSettings   bool
 }
 
-// SetSettings changes Enabled, APIPort, APIBind and ShareLimitPct under the identity's lock, so a
+// SetSettings changes Enabled, APIPort, APIBind, ShareLimitPct and AppSettings under the identity's lock, so a
 // concurrent Record (saving) never sees a half-changed identity.
 func (id *Identity) SetSettings(fn func(*IdentitySettings)) {
 	id.mu.Lock()
 	defer id.mu.Unlock()
-	x := IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct}
+	x := id.settingsLocked()
 	fn(&x)
-	id.Enabled, id.APIPort, id.APIBind, id.ShareLimitPct = x.Enabled, x.APIPort, x.APIBind, x.ShareLimitPct
+	id.Enabled, id.APIPort, id.APIBind, id.ShareLimitPct, id.AppSettings = x.Enabled, x.APIPort, x.APIBind, x.ShareLimitPct, x.AppSettings
+}
+
+// Settings reads the settings SetSettings changes, under the identity's lock.
+func (id *Identity) Settings() IdentitySettings {
+	id.mu.RLock()
+	defer id.mu.RUnlock()
+	return id.settingsLocked()
+}
+
+// settingsLocked reads the settings; the caller holds id.mu.
+func (id *Identity) settingsLocked() IdentitySettings {
+	return IdentitySettings{Enabled: id.Enabled, APIPort: id.APIPort, APIBind: id.APIBind, ShareLimitPct: id.ShareLimitPct,
+		AppSettings: id.AppSettings}
 }

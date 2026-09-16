@@ -21,7 +21,7 @@ function u32le(b: number[], o: number): number {
 
 export function hexToBytes(hex: string): number[] {
   const out: number[] = []
-  for (let i = 0; i + 1 < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16))
+  for (let i = 0; i + 1 < hex.length; i += 2) out.push(Number.parseInt(hex.slice(i, i + 2), 16))
   return out
 }
 
@@ -56,7 +56,7 @@ export function hexDump(rawHex: string, width = 16): { offset: string; hex: stri
     rows.push({
       offset: i.toString(16).padStart(4, '0'),
       hex: chunk.map((x) => x.toString(16).padStart(2, '0')).join(' '),
-      ascii: chunk.map((x) => (x >= 32 && x < 127 ? String.fromCharCode(x) : '·')).join(''),
+      ascii: chunk.map((x) => (x >= 32 && x < 127 ? String.fromCodePoint(x) : '·')).join(''),
     })
   }
   return rows

@@ -7,7 +7,7 @@ import KindChip from '@/components/ui/KindChip.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import { decodeHeader, hexDump } from '@/lib/header'
 import { BROADCAST, airtime, dateTime, hex, num, portLabel } from '@/lib/format'
-import { nodeByLastByte, nodeLabel } from '@/store/live'
+import { live, nodeByLastByte, nodeLabel, radioName } from '@/store/live'
 
 const props = defineProps<{ packet: Packet | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -61,6 +61,10 @@ function lastByteName(b: number) {
       <p v-if="packet.summary" class="rounded-xl border border-line-soft bg-raised px-3.5 py-2.5 text-[13px]">{{ packet.summary }}</p>
 
       <dl class="kv">
+        <template v-if="live.radios.length > 1">
+          <dt>Radio</dt>
+          <dd>{{ radioName(packet.radio_id ?? 'main') }}</dd>
+        </template>
         <dt>From</dt>
         <dd><span class="font-medium">{{ nodeLabel(packet.from).long }}</span> <span class="mono text-ink-3">{{ packet.from }}</span></dd>
         <dt>To</dt>

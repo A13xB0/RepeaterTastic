@@ -5,6 +5,8 @@
 import { computed, ref, watch } from 'vue'
 import { api, enc } from '@/api/client'
 import type { Config, ConfigPutResult, Phy, Region, SerialPort } from '@/api/types'
+import ModemDeviceField from '@/components/config/ModemDeviceField.vue'
+import RadioNodesPanel from '@/components/config/RadioNodesPanel.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { live, refreshRadios, refreshStatus } from '@/store/live'
@@ -84,7 +86,7 @@ async function save() {
 </script>
 
 <template>
-  <Modal :open="!!radioId" :title="`Edit ${summary?.name ?? radioId ?? ''}`" subtitle="LoRa & modem. Relay, Airtime, Position and MQTT follow the radio picked at the top of the page." size="xl" @close="emit('close')">
+  <Modal :open="!!radioId" :title="`Edit ${summary?.name ?? radioId ?? ''}`" subtitle="LoRa & modem. Relay, Airtime, Position and MQTT are on their own tabs, with a radio selector." size="xl" @close="emit('close')">
     <div v-if="loading || !form" class="h-64 animate-pulse rounded-xl bg-sunken" />
     <div v-else class="grid gap-6 lg:grid-cols-[1fr_17rem]">
       <div class="grid content-start gap-4 sm:grid-cols-2">
@@ -97,11 +99,11 @@ async function save() {
           <input id="rs-id" :value="radioId" class="input mono" readonly />
         </div>
         <div class="sm:col-span-2">
-          <label class="label" for="rs-port">Modem serial port</label>
-          <input id="rs-port" v-model="form.port" class="input mono" list="rs-ports" />
-          <datalist id="rs-ports"><option v-for="p in ports" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
-          <p class="hint">Driver <span class="mono">{{ form.type }}</span>. Prefer <span class="mono">/dev/serial/by-id/…</span> so the path survives reboots. Changing it needs a restart.</p>
+          <ModemDeviceField id="rs-port" v-model="form.port" v-model:driver="form.type" :ports="ports" restart-hint />
         </div>
+        <p v-if="form.type === 'meshtastic'" class="rounded-lg border border-brand/30 bg-brand/6 px-3 py-2 text-xs text-ink-2 sm:col-span-2">
+          These settings are written to the board: region, preset, primary channel, TX power and hop limit, and the relay role. The board may reboot to apply them.
+        </p>
         <div>
           <label class="label" for="rs-region">Region</label>
           <select id="rs-region" v-model="form.region" class="input">
@@ -174,10 +176,11 @@ async function save() {
         <div v-else class="mt-2 h-24 animate-pulse rounded-lg bg-sunken" />
       </aside>
     </div>
+    <RadioNodesPanel v-if="radioId && form" :radio-id="radioId" :board="form.type === 'meshtastic'" />
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
-      <button class="btn" @click="emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="saving || !form || !dirty" @click="save"><Spinner v-if="saving" />Save radio</button>
+      <button type="button" class="btn" @click="emit('close')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="saving || !form || !dirty" @click="save"><Spinner v-if="saving" />Save radio</button>
     </template>
   </Modal>
 </template>

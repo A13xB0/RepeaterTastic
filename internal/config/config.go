@@ -14,7 +14,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
+	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
@@ -35,10 +37,10 @@ type Config struct {
 	// top-level radio/mesh/relay/airtime/links/identities above are the "main" radio.
 	Radios []RadioInstance `yaml:"radios,omitempty" json:"radios,omitempty"`
 	Site   Site            `yaml:"site,omitempty" json:"site,omitempty"`
-	// Experimental switches features that may change or go away. All off by default.
-	Experimental Experimental `yaml:"experimental,omitempty" json:"experimental,omitempty"`
 	// Plugins are separate programs that extend RepeaterTastic (docs/plugins.md).
 	Plugins Plugins `yaml:"plugins" json:"plugins"`
+	// Hosted says how meshtasticd runs the nodes (docs/meshtasticd-nodes.md).
+	Hosted Hosted `yaml:"hosted,omitempty" json:"hosted"`
 
 	path string
 }
@@ -102,11 +104,29 @@ type Position struct {
 	Identities string `yaml:"identities" json:"identities"`
 }
 
-// Experimental holds opt-in features that are still being proven.
-type Experimental struct {
-	// MultiRadioIdentities lets one identity send and receive on several radios, routed by
-	// channel and destination. Set in the web GUI only.
-	MultiRadioIdentities bool `yaml:"multi_radio_identities,omitempty" json:"multi_radio_identities"`
+// Hosted says how RepeaterTastic runs meshtasticd: every radio's relay persona (unless the radio is
+// a Meshtastic board) and identities are meshtasticd instances.
+type Hosted struct {
+	// Meshtasticd is the binary to run ("" = meshtasticd on PATH). It needs version 2.8 or newer.
+	Meshtasticd string `yaml:"meshtasticd,omitempty" json:"meshtasticd"`
+	// DockerImage runs the instances in Docker from this image instead (API published on
+	// 127.0.0.1 only), e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian.
+	DockerImage string `yaml:"docker_image,omitempty" json:"docker_image"`
+	// PortBase is the first client API port for hosted nodes (default 4500); radio n (0 = main)
+	// uses the block of 100 from PortBase + 100·n: its persona first, then its identities.
+	// meshtasticd listens on every interface when run directly.
+	PortBase int `yaml:"port_base,omitempty" json:"port_base"`
+}
+
+// RadioPortBase is the first client API port of radio index n's hosted nodes.
+func (h Hosted) RadioPortBase(n int) int { return h.HostedPortBase() + 100*n }
+
+// HostedPortBase is Hosted.PortBase with its default.
+func (h Hosted) HostedPortBase() int {
+	if h.PortBase == 0 {
+		return 4500
+	}
+	return h.PortBase
 }
 
 // Site holds settings shared by every radio on the mast.
@@ -152,40 +172,55 @@ func (c *Config) RadioConfigs() []RadioConfig {
 	return out
 }
 
+// normalizeRoles writes relay roles under their current names ("mute" → client_mute), so a saved
+// config speaks Meshtastic's role names.
+func (c *Config) normalizeRoles() {
+	c.Relay.Role = mesh.NormalizeRelayRole(c.Relay.Role)
+	c.Relay.Rebroadcast = strings.ToLower(c.Relay.Rebroadcast)
+	for i := range c.Radios {
+		c.Radios[i].Relay.Role = mesh.NormalizeRelayRole(c.Radios[i].Relay.Role)
+		c.Radios[i].Relay.Rebroadcast = strings.ToLower(c.Radios[i].Relay.Rebroadcast)
+	}
+}
+
 // fillRadioDefaults gives extra radios the defaults a top-level radio would get, inheriting
 // the region and NodeInfo interval from the main radio. Extra relays default to mute:
 // a new radio on a mast shouldn't start repeating until someone decides it should.
 func (c *Config) fillRadioDefaults() {
 	d := Default()
 	for i := range c.Radios {
-		r := &c.Radios[i]
-		if r.Radio.Driver == "" {
-			r.Radio.Driver = d.Radio.Driver
+		c.fillOneRadioDefaults(&c.Radios[i], d)
+	}
+}
+
+// fillOneRadioDefaults fills one extra radio's unset fields from d and the main radio.
+func (c *Config) fillOneRadioDefaults(r *RadioInstance, d *Config) {
+	if r.Radio.Driver == "" {
+		r.Radio.Driver = d.Radio.Driver
+	}
+	if r.Radio.Baud == 0 {
+		r.Radio.Baud = d.Radio.Baud
+	}
+	if r.Mesh.Region == "" {
+		r.Mesh.Region = c.Mesh.Region
+	}
+	if r.Mesh.HopLimit == 0 {
+		r.Mesh.HopLimit = d.Mesh.HopLimit
+	}
+	if r.Relay.Role == "" {
+		r.Relay.Role = mesh.RoleClientMute
+	}
+	if r.Relay.LongName == "" {
+		r.Relay.LongName = "RepeaterTastic " + r.ID + " Relay"
+	}
+	if r.Relay.ShortName == "" {
+		r.Relay.ShortName = strings.ToUpper(r.ID)
+		if len(r.Relay.ShortName) > 4 {
+			r.Relay.ShortName = r.Relay.ShortName[:4]
 		}
-		if r.Radio.Baud == 0 {
-			r.Radio.Baud = d.Radio.Baud
-		}
-		if r.Mesh.Region == "" {
-			r.Mesh.Region = c.Mesh.Region
-		}
-		if r.Mesh.HopLimit == 0 {
-			r.Mesh.HopLimit = d.Mesh.HopLimit
-		}
-		if r.Relay.Role == "" {
-			r.Relay.Role = mesh.RoleMute
-		}
-		if r.Relay.LongName == "" {
-			r.Relay.LongName = "RepeaterTastic " + r.ID + " Relay"
-		}
-		if r.Relay.ShortName == "" {
-			r.Relay.ShortName = strings.ToUpper(r.ID)
-			if len(r.Relay.ShortName) > 4 {
-				r.Relay.ShortName = r.Relay.ShortName[:4]
-			}
-		}
-		if r.Airtime.NodeInfoInterval == 0 {
-			r.Airtime.NodeInfoInterval = c.Airtime.NodeInfoInterval
-		}
+	}
+	if r.Airtime.NodeInfoInterval == 0 {
+		r.Airtime.NodeInfoInterval = c.Airtime.NodeInfoInterval
 	}
 }
 
@@ -197,42 +232,74 @@ func (c *Config) validateRadios() error {
 	seenPort := map[int]string{}
 	for i, rc := range c.RadioConfigs() {
 		if i > 0 {
-			if !radioIDPattern.MatchString(rc.ID) {
-				return fmt.Errorf("radios: id %q must be 1-24 lowercase letters, digits or dashes", rc.ID)
-			}
-			if seenID[rc.ID] {
-				return fmt.Errorf("radios: id %q is used twice (%q is the top-level radio)", rc.ID, MainRadioID)
-			}
-			seenID[rc.ID] = true
-			if err := rc.Config.validateOne(); err != nil {
-				return fmt.Errorf("radios[%s]: %w", rc.ID, err)
+			if err := rc.validateExtra(seenID); err != nil {
+				return err
 			}
 		}
-		if rc.Radio.Driver == "kiss" && rc.Radio.Device != "" {
-			dev := rc.Radio.Device
-			if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
-				dev = real
-			}
-			if other, ok := seenDev[dev]; ok {
-				return fmt.Errorf("radios %s and %s both use %s", other, rc.ID, rc.Radio.Device)
-			}
-			seenDev[dev] = rc.ID
+		if err := rc.claimDevice(seenDev); err != nil {
+			return err
 		}
-		for _, id := range rc.Identities {
-			if id.APIPort <= 0 {
-				continue
-			}
-			if other, ok := seenPort[id.APIPort]; ok {
-				return fmt.Errorf("api_port %d is used by radios %s and %s", id.APIPort, other, rc.ID)
-			}
-			seenPort[id.APIPort] = rc.ID
+		if err := rc.claimAPIPorts(seenPort); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
+// validateExtra checks an extra radio's ID is well formed and unused, then its sections.
+func (rc RadioConfig) validateExtra(seenID map[string]bool) error {
+	if !radioIDPattern.MatchString(rc.ID) {
+		return fmt.Errorf("radios: id %q must be 1-24 lowercase letters, digits or dashes", rc.ID)
+	}
+	if seenID[rc.ID] {
+		return fmt.Errorf("radios: id %q is used twice (%q is the top-level radio)", rc.ID, MainRadioID)
+	}
+	seenID[rc.ID] = true
+	if err := rc.validateOne(); err != nil {
+		return fmt.Errorf("radios[%s]: %w", rc.ID, err)
+	}
+	return nil
+}
+
+// claimDevice records the radio's device in seenDev, failing if another radio already has it.
+func (rc RadioConfig) claimDevice(seenDev map[string]string) error {
+	drv := rc.Radio.Driver
+	if (drv != "kiss" && drv != "spi" && drv != "meshtastic") || rc.Radio.Device == "" {
+		return nil
+	}
+	dev := rc.Radio.Device
+	if addr, err := mtclient.TCPAddress(dev); drv == "meshtastic" && !mtclient.IsSerial(dev) && err == nil {
+		dev = strings.ToLower(addr) // one board, one client
+	} else if real, err := filepath.EvalSymlinks(dev); err == nil { // /dev/serial/by-id/… and /dev/ttyUSB0 can be one modem
+		dev = real
+	}
+	if other, ok := seenDev[dev]; ok {
+		return fmt.Errorf("radios %s and %s both use %s", other, rc.ID, rc.Radio.Device)
+	}
+	seenDev[dev] = rc.ID
+	return nil
+}
+
+// claimAPIPorts records the radio's identity API ports in seenPort, failing on a clash.
+func (rc RadioConfig) claimAPIPorts(seenPort map[int]string) error {
+	for _, id := range rc.Identities {
+		if id.APIPort <= 0 {
+			continue
+		}
+		if other, ok := seenPort[id.APIPort]; ok {
+			return fmt.Errorf("api_port %d is used by radios %s and %s", id.APIPort, other, rc.ID)
+		}
+		seenPort[id.APIPort] = rc.ID
+	}
+	return nil
+}
+
 type Radio struct {
-	Driver string `yaml:"driver" json:"driver"` // kiss | sim
+	Driver string `yaml:"driver" json:"driver"` // kiss | spi | meshtastic | sim | none
+	// Device is the serial port for kiss. For spi it is a meshtasticd board file
+	// (/etc/meshtasticd/config.d/lora-….yaml), a built-in board name, or auto. For meshtastic it is
+	// the serial port of a board running Meshtastic firmware, or a network board's address
+	// (host or host:port): the board is the radio's relay and carries the identities, a hop behind.
 	Device string `yaml:"device" json:"device"`
 	Baud   int    `yaml:"baud" json:"baud"`
 }
@@ -252,9 +319,17 @@ type Mesh struct {
 }
 
 type Relay struct {
-	Role      string `yaml:"role" json:"role"`
-	LongName  string `yaml:"long_name" json:"long_name"`
-	ShortName string `yaml:"short_name" json:"short_name"`
+	// Role is a Meshtastic device role for the relay (client, client_base, client_mute, router,
+	// router_late), or monitor or off. "mute" is read as client_mute.
+	Role string `yaml:"role" json:"role"`
+	// Rebroadcast is Meshtastic's rebroadcast mode: all (default), all_skip_decoding, local_only,
+	// known_only, none or core_portnums_only. The built-in relay only honours none.
+	Rebroadcast string `yaml:"rebroadcast,omitempty" json:"rebroadcast"`
+	// Favorites are node IDs (!xxxxxxxx) the relay treats as its own when its role is client_base:
+	// packets from or to them are relayed like router_late. This host's identities always count.
+	Favorites []string `yaml:"favorites,omitempty" json:"favorites"`
+	LongName  string   `yaml:"long_name" json:"long_name"`
+	ShortName string   `yaml:"short_name" json:"short_name"`
 }
 
 type Airtime struct {
@@ -408,24 +483,8 @@ func (m MQTT) SelectionOrDefault() string {
 }
 
 func (m MQTT) validate() error {
-	switch m.ModeOrDefault() {
-	case MQTTGateway, MQTTUplinkOnly, MQTTMapOnly, MQTTMonitor:
-	case MQTTBridge:
-		if !m.BridgeAcknowledged {
-			return errors.New("mode bridge can carry private channels off the mesh: set bridge_acknowledged to confirm")
-		}
-	default:
-		return fmt.Errorf("mode must be gateway, uplink_only, map_only, monitor or bridge, not %q", m.Mode)
-	}
-	switch m.FormatOrDefault() {
-	case "encrypted", "json", "both":
-	default:
-		return fmt.Errorf("format must be encrypted, json or both, not %q", m.Format)
-	}
-	switch m.SelectionOrDefault() {
-	case ChannelsOverride, ChannelsCombine, ChannelsIdentity:
-	default:
-		return fmt.Errorf("channel_selection must be override, combine or identity, not %q", m.ChannelSelection)
+	if err := m.validateChoices(); err != nil {
+		return err
 	}
 	if m.IgnoreConsent && m.ModeOrDefault() != MQTTBridge {
 		return errors.New("ignore_consent is only allowed on a bridge")
@@ -444,6 +503,30 @@ func (m MQTT) validate() error {
 	}
 	if p := m.MapReport.PositionPrecision; p < 0 || p > 32 {
 		return errors.New("map_report.position_precision must be 0-32")
+	}
+	return nil
+}
+
+// validateChoices checks the mode, format and channel selection are known values.
+func (m MQTT) validateChoices() error {
+	switch m.ModeOrDefault() {
+	case MQTTGateway, MQTTUplinkOnly, MQTTMapOnly, MQTTMonitor:
+	case MQTTBridge:
+		if !m.BridgeAcknowledged {
+			return errors.New("mode bridge can carry private channels off the mesh: set bridge_acknowledged to confirm")
+		}
+	default:
+		return fmt.Errorf("mode must be gateway, uplink_only, map_only, monitor or bridge, not %q", m.Mode)
+	}
+	switch m.FormatOrDefault() {
+	case "encrypted", "json", "both":
+	default:
+		return fmt.Errorf("format must be encrypted, json or both, not %q", m.Format)
+	}
+	switch m.SelectionOrDefault() {
+	case ChannelsOverride, ChannelsCombine, ChannelsIdentity:
+	default:
+		return fmt.Errorf("channel_selection must be override, combine or identity, not %q", m.ChannelSelection)
 	}
 	return nil
 }
@@ -532,6 +615,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	c.fillRadioDefaults()
+	c.normalizeRoles()
 	c.Links.MQTT.fillNames()
 	for i := range c.Radios {
 		c.Radios[i].Links.MQTT.fillNames()
@@ -575,7 +659,7 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("log_level must be debug, info, warn or error, not %q", c.LogLevel)
 	}
-	if u := c.Web.MapTileURL; u != "" && (!(strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://")) ||
+	if u := c.Web.MapTileURL; u != "" && (!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") ||
 		!strings.Contains(u, "{z}") || !strings.Contains(u, "{x}") || !strings.Contains(u, "{y}")) {
 		return errors.New("web.map_tile_url must be an http(s) URL containing {z}, {x} and {y}")
 	}
@@ -597,6 +681,17 @@ func (c *Config) Validate() error {
 
 // validateOne checks one radio's sections.
 func (c *Config) validateOne() error {
+	checks := []func() error{c.validateMeshRelay, c.validateHosted, c.validateRadio, c.validateHwModel, c.validatePosition, c.validateMQTTLinks}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateMeshRelay checks the preset, region, telemetry interval and relay section.
+func (c *Config) validateMeshRelay() error {
 	if _, err := c.PresetValue(); err != nil {
 		return err
 	}
@@ -607,18 +702,80 @@ func (c *Config) validateOne() error {
 		return errors.New("airtime.telemetry_interval must be 0 (off) or at least 30m")
 	}
 	if !mesh.ValidRelayRole(c.Relay.Role) {
-		return fmt.Errorf("relay.role must be client, router, mute, monitor or off, not %q", c.Relay.Role)
+		return fmt.Errorf("relay.role must be client, client_base, client_mute, router, router_late, monitor or off, not %q", c.Relay.Role)
 	}
-	switch c.Radio.Driver {
-	case "kiss", "sim", "none":
-	default:
-		return fmt.Errorf("radio.driver must be kiss or none, not %q", c.Radio.Driver)
+	if _, ok := mesh.RebroadcastMode(c.Relay.Rebroadcast); !ok {
+		return fmt.Errorf("relay.rebroadcast must be all, all_skip_decoding, local_only, known_only, none or core_portnums_only, not %q", c.Relay.Rebroadcast)
 	}
-	if name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel)); name != "" && name != "AUTO" {
-		if _, ok := pb.HardwareModel_value[name]; !ok {
-			return fmt.Errorf("mesh.hw_model %q is not a Meshtastic hardware model (or auto)", c.Mesh.HwModel)
+	for _, f := range c.Relay.Favorites {
+		if _, err := wire.ParseNodeID(f); err != nil {
+			return fmt.Errorf("relay.favorites: %q isn't a node ID such as !a1b2c3d4", f)
 		}
 	}
+	return nil
+}
+
+// validateHosted checks the hosted-node ports and meshtasticd program.
+func (c *Config) validateHosted() error {
+	if pb := c.Hosted.PortBase; pb != 0 && (pb < 1024 || pb > 64000) {
+		return errors.New("hosted.port_base must be between 1024 and 64000")
+	}
+	if c.Hosted.RadioPortBase(len(c.Radios)+1) > 65536 {
+		return errors.New("hosted.port_base is too high for this many radios (each takes 100 ports)")
+	}
+	if b := c.Hosted.Meshtasticd; b != "" && filepath.Base(b) != "meshtasticd" {
+		return errors.New("hosted.meshtasticd must be a meshtasticd program (a path ending in /meshtasticd)")
+	}
+	if strings.ContainsAny(c.Hosted.DockerImage, " \t\n") || strings.HasPrefix(c.Hosted.DockerImage, "-") {
+		return errors.New("hosted.docker_image must be an image name such as meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian")
+	}
+	return nil
+}
+
+// validateRadio checks the radio driver and the device it needs.
+func (c *Config) validateRadio() error {
+	switch c.Radio.Driver {
+	case "kiss", "sim", "none":
+	case "spi":
+		if strings.TrimSpace(c.Radio.Device) == "" {
+			return errors.New("radio.driver spi needs radio.device: a meshtasticd board file, a built-in board name such as MeshAdv-900M30S, or auto")
+		}
+	case "meshtastic":
+		return validateMeshtasticDevice(strings.TrimSpace(c.Radio.Device))
+	default:
+		return fmt.Errorf("radio.driver must be kiss, spi, meshtastic or none, not %q", c.Radio.Driver)
+	}
+	return nil
+}
+
+// validateMeshtasticDevice checks a Meshtastic board's serial port or network address.
+func validateMeshtasticDevice(dev string) error {
+	if dev == "" {
+		return errors.New("radio.driver meshtastic needs radio.device: the board's serial port (/dev/ttyACM0, /dev/serial/by-id/…) or a network board's address (host or host:port)")
+	}
+	if mtclient.IsSerial(dev) {
+		return nil
+	}
+	if _, err := mtclient.TCPAddress(dev); err != nil {
+		return fmt.Errorf("radio.device: %w", err)
+	}
+	return nil
+}
+
+// validateHwModel checks mesh.hw_model names a Meshtastic hardware model or auto.
+func (c *Config) validateHwModel() error {
+	name := strings.ToUpper(strings.TrimSpace(c.Mesh.HwModel))
+	if name == "" || name == "AUTO" {
+		return nil
+	}
+	if _, ok := pb.HardwareModel_value[name]; !ok {
+		return fmt.Errorf("mesh.hw_model %q is not a Meshtastic hardware model (or auto)", c.Mesh.HwModel)
+	}
+	return nil
+}
+
+// validatePosition checks the fixed position section.
+func (c *Config) validatePosition() error {
 	if p := c.Position; p.Latitude < -90 || p.Latitude > 90 || p.Longitude < -180 || p.Longitude > 180 {
 		return errors.New("position.latitude/longitude out of range")
 	}
@@ -630,6 +787,11 @@ func (c *Config) validateOne() error {
 	default:
 		return errors.New(`position.identities must be "relay" or "all"`)
 	}
+	return nil
+}
+
+// validateMQTTLinks checks each broker connection and that their names are unique.
+func (c *Config) validateMQTTLinks() error {
 	names := map[string]bool{}
 	for i, m := range c.Links.MQTT {
 		label := m.Name
@@ -643,12 +805,16 @@ func (c *Config) validateOne() error {
 		if err := m.validate(); err != nil {
 			return fmt.Errorf("links.mqtt %s: %w", label, err)
 		}
-		if m.Enabled && m.MapReport.Enabled && m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0 &&
-			c.Position.Latitude == 0 && c.Position.Longitude == 0 {
+		if m.Enabled && m.MapReport.Enabled && m.MapReport.Latitude == 0 && m.MapReport.Longitude == 0 && !c.hasPosition() {
 			return fmt.Errorf("links.mqtt %s: map_report needs a position (its own latitude/longitude or the radio's position:)", label)
 		}
 	}
 	return nil
+}
+
+// hasPosition reports whether the radio has a fixed position set.
+func (c *Config) hasPosition() bool {
+	return c.Position.Latitude != 0 || c.Position.Longitude != 0
 }
 
 // MeshConfig converts to the host configuration.
@@ -657,7 +823,7 @@ func (c *Config) MeshConfig() mesh.Config {
 	return mesh.Config{
 		Region: strings.ToUpper(c.Mesh.Region), Preset: preset, PrimaryChannel: c.Mesh.PrimaryChannel,
 		ChannelNum: c.Mesh.ChannelNum, OverrideFreqMHz: c.Mesh.OverrideFreqMHz, FreqOffsetMHz: c.Mesh.FreqOffsetMHz,
-		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: c.Relay.Role,
+		TxPowerDBm: c.Mesh.TxPowerDBm, HopLimit: c.Mesh.HopLimit, RelayRole: mesh.NormalizeRelayRole(c.Relay.Role), Rebroadcast: strings.ToLower(c.Relay.Rebroadcast), Favorites: favoriteNums(c.Relay.Favorites),
 		DutyCyclePct: c.Airtime.DutyCyclePct, OverrideDutyCycle: c.Airtime.OverrideDutyCycle,
 		NodeInfoInterval: c.Airtime.NodeInfoInterval, LocalDMOverRF: c.Links.LocalDMOverRF, StateDir: c.StateDir,
 		TelemetryInterval: c.Airtime.TelemetryInterval,
@@ -736,4 +902,15 @@ func (c *Config) ApplyEnv() {
 			c.Web.Port = p
 		}
 	}
+}
+
+// favoriteNums parses the relay's favourite node IDs, skipping any that don't parse.
+func favoriteNums(ids []string) []uint32 {
+	var out []uint32
+	for _, id := range ids {
+		if n, err := wire.ParseNodeID(id); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }

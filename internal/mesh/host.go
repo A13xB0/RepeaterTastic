@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,24 +26,98 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
-// Relay roles for the host's relay persona. Monitor and off are radio modes: monitor listens and
-// never transmits anything (no relaying, no identity traffic, no ACKs); off ignores the radio
-// altogether (nothing received, nothing sent).
+// Relay roles for the host's relay persona: Meshtastic's device roles that make sense for a
+// relay, plus two radio modes. Monitor listens and never transmits anything (no relaying, no
+// identity traffic, no ACKs); off ignores the radio altogether (nothing received, nothing sent).
 const (
-	RoleClient  = "client"
-	RoleRouter  = "router"
-	RoleMute    = "mute"
-	RoleMonitor = "monitor"
-	RoleOff     = "off"
+	RoleClient     = "client"
+	RoleClientBase = "client_base"
+	RoleClientMute = "client_mute"
+	RoleRouter     = "router"
+	RoleRouterLate = "router_late"
+	RoleMonitor    = "monitor"
+	RoleOff        = "off"
 )
 
-// ValidRelayRole reports whether role is one of the relay roles.
+// NormalizeRelayRole folds a relay role to its current name ("mute" was client_mute's old name).
+func NormalizeRelayRole(role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "mute" {
+		return RoleClientMute
+	}
+	return role
+}
+
+// ValidRelayRole reports whether role is one of the relay roles (old names included).
 func ValidRelayRole(role string) bool {
-	switch role {
-	case RoleClient, RoleRouter, RoleMute, RoleMonitor, RoleOff:
+	switch NormalizeRelayRole(role) {
+	case RoleClient, RoleClientBase, RoleClientMute, RoleRouter, RoleRouterLate, RoleMonitor, RoleOff:
 		return true
 	}
 	return false
+}
+
+// DeviceRole is the Meshtastic device role a relay role stands for. Monitor and off keep the
+// device role given: they only switch the transmitter off.
+func DeviceRole(role string, keep pb.Config_DeviceConfig_Role) pb.Config_DeviceConfig_Role {
+	switch NormalizeRelayRole(role) {
+	case RoleClient:
+		return pb.Config_DeviceConfig_CLIENT
+	case RoleClientBase:
+		return pb.Config_DeviceConfig_CLIENT_BASE
+	case RoleClientMute:
+		return pb.Config_DeviceConfig_CLIENT_MUTE
+	case RoleRouter:
+		return pb.Config_DeviceConfig_ROUTER
+	case RoleRouterLate:
+		return pb.Config_DeviceConfig_ROUTER_LATE
+	}
+	return keep
+}
+
+// routerRole reports whether a relay role rebroadcasts with router priority and never cancels.
+func routerRole(role string) bool { return role == RoleRouter || role == RoleRouterLate }
+
+// relaysAsRouter reports whether the relay handles p with router priority: a router role, or
+// client_base for a packet from or to one of its favourites (this host's identities included).
+func (h *Host) relaysAsRouter(p *pb.MeshPacket) bool {
+	cfg := h.Config()
+	if routerRole(cfg.RelayRole) {
+		return true
+	}
+	if cfg.RelayRole != RoleClientBase {
+		return false
+	}
+	return h.IsRelayFavorite(p.From) || h.IsRelayFavorite(p.To)
+}
+
+// IsRelayFavorite reports whether a client_base relay counts num as one of its own.
+func (h *Host) IsRelayFavorite(num uint32) bool {
+	if num == wire.Broadcast || num == 0 {
+		return false
+	}
+	for _, f := range h.Config().Favorites {
+		if f == num {
+			return true
+		}
+	}
+	return h.Identity(num) != nil
+}
+
+// Rebroadcast modes (Meshtastic's DeviceConfig.RebroadcastMode), lower case.
+var rebroadcastModes = map[string]pb.Config_DeviceConfig_RebroadcastMode{
+	"all": pb.Config_DeviceConfig_ALL, "all_skip_decoding": pb.Config_DeviceConfig_ALL_SKIP_DECODING,
+	"local_only": pb.Config_DeviceConfig_LOCAL_ONLY, "known_only": pb.Config_DeviceConfig_KNOWN_ONLY,
+	"none": pb.Config_DeviceConfig_NONE, "core_portnums_only": pb.Config_DeviceConfig_CORE_PORTNUMS_ONLY,
+}
+
+// RebroadcastMode resolves a rebroadcast mode name ("" = all).
+func RebroadcastMode(name string) (pb.Config_DeviceConfig_RebroadcastMode, bool) {
+	if name == "" {
+		return pb.Config_DeviceConfig_ALL, true
+	}
+	m, ok := rebroadcastModes[strings.ToLower(name)]
+	return m, ok
 }
 
 // ErrNotTransmitting is returned for sends while the radio is in monitor or off mode.
@@ -54,6 +129,12 @@ func (h *Host) Transmits() bool {
 	return r != RoleMonitor && r != RoleOff
 }
 
+// State files in the host's state dir.
+const (
+	nodeDBFile   = "nodedb.json"
+	messagesFile = "messages.json"
+)
+
 const (
 	numReliableRetx         = 3
 	numReliableUnicastRetry = 5
@@ -62,15 +143,21 @@ const (
 
 // Config is the host-wide mesh configuration.
 type Config struct {
-	Region            string
-	Preset            phy.Preset
-	PrimaryChannel    string // shared by all identities; "" = preset name
-	ChannelNum        int
-	OverrideFreqMHz   float64
-	FreqOffsetMHz     float64
-	TxPowerDBm        int
-	HopLimit          uint32
-	RelayRole         string
+	Region          string
+	Preset          phy.Preset
+	PrimaryChannel  string // shared by all identities; "" = preset name
+	ChannelNum      int
+	OverrideFreqMHz float64
+	FreqOffsetMHz   float64
+	TxPowerDBm      int
+	HopLimit        uint32
+	RelayRole       string
+	// Rebroadcast is the relay's rebroadcast mode ("" = all). A hosted relay applies it as set;
+	// the built-in relay only honours none.
+	Rebroadcast string
+	// Favorites are nodes a client_base relay treats as its own (with the host's identities):
+	// packets from or to them are relayed like router_late.
+	Favorites         []uint32
 	DutyCyclePct      float64 // 0 = region default
 	OverrideDutyCycle bool
 	NodeInfoInterval  time.Duration
@@ -138,17 +225,6 @@ type ChannelRef struct {
 	PublicKey bool
 }
 
-type pendingTx struct {
-	pkt       *pb.MeshPacket // encrypted, as sent
-	origin    *Identity
-	remaining int
-	next      time.Time
-	broadcast bool
-	text      bool
-	index     int      // channel index the packet was sent on (for a fallback on another radio)
-	plain     *pb.Data // payload, for the packet log on retransmits
-}
-
 type chanMember struct {
 	id    *Identity
 	index int
@@ -188,24 +264,20 @@ type Host struct {
 	hist *History
 	txq  *TxQueue
 
-	pmu     sync.Mutex
-	pending map[pktKey]*pendingTx
-
 	linkMu sync.RWMutex
-	links  []Link
+	tapMu  sync.RWMutex
+	taps   []AirTap
 
-	started       time.Time
-	nextTelemetry time.Time // run loop only
+	appliers []ConfigApplier  // under cfgMu
+	hoster   Hoster           // runs identities as real nodes (nil = all here); under mu
+	kept     []IdentityRecord // saved identities not running; under mu
+	links    []Link
 
-	fed          *Federation // nil unless the site joins its radios (experimental)
-	guestMu      sync.Mutex
-	guestList    []*Identity
-	guestGen     uint64
-	guestOK      bool
-	guestTimers  map[uint32]*guestTimer // run loop only
-	stateDir     string
-	radioOK      atomic.Bool
-	nodeInfoAsks sync.Map // uint32 → time.Time
+	started time.Time
+
+	site     atomic.Pointer[Site]
+	stateDir string
+	radioOK  atomic.Bool
 
 	gateMu sync.RWMutex
 	gate   TxGate
@@ -219,6 +291,7 @@ func NewHost(cfg Config, r radio.Radio, log *slog.Logger) (*Host, error) {
 	if cfg.HopLimit == 0 || cfg.HopLimit > wire.HopMax {
 		cfg.HopLimit = defaultHopLimit
 	}
+	cfg.RelayRole = NormalizeRelayRole(cfg.RelayRole)
 	if cfg.RelayRole == "" {
 		cfg.RelayRole = RoleClient
 	}
@@ -245,7 +318,6 @@ func NewHost(cfg Config, r radio.Radio, log *slog.Logger) (*Host, error) {
 		Messages:  NewMessageStore(1000),
 		hist:      NewHistory(4096, 30*time.Minute),
 		txq:       NewTxQueue(64),
-		pending:   map[pktKey]*pendingTx{},
 		started:   time.Now(),
 		stateDir:  cfg.StateDir,
 	}, nil
@@ -289,6 +361,7 @@ func (h *Host) Started() time.Time { return h.started }
 
 // SetRelayRole changes the relay persona role at runtime.
 func (h *Host) SetRelayRole(role string) error {
+	role = NormalizeRelayRole(role)
 	if !ValidRelayRole(role) {
 		return fmt.Errorf("unknown relay role %q", role)
 	}
@@ -301,14 +374,7 @@ func (h *Host) SetRelayRole(role string) error {
 	}
 	if r := h.Relay(); r != nil {
 		r.mu.Lock()
-		switch role {
-		case RoleRouter:
-			r.User.Role = pb.Config_DeviceConfig_ROUTER
-		case RoleMute, RoleMonitor, RoleOff:
-			r.User.Role = pb.Config_DeviceConfig_CLIENT_MUTE
-		default:
-			r.User.Role = pb.Config_DeviceConfig_CLIENT
-		}
+		r.User.Role = DeviceRole(role, pb.Config_DeviceConfig_CLIENT_MUTE)
 		r.mu.Unlock()
 	}
 	return nil
@@ -349,7 +415,6 @@ func (h *Host) AddIdentity(id *Identity) error {
 		id.Channels[0].Settings.Name = primary
 		id.Channels[0].Role = pb.Channel_PRIMARY
 	}
-	id.nextNodeInfo = time.Now().Add(30*time.Second + time.Duration(len(h.ids))*20*time.Second)
 	id.mu.Unlock()
 	h.ids[id.NodeNum] = id
 	h.mu.Unlock()
@@ -423,9 +488,6 @@ func (h *Host) ChannelsChanged() {
 	h.chanMu.Lock()
 	h.chanCache = nil
 	h.chanMu.Unlock()
-	if h.fed != nil {
-		h.fed.gen.Add(1) // other radios' guest lists may include this radio's identities
-	}
 }
 
 // Channels lists every distinct channel held by this host's identities.
@@ -466,29 +528,34 @@ func (h *Host) channelGroups(hash uint8) []*chanGroup {
 	h.chanMu.Lock()
 	defer h.chanMu.Unlock()
 	if h.chanCache == nil {
-		h.chanCache = map[uint8][]*chanGroup{}
-		display := h.presetDisplay()
-		for _, id := range append(h.Identities(), h.guests()...) {
-			for _, rc := range id.resolvedChannels(display) {
-				if !h.slotOnThisRadio(id, rc.index) {
-					continue // that slot is on another radio
-				}
-				var g *chanGroup
-				for _, x := range h.chanCache[rc.hash] {
-					if string(x.key) == string(rc.key) && x.aead == rc.aead && x.name == rc.name {
-						g = x
-						break
-					}
-				}
-				if g == nil {
-					g = &chanGroup{hash: rc.hash, key: rc.key, aead: rc.aead, name: rc.name}
-					h.chanCache[rc.hash] = append(h.chanCache[rc.hash], g)
-				}
-				g.members = append(g.members, chanMember{id: id, index: rc.index})
-			}
-		}
+		h.buildChanCache()
 	}
 	return h.chanCache[hash]
+}
+
+// buildChanCache groups every identity's channels by hash and key. Called with h.chanMu held.
+func (h *Host) buildChanCache() {
+	h.chanCache = map[uint8][]*chanGroup{}
+	display := h.presetDisplay()
+	for _, id := range h.Identities() {
+		for _, rc := range id.resolvedChannels(display) {
+			g := h.cachedChanGroup(rc)
+			g.members = append(g.members, chanMember{id: id, index: rc.index})
+		}
+	}
+}
+
+// cachedChanGroup finds the cached group matching rc, adding one if there is none. Called with
+// h.chanMu held.
+func (h *Host) cachedChanGroup(rc resolvedChannel) *chanGroup {
+	for _, x := range h.chanCache[rc.hash] {
+		if string(x.key) == string(rc.key) && x.aead == rc.aead && x.name == rc.name {
+			return x
+		}
+	}
+	g := &chanGroup{hash: rc.hash, key: rc.key, aead: rc.aead, name: rc.name}
+	h.chanCache[rc.hash] = append(h.chanCache[rc.hash], g)
+	return g
 }
 
 // ----------------------------------------------------------------------------------------- run
@@ -499,10 +566,10 @@ func (h *Host) Run(ctx context.Context) error {
 		return errors.New("no relay persona configured")
 	}
 	if h.stateDir != "" {
-		if err := h.DB.Load(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
+		if err := h.DB.Load(filepath.Join(h.stateDir, nodeDBFile)); err != nil {
 			h.log.Warn("node DB not loaded", "err", err)
 		}
-		if err := h.Messages.Load(filepath.Join(h.stateDir, "messages.json")); err != nil {
+		if err := h.Messages.Load(filepath.Join(h.stateDir, messagesFile)); err != nil {
 			h.log.Warn("messages not loaded", "err", err)
 		}
 		for _, id := range h.Identities() { // re-assert local entries over stale saved ones
@@ -517,8 +584,8 @@ func (h *Host) Run(ctx context.Context) error {
 	go func() { defer wg.Done(); h.timerLoop(ctx) }()
 	wg.Wait()
 	if h.stateDir != "" {
-		_ = h.DB.Save(filepath.Join(h.stateDir, "nodedb.json"))
-		_ = h.Messages.Save(filepath.Join(h.stateDir, "messages.json"))
+		_ = h.DB.Save(filepath.Join(h.stateDir, nodeDBFile))
+		_ = h.Messages.Save(filepath.Join(h.stateDir, messagesFile))
 	}
 	return ctx.Err()
 }
@@ -569,6 +636,9 @@ func (h *Host) rxLoop(ctx context.Context) {
 			if h.Config().RelayRole == RoleOff {
 				continue // the radio is off: whatever the modem hears is ignored
 			}
+			for _, t := range h.airTaps() {
+				t.Heard(f)
+			}
 			p := wire.DecodeFrame(f.Data, int32(f.RSSI), f.SNR)
 			if p == nil {
 				h.Counters.RxBad.Add(1)
@@ -579,33 +649,34 @@ func (h *Host) rxLoop(ctx context.Context) {
 	}
 }
 
+// timerLoop refreshes the identities' positions and saves the node DB and chats once a minute.
 func (h *Host) timerLoop(ctx context.Context) {
-	tick := time.NewTicker(250 * time.Millisecond)
+	tick := time.NewTicker(timerInterval)
 	defer tick.Stop()
-	lastSave := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-tick.C:
-			if now.Sub(lastSave) > time.Minute {
-				h.RecordOwnPositions()
-			}
-			h.doRetransmissions(now)
-			h.periodicNodeInfo(now)
-			h.periodicPosition(now)
-			h.periodicTelemetry(now)
-			h.periodicGuests(now)
-			if h.stateDir != "" && now.Sub(lastSave) > time.Minute {
-				lastSave = now
-				if err := h.DB.Save(filepath.Join(h.stateDir, "nodedb.json")); err != nil {
-					h.log.Warn("saving node DB", "err", err)
-				}
-				if err := h.Messages.Save(filepath.Join(h.stateDir, "messages.json")); err != nil {
-					h.log.Warn("saving messages", "err", err)
-				}
-			}
+		case <-tick.C:
+			h.RecordOwnPositions()
+			h.saveState()
 		}
+	}
+}
+
+// timerInterval is how often timerLoop runs.
+var timerInterval = time.Minute
+
+// saveState writes the node DB and chats to the state dir, if there is one.
+func (h *Host) saveState() {
+	if h.stateDir == "" {
+		return
+	}
+	if err := h.DB.Save(filepath.Join(h.stateDir, nodeDBFile)); err != nil {
+		h.log.Warn("saving node DB", "err", err)
+	}
+	if err := h.Messages.Save(filepath.Join(h.stateDir, messagesFile)); err != nil {
+		h.log.Warn("saving messages", "err", err)
 	}
 }
 
@@ -626,103 +697,146 @@ func (h *Host) txLoop(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		now := time.Now()
-		rp := h.RadioParams()
-		if limit := h.dutyLimit(); limit < 100 && h.Air.TxPercent(now) >= limit {
-			h.Counters.DroppedDuty.Add(1)
-			if !it.relay {
-				if o := h.Identity(it.origin); o != nil {
-					h.nakLocal(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
-				}
-			}
-			h.log.Warn("duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
-			continue
+		if !h.transmitNext(ctx, it) {
+			return
 		}
-		if !h.Transmits() {
-			// Monitor or off: nothing goes on air. Local senders hear why.
-			if !it.relay {
-				if o := h.Identity(it.origin); o != nil && it.plain.GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP {
-					h.nakLocal(o, it.pkt.Id, pb.Routing_NO_INTERFACE)
-				}
-			}
-			continue
-		}
-		if busy, err := h.radio.ChannelBusy(ctx); err == nil && busy && it.attempts < 12 {
-			it.attempts++
-			it.due = now.Add(time.Duration(phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())+rp.SlotTimeMs()) * time.Millisecond)
-			h.txq.Enqueue(it)
-			continue
-		}
-		frame, err := wire.EncodeFrame(it.pkt)
-		if err != nil {
-			h.log.Error("encoding frame", "err", err)
-			continue
-		}
-		release := func() {}
-		if g := h.txGate(); g != nil {
-			rel, gerr := g.Acquire(ctx, h)
-			if errors.Is(gerr, ErrSiteDutyCycle) {
-				h.Counters.DroppedDuty.Add(1)
-				if !it.relay {
-					if o := h.Identity(it.origin); o != nil {
-						h.nakLocal(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
-					}
-				}
-				h.log.Warn("site duty cycle limit reached, dropping packet", "id", it.pkt.Id, "relay", it.relay)
-				continue
-			}
-			if gerr != nil {
-				return // context cancelled while waiting for another radio
-			}
-			release = rel
-		}
-		if !h.Transmits() {
-			// Switched to monitor or off while waiting for the site's turn to transmit.
-			release()
-			continue
-		}
-		sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
-		err = h.radio.Send(sctx, frame)
-		cancel()
-		release()
-		if err != nil {
-			h.Counters.TxFailed.Add(1)
-			h.log.Warn("transmit failed", "id", it.pkt.Id, "err", err)
-			continue
-		}
-		ms := rp.AirtimeMs(len(frame))
-		h.Air.AddTx(time.Now(), ms, it.origin)
-		h.Counters.Tx.Add(1)
-		kind := "ours"
-		if it.relay {
-			kind = "relayed"
-			h.Counters.Relayed.Add(1)
-		}
-		rec := h.baseRecord(it.pkt, frame, "tx", kind)
-		rec.AirtimeMs = ms
-		if it.plain != nil {
-			rec.Port, rec.PKI, rec.Data = it.plain.Portnum.String(), it.pkt.PkiEncrypted, it.plain
-			rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
-		} else if dec := h.decode(it.pkt); dec.ok {
-			h.fillRecordFromDecoded(&rec, it.pkt, dec) // a relayed packet on a channel we hold
-		}
-		if o := h.identityAny(it.origin); o != nil {
-			rec.DecodedBy = o.NodeID()
-			if m, ok := h.storeFor(o).SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
-				h.publishMessage(o, m)
-			}
-		}
-		h.publishPacket(rec)
-		h.linkMu.RLock()
-		for _, l := range h.links {
-			if pl, ok := l.(PlainLink); ok {
-				pl.SendPacketPlain(it.pkt, it.plain)
-			} else {
-				l.SendPacket(it.pkt)
-			}
-		}
-		h.linkMu.RUnlock()
 	}
+}
+
+// transmitNext puts one queued packet on air, or drops or defers it. It reports false when
+// ctx ended while waiting for the site's turn to transmit.
+func (h *Host) transmitNext(ctx context.Context, it *txItem) bool {
+	now := time.Now()
+	rp := h.RadioParams()
+	if limit := h.dutyLimit(); limit < 100 && h.Air.TxPercent(now) >= limit {
+		h.dropForDuty(it, "duty cycle limit reached, dropping packet")
+		return true
+	}
+	if !h.Transmits() {
+		h.refuseOffAir(it)
+		return true
+	}
+	if h.deferIfBusy(ctx, it, now, rp) {
+		return true
+	}
+	frame, err := wire.EncodeFrame(it.pkt)
+	if err != nil {
+		h.log.Error("encoding frame", "err", err)
+		return true
+	}
+	release, gerr := h.acquireSiteTurn(ctx)
+	if errors.Is(gerr, ErrSiteDutyCycle) {
+		h.dropForDuty(it, "site duty cycle limit reached, dropping packet")
+		return true
+	}
+	if gerr != nil {
+		return false // context cancelled while waiting for another radio
+	}
+	if !h.Transmits() {
+		// Switched to monitor or off while waiting for the site's turn to transmit.
+		release()
+		return true
+	}
+	sctx, cancel := context.WithTimeout(ctx, time.Duration(rp.AirtimeMs(len(frame))*2+5000)*time.Millisecond)
+	err = h.radio.Send(sctx, frame)
+	cancel()
+	release()
+	if err != nil {
+		h.Counters.TxFailed.Add(1)
+		h.log.Warn("transmit failed", "id", it.pkt.Id, "err", err)
+		return true
+	}
+	h.transmitted(it, frame, rp.AirtimeMs(len(frame)))
+	return true
+}
+
+// dropForDuty drops a packet over a duty cycle limit, failing it for a local sender.
+func (h *Host) dropForDuty(it *txItem, msg string) {
+	h.Counters.DroppedDuty.Add(1)
+	if !it.relay {
+		if o := h.Identity(it.origin); o != nil {
+			h.failMessage(o, it.pkt.Id, pb.Routing_DUTY_CYCLE_LIMIT)
+		}
+	}
+	h.log.Warn(msg, "id", it.pkt.Id, "relay", it.relay)
+}
+
+// refuseOffAir drops a packet in monitor or off mode: nothing goes on air. Local senders of
+// text hear why.
+func (h *Host) refuseOffAir(it *txItem) {
+	if it.relay {
+		return
+	}
+	if o := h.Identity(it.origin); o != nil && it.plain.GetPortnum() == pb.PortNum_TEXT_MESSAGE_APP {
+		h.failMessage(o, it.pkt.Id, pb.Routing_NO_INTERFACE)
+	}
+}
+
+// deferIfBusy requeues the packet for later when the channel is busy, up to 12 times.
+func (h *Host) deferIfBusy(ctx context.Context, it *txItem, now time.Time, rp phy.RadioParams) bool {
+	busy, err := h.radio.ChannelBusy(ctx)
+	if err != nil || !busy || it.attempts >= 12 {
+		return false
+	}
+	it.attempts++
+	it.due = now.Add(time.Duration(phy.OwnTxDelayMs(h.Air.ChannelUtilPercent(now), rp.SlotTimeMs())+rp.SlotTimeMs()) * time.Millisecond)
+	h.txq.Enqueue(it)
+	return true
+}
+
+// acquireSiteTurn waits for the site's turn to transmit when radios share a gate.
+func (h *Host) acquireSiteTurn(ctx context.Context) (release func(), err error) {
+	g := h.txGate()
+	if g == nil {
+		return func() {
+			// A lone radio has no turn to give back.
+		}, nil
+	}
+	return g.Acquire(ctx, h)
+}
+
+// transmitted accounts for a packet that went on air and passes it to taps, the packet log,
+// its sender and the links.
+func (h *Host) transmitted(it *txItem, frame []byte, ms float64) {
+	h.Air.AddTx(time.Now(), ms, it.origin)
+	for _, t := range h.airTaps() {
+		t.Transmitted(frame, it.pkt, it.origin)
+	}
+	h.Counters.Tx.Add(1)
+	kind := "ours"
+	if it.relay {
+		kind = "relayed"
+		h.Counters.Relayed.Add(1)
+	}
+	rec := h.baseRecord(it.pkt, frame, "tx", kind)
+	rec.AirtimeMs = ms
+	if it.plain != nil {
+		rec.Port, rec.PKI, rec.Data = it.plain.Portnum.String(), it.pkt.PkiEncrypted, it.plain
+		rec.Summary, rec.Payload = summarize(it.plain), payloadJSON(it.plain)
+	} else if dec := h.decode(it.pkt); dec.ok {
+		h.fillRecordFromDecoded(&rec, dec) // a relayed packet on a channel we hold
+	}
+	if o := h.Identity(it.origin); o != nil {
+		rec.DecodedBy = o.NodeID()
+		if m, ok := h.Messages.SetStatus(o.NodeNum, it.pkt.Id, "sent", ""); ok {
+			h.publishMessage(o, m)
+		}
+	}
+	h.publishPacket(rec)
+	h.sendToLinks(it)
+}
+
+// sendToLinks passes a transmitted packet to every link, with its payload where wanted.
+func (h *Host) sendToLinks(it *txItem) {
+	h.linkMu.RLock()
+	for _, l := range h.links {
+		if pl, ok := l.(PlainLink); ok {
+			pl.SendPacketPlain(it.pkt, it.plain)
+		} else {
+			l.SendPacket(it.pkt)
+		}
+	}
+	h.linkMu.RUnlock()
 }
 
 // MessageEvent is published when a chat message is added or changes status.
@@ -738,9 +852,23 @@ func (h *Host) SaveIdentities() error {
 	}
 	var recs []IdentityRecord
 	for _, id := range h.Identities() {
+		if id.Remote() != nil && !id.Hosted() {
+			continue // a real node keeps its own identity
+		}
 		recs = append(recs, id.Record())
 	}
+	h.mu.RLock()
+	recs = append(recs, h.kept...)
+	h.mu.RUnlock()
 	return writeJSONAtomic(filepath.Join(h.stateDir, "identities.json"), recs)
+}
+
+// KeepRecord keeps a saved identity that isn't running (a relay persona while a board is the
+// radio's relay, or one whose node couldn't be started) so SaveIdentities writes it back.
+func (h *Host) KeepRecord(r IdentityRecord) {
+	h.mu.Lock()
+	h.kept = append(h.kept, r)
+	h.mu.Unlock()
 }
 
 // LoadIdentityRecords reads identities saved by SaveIdentities.
@@ -759,6 +887,62 @@ func clonePacket(p *pb.MeshPacket) *pb.MeshPacket { return proto.Clone(p).(*pb.M
 // primary channel, frequency, power) the radio is retuned and every identity's primary channel
 // name follows.
 func (h *Host) UpdateConfig(ctx context.Context, cfg Config) error {
+	if err := h.setConfig(ctx, cfg); err != nil {
+		return err
+	}
+	return h.PushConfig(ctx)
+}
+
+// ConfigApplier keeps its own copy of the host settings: a hosted node.
+type ConfigApplier interface {
+	ApplyConfig(ctx context.Context, cfg Config) error
+}
+
+// AddConfigApplier registers a node that takes the host settings on every change.
+func (h *Host) AddConfigApplier(ca ConfigApplier) {
+	h.cfgMu.Lock()
+	h.appliers = append(h.appliers, ca)
+	h.cfgMu.Unlock()
+}
+
+// RemoveConfigApplier forgets a node registered with AddConfigApplier.
+func (h *Host) RemoveConfigApplier(ca ConfigApplier) {
+	h.cfgMu.Lock()
+	defer h.cfgMu.Unlock()
+	for i, x := range h.appliers {
+		if x == ca {
+			h.appliers = append(h.appliers[:i], h.appliers[i+1:]...)
+			return
+		}
+	}
+}
+
+// PushConfig hands the current settings to every registered node.
+func (h *Host) PushConfig(ctx context.Context) error {
+	h.cfgMu.RLock()
+	all := append([]ConfigApplier(nil), h.appliers...)
+	h.cfgMu.RUnlock()
+	cfg := h.Config()
+	// Nodes that reboot take a few seconds each: push to them all at once.
+	errs := make([]error, len(all))
+	var wg sync.WaitGroup
+	for i, ca := range all {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = ca.ApplyConfig(ctx, cfg)
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("settings saved but a node didn't take them: %w", err)
+	}
+	return nil
+}
+
+// setConfig applies a host configuration.
+func (h *Host) setConfig(ctx context.Context, cfg Config) error {
+	cfg.RelayRole = NormalizeRelayRole(cfg.RelayRole)
 	if cfg.HopLimit == 0 || cfg.HopLimit > wire.HopMax {
 		cfg.HopLimit = defaultHopLimit
 	}
@@ -823,14 +1007,6 @@ func (h *Host) dropAllOutgoing(role string) {
 
 func (h *Host) DropOutgoing(num uint32, reason string) int {
 	ids := h.txq.DropOrigin(num)
-	h.pmu.Lock()
-	for k, p := range h.pending {
-		if p.origin != nil && p.origin.NodeNum == num {
-			ids = append(ids, p.pkt.GetId())
-			delete(h.pending, k)
-		}
-	}
-	h.pmu.Unlock()
 	failed := 0
 	for _, pid := range ids {
 		if m, ok := h.Messages.SetStatus(num, pid, "failed", reason); ok {

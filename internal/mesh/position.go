@@ -5,9 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
-	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
@@ -26,7 +23,6 @@ type FixedPosition struct {
 const (
 	positionDefaultInterval = 3 * time.Hour
 	positionMinInterval     = 30 * time.Minute
-	positionReplySuppress   = 3 * time.Minute
 )
 
 // Set reports whether a position is configured.
@@ -102,6 +98,9 @@ func hardwareFromModem(name string) pb.HardwareModel {
 	return pb.HardwareModel_PORTDUINO
 }
 
+// PositionFor is the position an identity broadcasts (see positionFor).
+func (h *Host) PositionFor(id *Identity) (FixedPosition, bool) { return h.positionFor(id) }
+
 // positionFor is the position an identity broadcasts: its own fixed position if it has one,
 // otherwise the radio's site position when the site policy covers it.
 func (h *Host) positionFor(id *Identity) (FixedPosition, bool) {
@@ -123,12 +122,6 @@ func (h *Host) positionFor(id *Identity) (FixedPosition, bool) {
 	return FixedPosition{}, false
 }
 
-// broadcastsPosition reports whether this identity broadcasts a position.
-func (h *Host) broadcastsPosition(id *Identity) bool {
-	_, ok := h.positionFor(id)
-	return ok
-}
-
 // RecordOwnPositions puts each identity's position in the node DB, so apps connected to it
 // (and the node map) show where it is.
 func (h *Host) RecordOwnPositions() {
@@ -140,70 +133,5 @@ func (h *Host) RecordOwnPositions() {
 			p = pos.proto(now)
 		}
 		h.DB.Update(id.NodeNum, func(e *NodeEntry) { e.Position = p })
-	}
-}
-
-// periodicPosition broadcasts each identity's position on its interval.
-func (h *Host) periodicPosition(now time.Time) {
-	for _, id := range h.Identities() {
-		pos, ok := h.positionFor(id)
-		if !id.Enabled || !ok {
-			continue
-		}
-		id.mu.Lock()
-		if id.nextPosition.IsZero() {
-			// first broadcast a little after the NodeInfo (or soon after a change), staggered per identity
-			first := id.nextNodeInfo.Add(45 * time.Second)
-			if first.Before(now) {
-				first = now.Add(time.Duration(10+id.NodeNum%50) * time.Second)
-			}
-			id.nextPosition = first
-		}
-		due := !now.Before(id.nextPosition)
-		if due {
-			id.nextPosition = now.Add(pos.interval())
-		}
-		id.mu.Unlock()
-		if !due || h.Air.ChannelUtilPercent(now) > 40 || !h.radioOK.Load() {
-			continue
-		}
-		if limit := h.dutyLimit(); limit < 100 && h.Air.TxPercent(now) > limit/2 {
-			continue
-		}
-		h.sendPosition(id, pos, wire.Broadcast, 0, 0)
-	}
-}
-
-// replyPosition answers a position request addressed to one of our identities.
-func (h *Host) replyPosition(id *Identity, req *pb.MeshPacket) {
-	pos, ok := h.positionFor(id)
-	if !ok {
-		return
-	}
-	now := time.Now()
-	id.mu.Lock()
-	if now.Sub(id.lastPositionReply) < positionReplySuppress {
-		id.mu.Unlock()
-		return
-	}
-	id.lastPositionReply = now
-	id.mu.Unlock()
-	h.sendPosition(id, pos, req.From, int(req.Channel), req.Id)
-}
-
-func (h *Host) sendPosition(id *Identity, pos FixedPosition, to uint32, channel int, requestID uint32) {
-	cfg := h.Config()
-	payload, err := proto.Marshal(pos.proto(time.Now()))
-	if err != nil {
-		return
-	}
-	p := &pb.MeshPacket{To: to, Channel: uint32(channel), Priority: pb.MeshPacket_BACKGROUND,
-		PayloadVariant: &pb.MeshPacket_Decoded{Decoded: &pb.Data{Portnum: pb.PortNum_POSITION_APP, Payload: payload,
-			RequestId: requestID}}}
-	p.From = id.NodeNum
-	p.Id = wire.RandomPacketID()
-	p.HopLimit = cfg.HopLimit
-	if err := h.transmit(id, p, false); err != nil {
-		h.log.Debug("position not sent", "identity", id.NodeID(), "err", err)
 	}
 }

@@ -3,10 +3,10 @@
 import { ArrowDownLeft, ArrowUpRight, Lock } from '@lucide/vue'
 import type { Packet } from '@/api/types'
 import KindChip from '@/components/ui/KindChip.vue'
-import { nodeLabel } from '@/store/live'
+import { nodeLabel, radioName } from '@/store/live'
 import { BROADCAST, airtime, clock, portLabel, snrClass } from '@/lib/format'
 
-withDefaults(defineProps<{ packets: Packet[]; compact?: boolean; flashSeq?: number }>(), { compact: false, flashSeq: 0 })
+withDefaults(defineProps<{ packets: Packet[]; compact?: boolean; flashSeq?: number; showRadio?: boolean }>(), { compact: false, flashSeq: 0, showRadio: false })
 const emit = defineEmits<{ select: [p: Packet] }>()
 </script>
 
@@ -17,6 +17,7 @@ const emit = defineEmits<{ select: [p: Packet] }>()
         <tr>
           <th>Time</th>
           <th>Kind</th>
+          <th v-if="showRadio" class="max-md:hidden">Radio</th>
           <th>From → To</th>
           <th>Port</th>
           <th class="max-md:hidden">Channel</th>
@@ -31,7 +32,7 @@ const emit = defineEmits<{ select: [p: Packet] }>()
       <tbody>
         <tr
           v-for="p in packets"
-          :key="p.seq"
+          :key="`${p.radio_id ?? 'main'}-${p.seq}`"
           :class="['row-link', p.seq > flashSeq && flashSeq > 0 ? 'flash-in' : '']"
           @click="emit('select', p)"
         >
@@ -43,6 +44,7 @@ const emit = defineEmits<{ select: [p: Packet] }>()
             </span>
           </td>
           <td><KindChip :kind="p.kind" /></td>
+          <td v-if="showRadio" class="whitespace-nowrap text-ink-2 max-md:hidden">{{ radioName(p.radio_id ?? 'main') }}</td>
           <td class="whitespace-nowrap">
             <span :class="['font-medium', nodeLabel(p.from).local ? 'text-brand' : '']" :title="`${nodeLabel(p.from).long} ${p.from}`">{{ nodeLabel(p.from).short }}</span>
             <span class="px-1 text-ink-3">→</span>

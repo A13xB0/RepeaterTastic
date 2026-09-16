@@ -38,13 +38,13 @@ async function reveal() {
 <template>
   <Modal :open="!!identity" :title="`Keys · ${identity?.long_name ?? ''}`" :subtitle="identity?.node_id" @close="emit('close')">
     <div v-if="identity">
-      <label class="label">Public key</label>
+      <span class="label">Public key</span>
       <div class="flex items-center gap-1 rounded-xl border border-line-soft bg-raised px-3 py-2">
         <span class="mono min-w-0 flex-1 break-all">{{ identity.public_key }}</span>
         <CopyButton :text="identity.public_key" label="Public key" />
       </div>
 
-      <label class="label mt-4">Private key</label>
+      <span class="label mt-4">Private key</span>
       <div v-if="!keys" class="rounded-xl border border-warn/30 bg-warn/8 p-4">
         <div class="flex gap-3">
           <ShieldAlert class="size-5 shrink-0 text-warn" />
@@ -53,7 +53,7 @@ async function reveal() {
             <p class="mt-1 text-ink-2">Only reveal it on a screen you trust, e.g. to move the node to a physical device or into a backup.</p>
           </div>
         </div>
-        <button class="btn btn-sm mt-3" :disabled="loading" @click="reveal"><Spinner v-if="loading" /><KeyRound v-else class="size-3.5" />Reveal private key</button>
+        <button type="button" class="btn btn-sm mt-3" :disabled="loading" @click="reveal"><Spinner v-if="loading" /><KeyRound v-else class="size-3.5" />Reveal private key</button>
         <p v-if="error" class="mt-2 text-xs text-bad">{{ error }}</p>
       </div>
       <div v-else class="flex items-center gap-1 rounded-xl border border-warn/40 bg-warn/8 px-3 py-2">
@@ -62,7 +62,7 @@ async function reveal() {
       </div>
     </div>
     <template #footer>
-      <button class="btn" @click="emit('close')">Done</button>
+      <button type="button" class="btn" @click="emit('close')">Done</button>
     </template>
   </Modal>
 </template>

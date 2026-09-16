@@ -3,9 +3,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Check, CheckCheck, CircleAlert, Clock3, Hash, Lock, MessageCirclePlus, Search, Send } from '@lucide/vue'
-import { api, enc, qs, radio as currentRadio, setRadio } from '@/api/client'
-import type { Conversation, Message } from '@/api/types'
-import { live, nodeLabel, on, refreshAllIdentities } from '@/store/live'
+import { api, enc, qs } from '@/api/client'
+import type { Channel, Conversation, Identity, MeshNode, Message } from '@/api/types'
+import { live, nodeLabel, on, radioName } from '@/store/live'
 import NodeAvatar from '@/components/ui/NodeAvatar.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -17,28 +17,29 @@ import { sendError } from '@/lib/relay'
 const route = useRoute()
 const router = useRouter()
 
-// Every identity can chat, the relay persona too (e.g. to DM a service that verifies the node);
-// ordinary identities come first.
+// Every identity on every radio can chat, the relay persona too (e.g. to DM a service that
+// verifies the node); ordinary identities come first.
+const severalRadios = computed(() => live.radios.length > 1)
 const chatIdentities = computed(() => [...live.identities].sort((a, b) => Number(a.is_relay) - Number(b.is_relay)))
+// Grouped by radio for the picker on multi-radio sites, in radio order.
+const groupedIdentities = computed(() => {
+  const order = new Map(live.radios.map((r, i) => [r.id, i]))
+  const groups = new Map<string, Identity[]>()
+  for (const i of chatIdentities.value) {
+    const key = i.radio_id ?? ''
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(i)
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+    .map(([radioId, items]) => ({ radioId, name: radioName(radioId), items }))
+})
 const identityId = computed(() => {
   const p = route.params.identity as string | undefined
   return p || chatIdentities.value.find((i) => i.enabled && !i.is_relay)?.node_id || chatIdentities.value[0]?.node_id || ''
 })
 const identity = computed(() => live.identities.find((i) => i.node_id === identityId.value))
 const convKey = computed(() => (route.params.conversation as string | undefined) || '')
-
-// A chat link for an identity on another radio (or one that has just moved) switches the page to
-// that radio instead of showing an empty chat.
-watch(
-  () => [identityId.value, live.identities.length, live.radios.length] as const,
-  async ([id, loaded, radios]) => {
-    if (!id || !loaded || radios < 2 || live.identities.some((i) => i.node_id === id)) return
-    await refreshAllIdentities()
-    const there = live.allIdentities.find((i) => i.node_id === id)
-    if (there?.radio_id && there.radio_id !== currentRadio.value) setRadio(there.radio_id)
-  },
-  { immediate: true },
-)
 
 const conversations = ref<Conversation[]>([])
 const loadingConvs = ref(false)
@@ -159,6 +160,23 @@ onBeforeUnmount(() => {
   clearTimeout(convTimer)
 })
 
+/** Subtitle for a channel conversation header: its slot, role and key kind. */
+function channelSub(idx: number, ch?: Channel) {
+  if (!ch) return ''
+  const key = ch.psk === 'AQ==' ? 'default key' : 'private key'
+  return `channel ${idx} · ${ch.role.toLowerCase()} · ${key}`
+}
+
+/** Subtitle for a DM header: the node id plus how it's reached. */
+function dmStatus(n: MeshNode) {
+  if (n.local) return 'local identity, delivered without RF'
+  if (n.has_public_key) return `PKI encrypted · heard ${relTime(n.last_heard, now.value)}`
+  return 'no public key yet, will use the channel key'
+}
+function dmSub(nodeId: string, n?: MeshNode) {
+  return n ? `${nodeId} · ${dmStatus(n)}` : nodeId
+}
+
 const current = computed(() => {
   const k = convKey.value
   if (!k) return null
@@ -166,7 +184,7 @@ const current = computed(() => {
   if (k.startsWith('ch:')) {
     const idx = Number(k.slice(3))
     const ch = identity.value?.channels[idx]
-    return { kind: 'channel' as const, title: conv?.title ?? ch?.display_name ?? `Channel ${idx}`, channel: idx, to: BROADCAST, sub: ch ? `channel ${idx} · ${ch.role.toLowerCase()} · ${ch.psk === 'AQ==' ? 'default key' : 'private key'}` : '' }
+    return { kind: 'channel' as const, title: conv?.title ?? ch?.display_name ?? `Channel ${idx}`, channel: idx, to: BROADCAST, sub: channelSub(idx, ch) }
   }
   const nodeId = k.slice(3)
   const n = live.nodes[nodeId]
@@ -176,7 +194,7 @@ const current = computed(() => {
     channel: 0,
     to: nodeId,
     nodeId,
-    sub: n ? `${nodeId} · ${n.local ? 'local identity, delivered without RF' : n.has_public_key ? `PKI encrypted · heard ${relTime(n.last_heard, now.value)}` : 'no public key yet, will use the channel key'}` : nodeId,
+    sub: dmSub(nodeId, n),
   }
 })
 
@@ -261,11 +279,18 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
           <label class="label" for="chat-ident">Speaking as</label>
           <div class="flex gap-2">
             <select id="chat-ident" class="input" :value="identityId" @change="selectIdentity(($event.target as HTMLSelectElement).value)">
-              <option v-for="i in chatIdentities" :key="i.node_id" :value="i.node_id">
+              <template v-if="severalRadios">
+                <optgroup v-for="g in groupedIdentities" :key="g.radioId" :label="g.name">
+                  <option v-for="i in g.items" :key="i.node_id" :value="i.node_id">
+                    {{ i.long_name }} ({{ i.short_name }}){{ i.is_relay ? ' · relay persona' : '' }}{{ i.enabled ? '' : ' · disabled' }}{{ i.unread ? ` · ${i.unread} unread` : '' }}
+                  </option>
+                </optgroup>
+              </template>
+              <option v-else v-for="i in chatIdentities" :key="i.node_id" :value="i.node_id">
                 {{ i.long_name }} ({{ i.short_name }}){{ i.is_relay ? ' · relay persona' : '' }}{{ i.enabled ? '' : ' · disabled' }}{{ i.unread ? ` · ${i.unread} unread` : '' }}
               </option>
             </select>
-            <button class="btn shrink-0 px-2.5" title="New direct message" @click="newDm = true"><MessageCirclePlus class="size-4" /></button>
+            <button type="button" class="btn shrink-0 px-2.5" title="New direct message" @click="newDm = true"><MessageCirclePlus class="size-4" /></button>
           </div>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto p-1.5">
@@ -274,6 +299,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
           </div>
           <button
             v-for="c in conversations"
+            type="button"
             :key="c.key"
             :class="['flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors', c.key === convKey ? 'bg-brand/10' : 'hover:bg-sunken']"
             @click="openConv(c.key)"
@@ -301,7 +327,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
       <section :class="['flex min-w-0 flex-1 flex-col', !convKey ? 'max-md:hidden' : '']">
         <template v-if="current">
           <header class="flex items-center gap-3 border-b border-line-soft px-3 py-2.5 sm:px-4">
-            <button class="icon-btn md:hidden" aria-label="Back to conversations" @click="router.push({ name: 'chat', params: { identity: identityId } })">
+            <button type="button" class="icon-btn md:hidden" aria-label="Back to conversations" @click="router.push({ name: 'chat', params: { identity: identityId } })">
               <ArrowLeft class="size-4" />
             </button>
             <span v-if="current.kind === 'channel'" class="flex h-8 min-w-11 items-center justify-center rounded-lg bg-brand/12 text-brand"><Hash class="size-4" /></span>
@@ -314,7 +340,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
 
           <div ref="scroller" class="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5">
             <div v-if="hasOlder" class="mb-3 flex justify-center">
-              <button class="btn btn-sm" :disabled="loadingMsgs" @click="loadMessages(true)"><Spinner v-if="loadingMsgs" />Load older</button>
+              <button type="button" class="btn btn-sm" :disabled="loadingMsgs" @click="loadMessages(true)"><Spinner v-if="loadingMsgs" />Load older</button>
             </div>
             <div v-if="loadingMsgs && !messages.length" class="flex justify-center py-10 text-ink-3"><Spinner /></div>
             <div v-else-if="!messages.length" class="empty h-full">
@@ -345,7 +371,6 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
                   <div class="mt-0.5 flex items-center gap-1.5 px-1 text-2xs tabular-nums text-ink-3">
                     <Lock v-if="r.m.pki" class="size-2.5" />
                     <span>{{ clock(r.m.time, false) }}</span>
-                    <span v-if="r.m.radio" :title="`${r.m.direction === 'in' ? 'Heard' : 'Sent'} on ${r.m.radio}`">· via {{ r.m.radio.split(', ').map((x) => live.radios.find((rr) => rr.id === x)?.name ?? x).join(' + ') }}</span>
                     <template v-if="r.m.direction === 'in' && r.m.snr != null">
                       <span>· SNR {{ r.m.snr.toFixed(1) }}</span><span v-if="r.m.hops != null">· {{ r.m.hops }} hop{{ r.m.hops === 1 ? '' : 's' }}</span>
                     </template>
@@ -369,7 +394,9 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
             <div class="flex items-end gap-2">
               <div class="relative min-w-0 flex-1">
                 <textarea
+                  id="chat-composer"
                   ref="composer"
+                  aria-label="Message"
                   v-model="text"
                   rows="1"
                   class="input max-h-32 min-h-9 resize-none pr-14 leading-snug"
@@ -378,7 +405,7 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
                 />
                 <span :class="['pointer-events-none absolute bottom-2.5 right-3 text-2xs tabular-nums', bytes > 200 ? 'text-bad' : 'text-ink-3']">{{ bytes }}/200</span>
               </div>
-              <button class="btn btn-primary h-9 shrink-0 px-3" :disabled="!canSend" aria-label="Send">
+              <button type="submit" class="btn btn-primary h-9 shrink-0 px-3" :disabled="!canSend" aria-label="Send">
                 <Spinner v-if="sending" /><Send v-else class="size-4" />
               </button>
             </div>
@@ -394,11 +421,12 @@ const convIcon = (c: Conversation) => (c.key.startsWith('ch:') ? 'channel' : 'dm
     <Modal :open="newDm" title="New direct message" :subtitle="identity ? `from ${identity.long_name}` : ''" @close="newDm = false">
       <div class="relative mb-3">
         <Search class="pointer-events-none absolute left-3 top-2.5 size-4 text-ink-3" />
-        <input v-model="dmSearch" class="input pl-9" placeholder="Search nodes by name or id" autofocus />
+        <input id="dm-search" v-model="dmSearch" aria-label="Search nodes" class="input pl-9" placeholder="Search nodes by name or id" autofocus />
       </div>
       <div class="-mx-2 max-h-80 overflow-y-auto">
         <button
           v-for="n in dmCandidates"
+          type="button"
           :key="n.node_id"
           class="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left hover:bg-sunken"
           @click="startDm(n.node_id)"

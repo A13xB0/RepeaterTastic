@@ -5,6 +5,8 @@ package udp
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"net"
@@ -97,17 +99,23 @@ func (l *Link) Run(ctx context.Context) error {
 		return err
 	}
 	l.out = out
+	var joinErr error
 	for _, g := range l.groups {
 		c, err := net.ListenMulticastUDP("udp4", l.iface, g)
 		if err != nil {
 			l.log.Error("joining multicast group", "group", g, "err", err)
+			joinErr = err
 			continue
 		}
 		_ = c.SetReadBuffer(1 << 20)
 		l.conns = append(l.conns, c)
 	}
 	if len(l.conns) == 0 {
-		return err
+		_ = out.Close()
+		if joinErr == nil {
+			joinErr = errors.New("no multicast group to join")
+		}
+		return fmt.Errorf("UDP multicast: %w", joinErr)
 	}
 	l.connected.Store(true)
 	l.host.AddLink(l)

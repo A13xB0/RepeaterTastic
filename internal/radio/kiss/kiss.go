@@ -196,7 +196,7 @@ func (s *session) write(typ byte, parts ...[]byte) error {
 	s.wbuf = appendFrame(s.wbuf[:0], typ, parts...)
 	if _, err := s.rwc.Write(s.wbuf); err != nil {
 		s.fail(err)
-		return fmt.Errorf("%w: %v", radio.ErrNotConnected, err)
+		return fmt.Errorf("%w: %w", radio.ErrNotConnected, err)
 	}
 	return nil
 }
@@ -225,42 +225,53 @@ func (s *session) handle(f []byte) {
 	case typeData:
 		s.m.rxData(f[1:])
 	case typeSetHardware:
-		if len(f) < 2 {
-			return
-		}
-		sub, data := f[1], f[2:]
-		switch sub {
-		case respRxMeta:
-			s.m.rxMeta(data)
-		case respTxDone:
-			if len(data) > 0 && s.txActive.Load() {
-				select {
-				case s.txDone <- data[0]:
-				default:
-				}
-			}
-		case respError:
-			if len(data) > 0 && data[0] == ErrCodeTxBusy {
-				// Ambiguous: a Data frame arrived while one was pending, or the modem's 2-frame host
-				// output queue overflowed (possibly eating a command reply). Never a verdict by itself.
-				s.m.txBusy.Add(1)
-				s.txBusy.Store(true)
-				s.respMu.Lock()
-				if w := s.waiter; w != nil {
-					select {
-					case w.busy <- struct{}{}:
-					default:
-					}
-				}
-				s.respMu.Unlock()
-				return
-			}
-			s.deliver(sub, data)
-		default:
-			s.deliver(sub, data)
-		}
+		s.handleHardware(f)
 	}
 	// Other ports and KISS commands are not sent by the modem; ignore.
+}
+
+// handleHardware dispatches a SetHardware frame from the modem: RX metadata, TxDone, TxBusy or a
+// command reply.
+func (s *session) handleHardware(f []byte) {
+	if len(f) < 2 {
+		return
+	}
+	sub, data := f[1], f[2:]
+	switch sub {
+	case respRxMeta:
+		s.m.rxMeta(data)
+	case respTxDone:
+		if len(data) > 0 && s.txActive.Load() {
+			select {
+			case s.txDone <- data[0]:
+			default:
+			}
+		}
+	case respError:
+		if len(data) > 0 && data[0] == ErrCodeTxBusy {
+			s.noteTxBusy()
+			return
+		}
+		s.deliver(sub, data)
+	default:
+		s.deliver(sub, data)
+	}
+}
+
+// noteTxBusy records a TxBusy error and tells a waiting command about it.
+func (s *session) noteTxBusy() {
+	// Ambiguous: a Data frame arrived while one was pending, or the modem's 2-frame host
+	// output queue overflowed (possibly eating a command reply). Never a verdict by itself.
+	s.m.txBusy.Add(1)
+	s.txBusy.Store(true)
+	s.respMu.Lock()
+	if w := s.waiter; w != nil {
+		select {
+		case w.busy <- struct{}{}:
+		default:
+		}
+	}
+	s.respMu.Unlock()
 }
 
 func (s *session) deliver(sub byte, data []byte) {
@@ -386,14 +397,22 @@ func (m *Modem) connect(ctx context.Context, reconnect bool) (*session, error) {
 		gen = m.cfgGen
 		cfg := *m.cfg
 		m.mu.Unlock()
-		if err := m.apply(ctx, s, ver, cfg); err != nil {
-			if !errors.Is(err, radio.ErrUnsupported) {
-				s.fail(err)
-				return nil, fmt.Errorf("kiss: re-applying config: %w", err)
-			}
-			m.opts.Logf("kiss: %s: %v", m.opts.Device, err)
+		if err := m.reapply(ctx, s, ver, cfg); err != nil {
+			s.fail(err)
+			return nil, fmt.Errorf("kiss: re-applying config: %w", err)
 		}
 	}
+}
+
+// reapply applies the stored config to a new session. A setting the firmware can't take is
+// logged rather than failing the connection.
+func (m *Modem) reapply(ctx context.Context, s *session, ver byte, cfg radio.Config) error {
+	err := m.apply(ctx, s, ver, cfg)
+	if err == nil || !errors.Is(err, radio.ErrUnsupported) {
+		return err
+	}
+	m.opts.Logf("kiss: %s: %v", m.opts.Device, err)
+	return nil
 }
 
 func (m *Modem) handshake(ctx context.Context, s *session) (ver byte, name string, err error) {
@@ -438,26 +457,33 @@ func (m *Modem) supervise(s *session) {
 			return
 		}
 		m.opts.Logf("kiss: %s disconnected: %v; retrying every %v", m.opts.Device, s.err, m.opts.ReconnectInterval)
-		t := time.NewTimer(m.opts.ReconnectInterval)
-		for lastErr := ""; ; {
-			select {
-			case <-m.ctx.Done():
-				t.Stop()
-				return
-			case <-t.C:
-			}
-			ns, err := m.connect(m.ctx, true)
-			if err == nil {
-				m.opts.Logf("kiss: %s reconnected", m.opts.Device)
-				s = ns
-				break
-			}
-			if e := err.Error(); e != lastErr {
-				m.opts.Logf("kiss: %s reconnect: %v", m.opts.Device, err)
-				lastErr = e
-			}
-			t.Reset(m.opts.ReconnectInterval)
+		if s = m.reconnect(); s == nil {
+			return
 		}
+	}
+}
+
+// reconnect retries every ReconnectInterval, logging each new error once, until it has a session
+// or the modem is closed (nil).
+func (m *Modem) reconnect() *session {
+	t := time.NewTimer(m.opts.ReconnectInterval)
+	for lastErr := ""; ; {
+		select {
+		case <-m.ctx.Done():
+			t.Stop()
+			return nil
+		case <-t.C:
+		}
+		ns, err := m.connect(m.ctx, true)
+		if err == nil {
+			m.opts.Logf("kiss: %s reconnected", m.opts.Device)
+			return ns
+		}
+		if e := err.Error(); e != lastErr {
+			m.opts.Logf("kiss: %s reconnect: %v", m.opts.Device, err)
+			lastErr = e
+		}
+		t.Reset(m.opts.ReconnectInterval)
 	}
 }
 
@@ -613,23 +639,9 @@ func (m *Modem) apply(ctx context.Context, s *session, ver byte, c radio.Config)
 	if err := s.set(ctx, cmdSetTxPower, []byte{byte(c.TxPowerDBm)}); err != nil {
 		return err
 	}
-	patched := ver >= PatchedVersion
-	if patched {
-		err := s.set(ctx, cmdSetSyncWord, []byte{c.SyncWord})
-		var me *ModemError
-		if errors.As(err, &me) && me.Code == ErrCodeUnknownCmd {
-			if !stockOK {
-				return unsupported(ver, "sync word (SetSyncWord unknown)")
-			}
-			patched = false
-		} else if err != nil {
-			return err
-		}
-	}
-	if patched {
-		if err := s.set(ctx, cmdSetPreamble, binary.LittleEndian.AppendUint16(nil, c.Preamble)); err != nil {
-			return err
-		}
+	patched, err := s.setPhyExtra(ctx, ver, c, stockOK)
+	if err != nil {
+		return err
 	}
 	// Standard KISS CSMA knobs (no reply): transmit as soon as the channel is clear.
 	if err := s.write(typeTxDelay, []byte{0}); err != nil {
@@ -641,6 +653,35 @@ func (m *Modem) apply(ctx context.Context, s *session, ver byte, c radio.Config)
 	if !patched {
 		return nil
 	}
+	return s.checkPhyExtra(ctx, c, defPre)
+}
+
+// setPhyExtra sets the sync word and preamble on patched firmware. It returns false when it
+// didn't: stock firmware, or patched firmware without SetSyncWord and a stock PHY wanted.
+func (s *session) setPhyExtra(ctx context.Context, ver byte, c radio.Config, stockOK bool) (bool, error) {
+	if ver < PatchedVersion {
+		return false, nil
+	}
+	err := s.set(ctx, cmdSetSyncWord, []byte{c.SyncWord})
+	var me *ModemError
+	if errors.As(err, &me) && me.Code == ErrCodeUnknownCmd {
+		if !stockOK {
+			return false, unsupported(ver, "sync word (SetSyncWord unknown)")
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := s.set(ctx, cmdSetPreamble, binary.LittleEndian.AppendUint16(nil, c.Preamble)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// checkPhyExtra reads back the sync word and preamble (defPre when c leaves it 0) the modem is
+// using.
+func (s *session) checkPhyExtra(ctx context.Context, c radio.Config, defPre uint16) error {
 	d, err := s.get(ctx, cmdGetPhyExtra, 3, nil)
 	if err != nil {
 		return err
@@ -728,7 +769,7 @@ func (m *Modem) Send(ctx context.Context, frame []byte) error {
 	cancelled, err := wait(ctx.Done())
 	if cancelled {
 		go func() {
-			wait(nil)
+			_, _ = wait(nil) // the modem still reports the transmission; only then is it free
 			t.Stop()
 			release()
 		}()

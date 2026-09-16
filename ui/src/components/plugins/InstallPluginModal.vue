@@ -59,9 +59,9 @@ const mb = (n: number) => (n / 1048576).toFixed(n < 1048576 ? 2 : 1)
 <template>
   <Modal :open="open" title="Install a plugin" subtitle="A plugin bundle is a .zip with a plugin.yaml. It is installed switched off." size="lg" @close="emit('close')">
     <div class="tabs -mx-5 -mt-4 mb-4 px-4" role="tablist">
-      <button role="tab" :aria-selected="mode === 'upload'" @click="mode = 'upload'">Upload</button>
-      <button v-if="allowUrl" role="tab" :aria-selected="mode === 'url'" @click="mode = 'url'">From a URL</button>
-      <button role="tab" :aria-selected="mode === 'manual'" @click="mode = 'manual'">Without the GUI</button>
+      <button type="button" role="tab" :aria-selected="mode === 'upload'" @click="mode = 'upload'">Upload</button>
+      <button type="button" v-if="allowUrl" role="tab" :aria-selected="mode === 'url'" @click="mode = 'url'">From a URL</button>
+      <button type="button" role="tab" :aria-selected="mode === 'manual'" @click="mode = 'manual'">Without the GUI</button>
     </div>
 
     <label
@@ -118,8 +118,8 @@ repeatertastic plugin list</pre>
 
     <p v-if="error" class="mt-3 text-[13px] text-bad">{{ error }}</p>
     <template #footer>
-      <button class="btn" @click="emit('close')">{{ mode === 'manual' ? 'Close' : 'Cancel' }}</button>
-      <button v-if="mode !== 'manual'" class="btn btn-primary" :disabled="busy || (mode === 'upload' ? !file : !url.trim())" @click="install">
+      <button type="button" class="btn" @click="emit('close')">{{ mode === 'manual' ? 'Close' : 'Cancel' }}</button>
+      <button type="button" v-if="mode !== 'manual'" class="btn btn-primary" :disabled="busy || (mode === 'upload' ? !file : !url.trim())" @click="install">
         <Spinner v-if="busy" />Install
       </button>
     </template>

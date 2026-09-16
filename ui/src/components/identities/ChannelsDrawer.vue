@@ -9,15 +9,14 @@ import Drawer from '@/components/ui/Drawer.vue'
 import QrCode from '@/components/ui/QrCode.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { multiRadioActive, live, radioName, upsertIdentity } from '@/store/live'
+import { live, upsertIdentity } from '@/store/live'
 import { toast, toastError } from '@/composables/toast'
 import { channelSlots } from '@/lib/channels'
 
 const props = defineProps<{ identityId: string | null }>()
 const emit = defineEmits<{ close: [] }>()
 
-const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId) ?? live.allIdentities.find((i) => i.node_id === props.identityId))
-const multi = computed(() => multiRadioActive())
+const identity = computed<Identity | undefined>(() => live.identities.find((i) => i.node_id === props.identityId))
 const tab = ref<'edit' | 'share'>('edit')
 const shareUrl = ref('')
 const importUrl = ref('')
@@ -37,7 +36,7 @@ const pskKind = (psk: string) => {
   if (!psk) return 'no encryption'
   if (psk === 'AQ==') return 'default key'
   const len = atob(psk).length
-  return len === 1 ? `default key #${atob(psk).charCodeAt(0)}` : `AES-${len * 8}`
+  return len === 1 ? `default key #${atob(psk).codePointAt(0)}` : `AES-${len * 8}`
 }
 
 
@@ -66,15 +65,18 @@ async function doImport() {
   }
 }
 
-const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' : r === 'SECONDARY' ? 'bg-info/12 text-info' : 'bg-ink-3/12 text-ink-3')
+function roleCls(r: ChannelRole): string {
+  if (r === 'PRIMARY') return 'bg-brand/14 text-brand'
+  return r === 'SECONDARY' ? 'bg-info/12 text-info' : 'bg-ink-3/12 text-ink-3'
+}
 </script>
 
 <template>
   <Drawer :open="!!identity" :title="`Channels · ${identity?.long_name ?? ''}`" :subtitle="identity?.node_id" wide @close="emit('close')">
     <div v-if="identity">
       <div class="tabs -mx-5 -mt-4 mb-4 px-5" role="tablist">
-        <button role="tab" :aria-selected="tab === 'edit'" @click="tab = 'edit'">Slots</button>
-        <button role="tab" :aria-selected="tab === 'share'" @click="tab = 'share'">Share &amp; import</button>
+        <button type="button" role="tab" :aria-selected="tab === 'edit'" @click="tab = 'edit'">Slots</button>
+        <button type="button" role="tab" :aria-selected="tab === 'share'" @click="tab = 'share'">Share &amp; import</button>
       </div>
 
       <div v-if="tab === 'edit'" class="space-y-2">
@@ -89,7 +91,6 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
               <span :class="['truncate text-[13px] font-medium', ch.role === 'DISABLED' && 'text-ink-3']">{{ ch.role === 'DISABLED' ? 'Unused' : ch.display_name }}</span>
               <span :class="['chip', roleCls(ch.role)]">{{ ch.role.toLowerCase() }}</span>
               <Lock v-if="ch.index === 0" class="size-3.5 text-ink-3" />
-              <span v-if="multi && ch.role !== 'DISABLED'" :class="['chip', ch.radio_removed ? 'bg-bad/12 text-bad' : 'bg-ink-3/12 text-ink-2']">{{ ch.radio_removed ? 'radio removed' : ch.radio_pending ? `${radioName(ch.radio_pending)} after restart` : radioName(ch.radio ?? identity.radio_id ?? 'main') }}</span>
             </div>
             <div v-if="ch.role !== 'DISABLED'" class="mt-0.5 text-xs text-ink-3">
               {{ pskKind(ch.psk) }} · hash <span class="mono">0x{{ ch.hash.toString(16).padStart(2, '0') }}</span>
@@ -97,7 +98,7 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
             </div>
           </div>
           <span v-if="ch.index === 0" class="max-w-44 text-right text-2xs leading-tight text-ink-3 max-sm:hidden">
-            {{ multi ? "The default radio's primary" : 'Shared primary · Configuration → Radios' }}
+            Shared primary · Configuration → Radios
           </span>
         </div>
       </div>
@@ -112,7 +113,7 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
               <div v-else class="flex size-[200px] items-center justify-center text-ink-3"><QrIcon class="size-8" /></div>
             </div>
             <div class="w-full min-w-0 flex-1">
-              <label class="label">Channel URL</label>
+              <span class="label">Channel URL</span>
               <div class="flex items-center gap-1 rounded-xl border border-line-soft bg-raised px-3 py-2">
                 <span class="mono min-w-0 flex-1 break-all text-xs">{{ shareUrl || '…' }}</span>
                 <CopyButton v-if="shareUrl" :text="shareUrl" label="Channel URL" />
@@ -129,8 +130,8 @@ const roleCls = (r: ChannelRole) => (r === 'PRIMARY' ? 'bg-brand/14 text-brand' 
           <h3 class="eyebrow mb-2">Import</h3>
           <p class="mb-2 text-[13px] text-ink-3">Paste a <span class="mono">meshtastic.org/e/#…</span> link. Secondary channels are added to free slots; the primary stays locked.</p>
           <div class="flex gap-2">
-            <input v-model="importUrl" class="input mono" placeholder="https://meshtastic.org/e/#…" spellcheck="false" />
-            <button class="btn btn-primary shrink-0" :disabled="!importUrl.trim() || importing" @click="doImport"><Spinner v-if="importing" />Import</button>
+            <input id="channel-import-url" v-model="importUrl" aria-label="Channel link" class="input mono" placeholder="https://meshtastic.org/e/#…" spellcheck="false" />
+            <button type="button" class="btn btn-primary shrink-0" :disabled="!importUrl.trim() || importing" @click="doImport"><Spinner v-if="importing" />Import</button>
           </div>
         </section>
       </div>

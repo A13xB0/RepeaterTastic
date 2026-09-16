@@ -10,22 +10,27 @@ The top-level radio stays the **main** radio and existing configs keep working u
   EU_868, LongFast, MediumFast, MediumSlow and ShortFast all sit on 869.525 MHz.
 - **Site airtime cap:** `site.duty_cycle_percent` caps the summed airtime of all radios.
 - **Web GUI:** Configuration → Radios adds, edits, renames and removes radios, and sets the site
-  airtime cap. A radio switcher appears in the top bar once there's more than one; the Relay,
-  Airtime, Position and MQTT tabs and most pages follow it. A new radio starts at the next restart
+  airtime cap. With more than one radio, the top bar shows each on its own row, every page
+  shows all radios (with a radio filter where it helps), and the Relay, Airtime, Position and MQTT
+  tabs have a radio selector. A new radio starts at the next restart
   (its settings can still be edited before then).
 - **Identities:** each lives on one radio. Move one from its editor: key, node ID, app port and
   chats go with it, and its primary channel follows the new preset. A key can't be imported onto a
   second radio.
-- **Relay:** each radio has its own relay role: client, router, mute, monitor (listens only) or off
-  (the radio is ignored). Set it from the top bar or Configuration → Relay with that radio picked.
-- **API:** `?radio=<id>` selects a radio (see [HTTP API](api.md#radios-and-the-radio-parameter)).
+- **Removing a radio** that has identities asks what happens to them: move them to another radio
+  first (the default), or leave them off air on disk, where adding a radio with the same ID brings
+  them back.
+- **Relay:** each radio has its own relay role: a Meshtastic role (client, client_base, client_mute, router,
+  router_late), monitor (listens only) or off
+  (the radio is ignored). Set it from that radio's row in the top bar, or Configuration → Relay with that radio selected.
+- **API:** `?radio=<id>` selects a radio and `?radio=all` covers them all (see [HTTP API](api.md#radios-and-the-radio-parameter)).
 - **EU_868 notes:** LongTurbo's 500 kHz doesn't fit the 250 kHz sub-band, and LongSlow sits on 869.4625 MHz.
 
 ## Adding a radio
 
 1. Flash and plug in another board ([Hardware](hardware.md)); note its `/dev/serial/by-id/` path.
 2. **Configuration → Radios → Add radio:** pick the region, preset, device, TX power and relay role
-   (client, router, mute, monitor or off). The relay starts muted so a new radio doesn't repeat until you decide
+   (a Meshtastic role, monitor or off). The relay starts as client mute so a new radio doesn't repeat until you decide
    it should.
 3. Restart when the banner asks. The radio comes up with its own relay persona.
 4. Switch to it in the top bar to add identities, MQTT connections and a position.
@@ -38,36 +43,14 @@ radios:
       name: MediumFast
       radio: {driver: kiss, device: /dev/serial/by-id/usb-…-if00, baud: 115200}
       mesh: {preset: MEDIUM_FAST, tx_power_dbm: 20, hop_limit: 3}
-      relay: {role: mute}
+      relay: {role: client_mute}
 site:
     duty_cycle_percent: 10
 ```
 
 Extra radios keep their identities and history in `state_dir/radios/<id>`.
 
-## Experimental: identities on several radios
-
-Off by default: **Configuration → Experimental**, or `experimental.multi_radio_identities: true`.
-With it on, one identity can use several radios:
-
-- **One radio per channel slot.** In the Channels page's slot dialog, each slot is on exactly one
-  radio. Scotland on LongFast and Scotland on MediumFast are two slots: two channels, two chats. (The
-  Meshtastic app shows both as "Scotland", in slot order; the web GUI labels them with their radio.)
-- **A default radio per identity** (identity editor; its home radio unless changed). Slot 0 is that
-  radio's primary channel, new channels start on it, channels changed from the app or a channel URL
-  import go to it, and DMs fall back to it.
-- **DMs** go on the radio where the other node was last heard best in the last day, always on the
-  default radio, or always on a fixed radio. An optional fallback retries a failed DM once on another
-  radio that heard the destination, if that radio has airtime left.
-- **Where it's on:** an identity is on its home radio, its default radio and each radio one of its
-  slots uses. On other radios it's a guest: they hear and send its slots there, deliver into its
-  chats on the home radio, and announce it on their own schedule.
-- **Replies** (ACKs, traceroutes, position and NodeInfo answers) leave on the radio the request came in on.
-- **App:** the identity keeps one app port. The app sees the home radio's LoRa settings and the nodes
-  heard on all its radios. Routing can only be changed in the web GUI.
-- **Safety:** a packet heard on two radios is delivered once, relay personas never repeat the site's
-  own identities, MQTT publishes a packet once, and turning the switch off puts everything back on
-  the home radio at once (the choices are kept for next time).
-- **Radios that haven't started** can already be chosen; those slots run on the default radio until
-  the restart. Slots whose radio was removed fall back to the default radio and are flagged on the
-  Channels page.
+Each identity lives on one radio; there's no routing an identity's channels or DMs across several.
+Radios on one mast still join into a site (`mesh.JoinSite`): an MQTT link recognises the site's own
+identities coming back from a broker on any radio, and `GET /nodes/{id}/sightings`
+([HTTP API](api.md#nodes)) shows what every radio of the site has heard of a node.

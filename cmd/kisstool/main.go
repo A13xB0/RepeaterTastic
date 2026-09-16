@@ -1,5 +1,6 @@
-// Command kisstool is a bench tool for the KISS modem driver: modem info, a Meshtastic listener
-// that decodes default-key channel traffic, and a LongFast-style broadcast text sender.
+// Command kisstool is a bench tool for the radio drivers (a KISS modem, or with --board an SX126x on
+// SPI): modem info, a Meshtastic listener that decodes default-key channel traffic, and a
+// LongFast-style broadcast text sender.
 package main
 
 import (
@@ -20,8 +21,16 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
+)
+
+// Seams for tests: exit replaces os.Exit, and dialKISS (nil in production) replaces the serial
+// port a KISS modem is opened on.
+var (
+	exit     = os.Exit
+	dialKISS func() (io.ReadWriteCloser, error)
 )
 
 const usage = `usage: kisstool <command> [flags]
@@ -30,8 +39,11 @@ commands:
   info                     modem version, name, radio, phy extra, noise floor, stats
   listen                   configure Meshtastic PHY and print received frames
   send-text [flags] TEXT   broadcast a text message on the preset's default channel
+  boards                   list the built-in meshtasticd board files for --board
 
 common flags: --dev /dev/ttyUSB0 --baud 115200
+  or --board BOARD for a LoRa chip on SPI or a CH341 USB adapter (experimental): a meshtasticd
+     board file path, a built-in board name (kisstool boards), or auto to detect
 PHY flags (listen, send-text): --region EU_868 --preset LONG_FAST --power 10
 send-text flags: --from !xxxxxxxx (default random)
 `
@@ -39,65 +51,55 @@ send-text flags: --from !xxxxxxxx (default random)
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		exit(2)
 	}
 	cmd := os.Args[1]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	dev := fs.String("dev", "/dev/ttyUSB0", "serial device")
 	baud := fs.Int("baud", 115200, "baud rate")
+	board := fs.String("board", "", "meshtasticd board (file, built-in name or auto): use a LoRa chip on SPI/CH341 instead of a KISS modem")
 	region := fs.String("region", "EU_868", "Meshtastic region")
 	preset := fs.String("preset", "LONG_FAST", "Meshtastic modem preset")
 	power := fs.Int("power", 10, "TX power dBm (0 = region limit)")
 	from := fs.String("from", "", "sender node number (!hex, 0x.., decimal); default random")
-	// Accept flags before and after positional arguments.
-	var args []string
-	for rest := os.Args[2:]; ; {
-		_ = fs.Parse(rest)
-		if fs.NArg() == 0 {
-			break
-		}
-		args = append(args, fs.Arg(0))
-		rest = fs.Args()[1:]
-	}
+	args := parseAnywhere(fs, os.Args[2:])
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	var run func(context.Context, *kiss.Modem) error
+	var run func(context.Context, radio.Radio) error
 	switch cmd {
+	case "boards":
+		listBoards()
+		return
 	case "info":
-		run = info
+		run = func(ctx context.Context, m radio.Radio) error {
+			if s, ok := m.(*spi.Radio); ok {
+				return spiInfo(ctx, s, *region, *preset)
+			}
+			return info(ctx, m)
+		}
 	case "listen", "send-text":
 		rp, err := resolve(*region, *preset, *power)
 		if err != nil {
 			fatal(err)
 		}
 		if cmd == "listen" {
-			run = func(ctx context.Context, m *kiss.Modem) error { return listen(ctx, m, rp) }
+			run = func(ctx context.Context, m radio.Radio) error { return listen(ctx, m, rp) }
 			break
 		}
-		text := strings.Join(args, " ")
-		if text == "" {
-			fatal(errors.New("send-text needs a message"))
-		}
-		node := rand.Uint32N(0xFFFFFFF0-wire.NumReserved) + wire.NumReserved
-		if *from != "" {
-			if node, err = wire.ParseNodeID(*from); err != nil {
-				fatal(fmt.Errorf("--from: %w", err))
-			}
-		}
-		run = func(ctx context.Context, m *kiss.Modem) error { return sendText(ctx, m, rp, node, text) }
+		run = sendTextRun(rp, args, *from)
 	default:
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		exit(2)
 	}
 
 	octx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	m, err := kiss.Open(octx, kiss.Options{Device: *dev, Baud: *baud})
+	m, err := open(octx, *dev, *baud, *board)
 	cancel()
 	if err != nil {
-		fatal(fmt.Errorf("open %s: %w", *dev, err))
+		fatal(err)
 	}
 	defer m.Close()
 	if err := run(ctx, m); err != nil && !errors.Is(err, context.Canceled) {
@@ -106,9 +108,61 @@ func main() {
 	}
 }
 
+// parseAnywhere parses fs from args, accepting flags before and after positional arguments, and
+// returns the positional ones.
+func parseAnywhere(fs *flag.FlagSet, rest []string) []string {
+	var args []string
+	for {
+		_ = fs.Parse(rest)
+		if fs.NArg() == 0 {
+			return args
+		}
+		args = append(args, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+}
+
+// sendTextRun checks send-text's arguments and returns the command to run; from is the --from
+// flag (empty for a random node number).
+func sendTextRun(rp phy.RadioParams, args []string, from string) func(context.Context, radio.Radio) error {
+	text := strings.Join(args, " ")
+	if text == "" {
+		fatal(errors.New("send-text needs a message"))
+	}
+	node := rand.Uint32N(0xFFFFFFF0-wire.NumReserved) + wire.NumReserved
+	if from != "" {
+		var err error
+		if node, err = wire.ParseNodeID(from); err != nil {
+			fatal(fmt.Errorf("--from: %w", err))
+		}
+	}
+	return func(ctx context.Context, m radio.Radio) error { return sendText(ctx, m, rp, node, text) }
+}
+
+func open(ctx context.Context, dev string, baud int, board string) (radio.Radio, error) {
+	if board == "" {
+		m, err := kiss.Open(ctx, kiss.Options{Device: dev, Baud: baud, Dial: dialKISS})
+		if err != nil {
+			return nil, fmt.Errorf("open %s: %w", dev, err)
+		}
+		return m, nil
+	}
+	b, src, err := spi.Resolve(board)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("board:      %s\n            from %s\n", b.Summary(), src)
+	logf := func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) }
+	r, err := spi.Open(ctx, b, logf)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", b.Module, err)
+	}
+	return r, nil
+}
+
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "kisstool:", err)
-	os.Exit(1)
+	exit(1)
 }
 
 func resolve(region, preset string, power int) (phy.RadioParams, error) {
@@ -124,7 +178,7 @@ func radioConfig(rp phy.RadioParams) radio.Config {
 		SyncWord: rp.SyncWord, Preamble: uint16(rp.Preamble), TxPowerDBm: int8(rp.TxPowerDBm)}
 }
 
-func configure(ctx context.Context, m *kiss.Modem, rp phy.RadioParams) error {
+func configure(ctx context.Context, m radio.Radio, rp phy.RadioParams) error {
 	c := radioConfig(rp)
 	if err := m.Configure(ctx, c); err != nil {
 		return err
@@ -134,7 +188,11 @@ func configure(ctx context.Context, m *kiss.Modem, rp phy.RadioParams) error {
 	return nil
 }
 
-func info(ctx context.Context, m *kiss.Modem) error {
+func info(ctx context.Context, r radio.Radio) error {
+	if s, ok := r.(*spi.Radio); ok {
+		return spiInfo(ctx, s, "EU_868", "LONG_FAST")
+	}
+	m := r.(*kiss.Modem)
 	in := m.Info()
 	patched := "no, flash firmware/out/Heltec_v3_kiss_modem-factory.bin"
 	if m.Version() >= kiss.PatchedVersion {
@@ -154,7 +212,42 @@ func info(ctx context.Context, m *kiss.Modem) error {
 	return nil
 }
 
-func listen(ctx context.Context, m *kiss.Modem, rp phy.RadioParams) error {
+// spiInfo reports what an SX126x on SPI says about itself. Open has already proven SPI works (the
+// sync word register read back as 0x1424).
+func spiInfo(ctx context.Context, r *spi.Radio, region, preset string) error {
+	in := r.Info()
+	fmt.Printf("device:     %s\nchip:       %s (answered: its ID check passed)\n", in.Device, in.Firmware)
+	for _, line := range r.Diagnostics() {
+		fmt.Println(line)
+	}
+	// A noise floor needs the chip in RX on a real channel: configure the region/preset for a moment.
+	rp, err := resolve(region, preset, 0)
+	if err != nil {
+		return err
+	}
+	if err := configure(ctx, r, rp); err != nil {
+		return fmt.Errorf("configure: %w", err)
+	}
+	time.Sleep(6 * time.Second)
+	st := r.Stats(ctx)
+	fmt.Printf("noise:      %d dBm (RX on %.4f MHz; about -100 to -125 is normal)\nstats:      rx %d, tx %d, errors %d\n",
+		st.NoiseFloorDBm, rp.FrequencyMHz, st.RxPackets, st.TxPackets, st.Errors)
+	return nil
+}
+
+// listBoards prints the built-in meshtasticd board files and whether this driver takes them.
+func listBoards() {
+	for _, k := range spi.KnownBoards() {
+		if k.Err != nil {
+			fmt.Printf("  %-52s not supported: %v\n", k.File, k.Err)
+			continue
+		}
+		fmt.Printf("  %-52s %s\n", k.File, k.Board.Summary())
+	}
+	fmt.Println("\nUse the file name (with or without lora- and .yaml) as --board or radio.device, or \"auto\" to detect.")
+}
+
+func listen(ctx context.Context, m radio.Radio, rp phy.RadioParams) error {
 	if err := configure(ctx, m, rp); err != nil {
 		return err
 	}
@@ -199,7 +292,7 @@ func printFrame(w io.Writer, f radio.Frame, hash uint8) {
 	fmt.Fprintln(w)
 }
 
-func sendText(ctx context.Context, m *kiss.Modem, rp phy.RadioParams, from uint32, text string) error {
+func sendText(ctx context.Context, m radio.Radio, rp phy.RadioParams, from uint32, text string) error {
 	if err := configure(ctx, m, rp); err != nil {
 		return err
 	}

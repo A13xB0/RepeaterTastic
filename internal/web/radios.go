@@ -10,6 +10,9 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 )
 
+// noRadio starts the error for a radio id that isn't there.
+const noRadio = "no radio "
+
 // radioByID returns the radio with that ID, or nil.
 func (s *Server) radioByID(id string) *radioCtx {
 	for _, rc := range s.radios {
@@ -174,6 +177,22 @@ func (s *Server) patchRadio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cfgMu.Lock()
+	name, found := s.renameRadio(id, name)
+	s.cfgMu.Unlock()
+	if !found {
+		writeError(w, http.StatusNotFound, noRadio+id)
+		return
+	}
+	if err := s.saveIfPath(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": name})
+}
+
+// renameRadio names a radio in the config and on the running radio, returning the name it shows
+// (a blank name shows as Main or the id). It reports false if there's no such radio. cfgMu must be held.
+func (s *Server) renameRadio(id, name string) (string, bool) {
 	found := id == config.MainRadioID
 	if found {
 		s.cfg.Site.MainRadioName = name
@@ -192,16 +211,37 @@ func (s *Server) patchRadio(w http.ResponseWriter, r *http.Request) {
 	if rc := s.radioByID(id); rc != nil && found {
 		rc.name = name
 	}
-	s.cfgMu.Unlock()
-	if !found {
-		writeError(w, http.StatusNotFound, "no radio "+id)
-		return
+	return name, found
+}
+
+// pendingRadioEdit is the body of PUT /api/v1/radios/{id}.
+type pendingRadioEdit struct {
+	Name       string `json:"name"`
+	Driver     string `json:"driver"`
+	Device     string `json:"device"`
+	Region     string `json:"region"`
+	Preset     string `json:"preset"`
+	TxPowerDBm int    `json:"tx_power_dbm"`
+	RelayRole  string `json:"relay_role"`
+}
+
+// apply copies the edit into a radio's entry; blank driver, region, preset and relay role are kept.
+func (e pendingRadioEdit) apply(ri *config.RadioInstance) {
+	ri.Name = strings.TrimSpace(e.Name)
+	if e.Driver != "" {
+		ri.Radio.Driver = e.Driver
 	}
-	if err := s.saveIfPath(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	ri.Radio.Device = strings.TrimSpace(e.Device)
+	if e.Region != "" {
+		ri.Mesh.Region = strings.ToUpper(e.Region)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": name})
+	if e.Preset != "" {
+		ri.Mesh.Preset = strings.ToUpper(e.Preset)
+	}
+	ri.Mesh.TxPowerDBm = e.TxPowerDBm
+	if e.RelayRole != "" {
+		ri.Relay.Role = e.RelayRole
+	}
 }
 
 // putRadio is PUT /api/v1/radios/{id}: change a radio that was added but hasn't started yet (its
@@ -212,15 +252,7 @@ func (s *Server) putRadio(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "that radio is running; use Edit on it in Configuration → Radios")
 		return
 	}
-	var req struct {
-		Name       string `json:"name"`
-		Driver     string `json:"driver"`
-		Device     string `json:"device"`
-		Region     string `json:"region"`
-		Preset     string `json:"preset"`
-		TxPowerDBm int    `json:"tx_power_dbm"`
-		RelayRole  string `json:"relay_role"`
-	}
+	var req pendingRadioEdit
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -230,29 +262,13 @@ func (s *Server) putRadio(w http.ResponseWriter, r *http.Request) {
 	whole.Radios = append([]config.RadioInstance(nil), s.cfg.Radios...)
 	found := false
 	for i := range whole.Radios {
-		ri := &whole.Radios[i]
-		if ri.ID != id {
-			continue
-		}
-		found = true
-		ri.Name = strings.TrimSpace(req.Name)
-		if req.Driver != "" {
-			ri.Radio.Driver = req.Driver
-		}
-		ri.Radio.Device = strings.TrimSpace(req.Device)
-		if req.Region != "" {
-			ri.Mesh.Region = strings.ToUpper(req.Region)
-		}
-		if req.Preset != "" {
-			ri.Mesh.Preset = strings.ToUpper(req.Preset)
-		}
-		ri.Mesh.TxPowerDBm = req.TxPowerDBm
-		if req.RelayRole != "" {
-			ri.Relay.Role = req.RelayRole
+		if whole.Radios[i].ID == id {
+			found = true
+			req.apply(&whole.Radios[i])
 		}
 	}
 	if !found {
-		writeError(w, http.StatusNotFound, "no radio "+id)
+		writeError(w, http.StatusNotFound, noRadio+id)
 		return
 	}
 	whole.FillRadioDefaults()
@@ -292,7 +308,7 @@ func (s *Server) deleteRadio(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfgMu.Unlock()
 	if !found {
-		writeError(w, http.StatusNotFound, "no radio "+id)
+		writeError(w, http.StatusNotFound, noRadio+id)
 		return
 	}
 	if err := s.saveIfPath(); err != nil {
@@ -362,6 +378,10 @@ func (s *Server) putExtraRelay(w http.ResponseWriter, r *http.Request, rc *radio
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := rc.host.PushConfig(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, "relay role changed here, but "+err.Error())
+		return
+	}
 	s.cfgMu.Lock()
 	for i := range s.cfg.Radios {
 		if s.cfg.Radios[i].ID == rc.id {
@@ -384,18 +404,11 @@ func (s *Server) applyRadioConfig(r *http.Request, rc *radioCtx, next *config.Co
 	s.cfgMu.Lock()
 	whole := *s.cfg
 	radios := append([]config.RadioInstance(nil), whole.Radios...)
-	found := false
-	for i := range radios {
-		if radios[i].ID == rc.id {
-			radios[i].Radio, radios[i].Mesh, radios[i].Relay = next.Radio, next.Mesh, next.Relay
-			radios[i].Airtime, radios[i].Links, radios[i].Position = next.Airtime, next.Links, next.Position
-			found = true
-		}
-	}
+	found := setRadioSections(radios, rc.id, next)
 	whole.Radios = radios
 	s.cfgMu.Unlock()
 	if !found {
-		return errors.New("no radio " + rc.id + " in the configuration")
+		return errors.New(noRadio + rc.id + " in the configuration")
 	}
 	if err := whole.Validate(); err != nil {
 		return err
@@ -409,14 +422,11 @@ func (s *Server) applyRadioConfig(r *http.Request, rc *radioCtx, next *config.Co
 	if err := rc.host.UpdateConfig(r.Context(), view.MeshConfig()); err != nil {
 		return err
 	}
+	edited := lastRadioEntry(radios, rc.id)
 	s.cfgMu.Lock()
 	for i := range s.cfg.Radios { // only this radio's entry: others may have changed meanwhile
 		if s.cfg.Radios[i].ID == rc.id {
-			for _, nr := range radios {
-				if nr.ID == rc.id {
-					s.cfg.Radios[i] = nr
-				}
-			}
+			s.cfg.Radios[i] = edited
 		}
 	}
 	*rc.cfg = *view.Config
@@ -427,6 +437,31 @@ func (s *Server) applyRadioConfig(r *http.Request, rc *radioCtx, next *config.Co
 		}
 	}
 	return nil
+}
+
+// setRadioSections copies the per-radio sections of next into the radio's entries, reporting
+// whether there was one.
+func setRadioSections(radios []config.RadioInstance, id string, next *config.Config) bool {
+	found := false
+	for i := range radios {
+		if radios[i].ID == id {
+			radios[i].Radio, radios[i].Mesh, radios[i].Relay = next.Radio, next.Mesh, next.Relay
+			radios[i].Airtime, radios[i].Links, radios[i].Position = next.Airtime, next.Links, next.Position
+			found = true
+		}
+	}
+	return found
+}
+
+// lastRadioEntry is the last entry with that id.
+func lastRadioEntry(radios []config.RadioInstance, id string) config.RadioInstance {
+	var out config.RadioInstance
+	for _, ri := range radios {
+		if ri.ID == id {
+			out = ri
+		}
+	}
+	return out
 }
 
 // restartDaemon is POST /api/v1/restart: exit so systemd starts the daemon again with the
@@ -443,4 +478,17 @@ func (s *Server) restartDaemon(w http.ResponseWriter, r *http.Request) {
 		}
 		os.Exit(75)
 	}()
+}
+
+// radioIDOK reports whether a radio id is safe to use as a folder name.
+func radioIDOK(id string) bool {
+	if id == "" || len(id) > 24 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
 }

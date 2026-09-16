@@ -1,0 +1,1 @@
+import{$ as e}from"./client-B7fedSbh.js";var t=e(Date.now());setInterval(()=>t.value=Date.now(),1e3);export{t};

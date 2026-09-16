@@ -33,6 +33,9 @@ watch(themeMode, (m) => {
 })
 apply()
 
+// system -> light -> dark -> system
+const NEXT_THEME: Record<ThemeMode, ThemeMode> = { system: 'light', light: 'dark', dark: 'system' }
+
 export function cycleTheme() {
-  themeMode.value = themeMode.value === 'system' ? 'light' : themeMode.value === 'light' ? 'dark' : 'system'
+  themeMode.value = NEXT_THEME[themeMode.value]
 }

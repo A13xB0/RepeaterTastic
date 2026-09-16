@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
+	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
 	"github.com/ScotMesh/RepeaterTastic/pb"
@@ -137,39 +138,122 @@ func longFastPacket(from, id uint32, text string, okToMQTT bool) *pb.MeshPacket 
 		HopLimit: 3, HopStart: 3, PayloadVariant: &pb.MeshPacket_Encrypted{Encrypted: wire.AESCTR(key, from, id, plain)}}
 }
 
-// Against a real broker: RT_TEST_MQTT_BROKER=127.0.0.1:1883 go test ./internal/links/mqtt
-func TestBrokerUplinkAndDownlink(t *testing.T) {
-	broker := os.Getenv("RT_TEST_MQTT_BROKER")
-	if broker == "" {
-		t.Skip("set RT_TEST_MQTT_BROKER=host:port to run against a broker")
+// testBroker is the broker named by RT_TEST_MQTT_BROKER, or an in-process fake broker without one.
+func testBroker(t *testing.T) string {
+	t.Helper()
+	if broker := os.Getenv("RT_TEST_MQTT_BROKER"); broker != "" {
+		return broker
 	}
-	h, err := mesh.NewHost(mesh.Config{Region: "EU_868", StateDir: t.TempDir(), IgnoreMQTT: true}, null.New(), nil)
+	return startFakeBroker(t).addr()
+}
+
+// linkTap stands in for the air bridge: it records the packets links bring in (mesh.LinkTap),
+// which is how hosted nodes receive them.
+type linkTap struct{ heard chan *pb.MeshPacket }
+
+func newLinkTap() *linkTap { return &linkTap{heard: make(chan *pb.MeshPacket, 16)} }
+
+func (*linkTap) Heard(radio.Frame)                          { /* air frames are not under test */ }
+func (*linkTap) Transmitted([]byte, *pb.MeshPacket, uint32) { /* nor transmissions */ }
+func (lt *linkTap) LinkHeard(p *pb.MeshPacket)              { lt.heard <- proto.Clone(p).(*pb.MeshPacket) }
+
+// next returns the next packet a link brought in, or nil after timeout.
+func (lt *linkTap) next(timeout time.Duration) *pb.MeshPacket {
+	select {
+	case p := <-lt.heard:
+		return p
+	case <-time.After(timeout):
+		return nil
+	}
+}
+
+// newTestHost makes a host with a relay persona and a "Desk" identity, which prepare (if set)
+// can adjust before it's added, and an air tap recording link packets. It isn't started.
+func newTestHost(t *testing.T, prepare func(desk *mesh.Identity)) (h *mesh.Host, relay, desk *mesh.Identity, tap *linkTap) {
+	t.Helper()
+	h, err := mesh.NewHost(mesh.Config{Region: "EU_868", StateDir: t.TempDir()}, null.New(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay, _ := mesh.NewIdentity(nil, "Test Relay", "TRLY")
+	relay, _ = mesh.NewIdentity(nil, "Test Relay", "TRLY")
 	relay.IsRelay = true
-	desk, _ := mesh.NewIdentity(nil, "Desk", "DESK")
-	desk.Channels[0].Settings.UplinkEnabled = true
-	desk.Channels[0].Settings.DownlinkEnabled = true
+	desk, _ = mesh.NewIdentity(nil, "Desk", "DESK")
+	for wire.LastByte(desk.NodeNum) == wire.LastByte(relay.NodeNum) { // the host needs distinct relay bytes
+		desk, _ = mesh.NewIdentity(nil, "Desk", "DESK")
+	}
+	if prepare != nil {
+		prepare(desk)
+	}
 	for _, id := range []*mesh.Identity{relay, desk} {
 		if err := h.AddIdentity(id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = h.Run(ctx) }()
-	link := New(h, Options{Address: broker, Root: "msh/TEST"}, nil)
-	go func() { _ = link.Run(ctx) }()
+	tap = newLinkTap()
+	h.AddAirTap(tap)
+	return h, relay, desk, tap
+}
 
-	// an outside client standing in for other gateways
-	obs := paho.NewClient(paho.NewClientOptions().AddBroker("tcp://" + broker).SetClientID("rt-test-observer"))
+// runTestHost is newTestHost, started until the test ends.
+func runTestHost(t *testing.T, prepare func(desk *mesh.Identity)) (ctx context.Context, h *mesh.Host, relay, desk *mesh.Identity, tap *linkTap) {
+	t.Helper()
+	h, relay, desk, tap = newTestHost(t, prepare)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-done })
+	go func() { defer close(done); _ = h.Run(ctx) }()
+	return ctx, h, relay, desk, tap
+}
+
+// runLink runs a connection until the test ends.
+func runLink(t *testing.T, ctx context.Context, l *Link) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-done })
+	go func() { defer close(done); _ = l.Run(ctx) }()
+}
+
+// connectObserver connects an outside client, standing in for other gateways, until the test ends.
+func connectObserver(t *testing.T, broker, clientID string) paho.Client {
+	t.Helper()
+	obs := paho.NewClient(paho.NewClientOptions().AddBroker("tcp://" + broker).SetClientID(clientID))
 	if tok := obs.Connect(); !tok.WaitTimeout(5*time.Second) || tok.Error() != nil {
 		t.Fatalf("observer connect: %v", tok.Error())
 	}
-	defer obs.Disconnect(100)
-	up := make(chan *pb.ServiceEnvelope, 4)
+	t.Cleanup(func() { obs.Disconnect(100) })
+	return obs
+}
+
+// waitUntil polls done every step until it's true (true) or timeout passes (false).
+func waitUntil(timeout, step time.Duration, done func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for !done() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(step)
+	}
+	return true
+}
+
+// Against a real broker: RT_TEST_MQTT_BROKER=127.0.0.1:1883 go test ./internal/links/mqtt
+// (otherwise against the in-process fake broker).
+//
+// The host only logs and sniffs what it receives: a downlinked packet reaches the hosted nodes
+// through the air bridge's LinkHeard, marked via MQTT and with hop limit 0 (no relay_mqtt), and
+// the node DB records the sender as heard via MQTT.
+func TestBrokerUplinkAndDownlink(t *testing.T) {
+	broker := testBroker(t)
+	ctx, h, relay, _, tap := runTestHost(t, func(desk *mesh.Identity) {
+		desk.Channels[0].Settings.UplinkEnabled = true
+		desk.Channels[0].Settings.DownlinkEnabled = true
+	})
+	link := New(h, Options{Address: broker, Root: "msh/TEST"}, nil)
+	runLink(t, ctx, link)
+
+	obs := connectObserver(t, broker, "rt-test-observer")
+	up := make(chan *pb.ServiceEnvelope, 16)
 	obs.Subscribe("msh/TEST/2/e/LongFast/"+relay.NodeID(), 0, func(_ paho.Client, m paho.Message) {
 		env := &pb.ServiceEnvelope{}
 		if proto.Unmarshal(m.Payload(), env) == nil {
@@ -177,22 +261,52 @@ func TestBrokerUplinkAndDownlink(t *testing.T) {
 		}
 	}).WaitTimeout(5 * time.Second)
 
-	deadline := time.Now().Add(15 * time.Second)
-	for !(link.Connected() && len(link.Subscriptions()) == 1) {
-		if time.Now().After(deadline) {
-			t.Fatalf("link connected=%v subscriptions=%v", link.Connected(), link.Subscriptions())
-		}
-		time.Sleep(100 * time.Millisecond)
+	if !waitUntil(15*time.Second, 20*time.Millisecond, func() bool { return link.Connected() && len(link.Subscriptions()) == 1 }) {
+		t.Fatalf("link connected=%v subscriptions=%v", link.Connected(), link.Subscriptions())
 	}
 
 	// uplink: heard on air with OK_TO_MQTT → published; without it → not
-	h.HandleReceived(longFastPacket(0x11223344, 1001, "no consent", false), nil)
-	h.HandleReceived(longFastPacket(0x11223344, 1002, "hello broker", true), nil)
-	// Our own identities' channel packets (e.g. the NodeInfo we send the unknown sender) go
-	// up too; the packet without OK_TO_MQTT must never appear.
-	sawConsented := false
-	timeout := time.After(3 * time.Second)
-collect:
+	h.HandleReceived(longFastPacket(0x11223344, 1001, "no consent", false), []byte{0})
+	h.HandleReceived(longFastPacket(0x11223344, 1002, "hello broker", true), []byte{0})
+	checkUplinks(t, up, relay.NodeID())
+	if p := tap.next(0); p != nil {
+		t.Fatalf("an on-air packet was passed to the air bridge as a link packet: %v", p)
+	}
+
+	// downlink: another gateway's packet goes to the hosted nodes through the air bridge
+	other := longFastPacket(0x55667788, 2001, "from the internet", true)
+	b, _ := proto.Marshal(&pb.ServiceEnvelope{Packet: other, ChannelId: "LongFast", GatewayId: "!0badcafe"})
+	obs.Publish("msh/TEST/2/e/LongFast/!0badcafe", 0, false, b).WaitTimeout(5 * time.Second)
+	p := tap.next(5 * time.Second)
+	if p == nil {
+		t.Fatal("downlinked packet never reached the air bridge")
+	}
+	checkDownlinked(t, p, 2001)
+	if link.Rx.Load() != 1 {
+		t.Fatalf("link Rx = %d, want 1", link.Rx.Load())
+	}
+	heardViaMQTT := func() bool { e, ok := h.DB.Get(0x55667788); return ok && e.ViaMQTT }
+	if !waitUntil(5*time.Second, 10*time.Millisecond, heardViaMQTT) {
+		t.Fatal("node DB doesn't have the sender as heard via MQTT")
+	}
+	if h.Counters.Relayed.Load() != 0 {
+		t.Fatal("the host relayed a packet itself")
+	}
+}
+
+// checkDownlinked checks a broker packet as handed to the hosted nodes: via MQTT, hop limit 0.
+func checkDownlinked(t *testing.T, p *pb.MeshPacket, id uint32) {
+	t.Helper()
+	if p.Id != id || !p.ViaMqtt || p.HopLimit != 0 || p.TransportMechanism != pb.MeshPacket_TRANSPORT_MQTT || p.GetEncrypted() == nil {
+		t.Fatalf("downlinked packet = %v", p)
+	}
+}
+
+// checkUplinks watches the uplinked envelopes until 1002 arrives. Packet 1001, without
+// OK_TO_MQTT, was handed over first and must never appear; 1002 must, from gateway.
+func checkUplinks(t *testing.T, up <-chan *pb.ServiceEnvelope, gateway string) {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
 	for {
 		select {
 		case env := <-up:
@@ -200,128 +314,74 @@ collect:
 			case 1001:
 				t.Fatal("packet without OK_TO_MQTT was uplinked")
 			case 1002:
-				if env.GetChannelId() != "LongFast" || env.GetGatewayId() != relay.NodeID() {
+				if env.GetChannelId() != "LongFast" || env.GetGatewayId() != gateway || env.GetPacket().RxRssi != nil {
 					t.Fatalf("uplinked envelope = %v", env)
 				}
-				sawConsented = true
+				return
 			}
 		case <-timeout:
-			break collect
+			t.Fatal("OK_TO_MQTT packet was not uplinked")
 		}
-	}
-	if !sawConsented {
-		t.Fatal("OK_TO_MQTT packet was not uplinked")
-	}
-
-	// downlink: another gateway's packet reaches our identity, marked via MQTT
-	time.Sleep(2 * time.Second) // let the relay finish rebroadcasting the on-air packets above
-	relayedBefore := h.Counters.Relayed.Load()
-	other := longFastPacket(0x55667788, 2001, "from the internet", true)
-	b, _ := proto.Marshal(&pb.ServiceEnvelope{Packet: other, ChannelId: "LongFast", GatewayId: "!0badcafe"})
-	obs.Publish("msh/TEST/2/e/LongFast/!0badcafe", 0, false, b).WaitTimeout(5 * time.Second)
-	deadline = time.Now().Add(5 * time.Second)
-	for link.Rx.Load() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("downlinked packet never arrived")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	var got bool
-	for time.Now().Before(deadline) && !got {
-		for _, m := range h.Messages.Window(desk.NodeNum, 0) {
-			if m.Text == "from the internet" {
-				got = true
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !got {
-		t.Fatal("downlinked message not delivered to the identity as via_mqtt")
-	}
-	time.Sleep(2 * time.Second)
-	if h.Counters.Relayed.Load() != relayedBefore {
-		t.Fatal("relay persona rebroadcast an MQTT packet with IgnoreMQTT set")
 	}
 }
 
 // Two connections on one radio: a gateway that downlinks, and a JSON monitor on another root.
 // Broker packets reach the monitor only when both allow cross_link, and a gateway without
-// relay_mqtt keeps them off air even when another connection allows relaying.
+// relay_mqtt hands them to the hosted nodes with hop limit 0 so they stay off air.
 func TestBrokerTwoConnections(t *testing.T) {
-	broker := os.Getenv("RT_TEST_MQTT_BROKER")
-	if broker == "" {
-		t.Skip("set RT_TEST_MQTT_BROKER=host:port to run against a broker")
-	}
-	h, err := mesh.NewHost(mesh.Config{Region: "EU_868", StateDir: t.TempDir(), IgnoreMQTT: false}, null.New(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	relay, _ := mesh.NewIdentity(nil, "Test Relay", "TRLY")
-	relay.IsRelay = true
-	desk, _ := mesh.NewIdentity(nil, "Desk", "DESK")
-	for _, id := range []*mesh.Identity{relay, desk} {
-		if err := h.AddIdentity(id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = h.Run(ctx) }()
+	broker := testBroker(t)
+	ctx, h, _, desk, tap := runTestHost(t, nil)
 	origins := NewOrigins()
 	gw := New(h, Options{Name: "public", Address: broker, Root: "msh/TWO", DownlinkChannels: []string{"LongFast"},
 		CrossLink: true, Origins: origins}, nil)
 	mon := New(h, Options{Name: "logger", Address: broker, Root: "msh/MON", Mode: ModeMonitor, Gateway: desk.NodeID(),
 		UplinkChannels: []string{"LongFast"}, CrossLink: true, Origins: origins}, nil)
-	go func() { _ = gw.Run(ctx) }()
-	go func() { _ = mon.Run(ctx) }()
+	runLink(t, ctx, gw)
+	runLink(t, ctx, mon)
 
-	obs := paho.NewClient(paho.NewClientOptions().AddBroker("tcp://" + broker).SetClientID("rt-test-observer-2"))
-	if tok := obs.Connect(); !tok.WaitTimeout(5*time.Second) || tok.Error() != nil {
-		t.Fatalf("observer connect: %v", tok.Error())
-	}
-	defer obs.Disconnect(100)
+	obs := connectObserver(t, broker, "rt-test-observer-2")
 	seen := make(chan string, 16)
 	obs.Subscribe("msh/MON/#", 0, func(_ paho.Client, m paho.Message) { seen <- m.Topic() + " " + string(m.Payload()) }).WaitTimeout(5 * time.Second)
 
-	deadline := time.Now().Add(15 * time.Second)
-	for !(gw.Connected() && mon.Connected() && len(gw.Subscriptions()) == 1) {
-		if time.Now().After(deadline) {
-			t.Fatalf("gateway connected=%v subs=%v, monitor connected=%v", gw.Connected(), gw.Subscriptions(), mon.Connected())
-		}
-		time.Sleep(100 * time.Millisecond)
+	if !waitUntil(15*time.Second, 20*time.Millisecond, func() bool {
+		return gw.Connected() && mon.Connected() && len(gw.Subscriptions()) == 1
+	}) {
+		t.Fatalf("gateway connected=%v subs=%v, monitor connected=%v", gw.Connected(), gw.Subscriptions(), mon.Connected())
 	}
 	if len(mon.Subscriptions()) != 0 {
 		t.Fatal("monitor subscribed to a downlink")
 	}
 
-	relayedBefore := h.Counters.Relayed.Load()
 	b, _ := proto.Marshal(&pb.ServiceEnvelope{Packet: longFastPacket(0x55667788, 3001, "cross", true), ChannelId: "LongFast", GatewayId: "!0badcafe"})
 	obs.Publish("msh/TWO/2/e/LongFast/!0badcafe", 0, false, b).WaitTimeout(5 * time.Second)
-	select {
-	case msg := <-seen:
-		want := "msh/MON/2/json/LongFast/" + desk.NodeID() + " "
-		if !strings.HasPrefix(msg, want) || !strings.Contains(msg, `"text":"cross"`) {
-			t.Fatalf("monitor published %q", msg)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("cross-linked packet never reached the monitor")
+	msg := waitForSeen(seen, `"text":"cross"`, time.Now().Add(5*time.Second))
+	if want := "msh/MON/2/json/LongFast/" + desk.NodeID() + " "; !strings.HasPrefix(msg, want) {
+		t.Fatalf("monitor published %q, want topic %q", msg, want)
 	}
-	time.Sleep(2 * time.Second)
-	if h.Counters.Relayed.Load() != relayedBefore {
-		t.Fatal("a packet from a connection without relay_mqtt was rebroadcast on air")
+	if p := tap.next(5 * time.Second); p == nil {
+		t.Fatal("broker packet never reached the air bridge")
+	} else {
+		checkDownlinked(t, p, 3001)
 	}
 
 	// the monitor also serialises packets heard on air
-	h.HandleReceived(longFastPacket(0x11223344, 3002, "on air", true), nil)
-	deadline = time.Now().Add(5 * time.Second)
+	h.HandleReceived(longFastPacket(0x11223344, 3002, "on air", true), []byte{0})
+	if waitForSeen(seen, `"text":"on air"`, time.Now().Add(5*time.Second)) == "" {
+		t.Fatal("on-air packet never reached the monitor as JSON")
+	}
+}
+
+// waitForSeen returns the first message containing want that arrives on seen before deadline,
+// or "" when none does.
+func waitForSeen(seen <-chan string, want string, deadline time.Time) string {
 	for {
 		select {
 		case msg := <-seen:
-			if strings.Contains(msg, `"text":"on air"`) {
-				return
+			if strings.Contains(msg, want) {
+				return msg
 			}
 		case <-time.After(time.Until(deadline)):
-			t.Fatal("on-air packet never reached the monitor as JSON")
+			return ""
 		}
 	}
 }
