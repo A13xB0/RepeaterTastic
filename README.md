@@ -40,88 +40,38 @@ Scottish mesh sites, and useful anywhere.
 
 ## Quick start
 
-### 1. Get a modem
+You need a LoRa radio: a board flashed with the Mesh KISS modem firmware, a LoRa HAT or CH341 USB
+stick, or a board running Meshtastic firmware. See [Hardware and modems](docs/hardware.md) for which
+boards work and how to flash them.
 
-RepeaterTastic drives a LoRa board running **Mesh KISS**: MeshCore's KISS modem firmware patched to
-speak Meshtastic's PHY. Heltec V3/V4, XIAO nRF52840 + Wio-SX1262, RAK4631, T-Beam and more are
-supported. Download a prebuilt image (`kiss-firmware-<board>.zip`) from the
-[latest release](https://github.com/ScotMesh/RepeaterTastic/releases/latest) or build it, then flash:
-
-```bash
-esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 Heltec_v3_kiss_modem-factory.bin   # ESP32 boards
-# nRF52 boards: double-tap reset and copy the .uf2 onto the USB drive that appears
-```
-
-Plug it into the host and find its stable path: `ls -l /dev/serial/by-id/`. More in
-[Hardware and modems](docs/hardware.md).
-
-**Or skip the modem board.** RepeaterTastic can drive a LoRa HAT or USB stick itself, the hardware
-meshtasticd runs on: MeshAdv, Waveshare, RAK6421, Nebra/Zebra, PiMesh, PiTastic, Femtofox and
-Luckfox HATs (SX126x and LR1121), and CH341 USB sticks such as MeshStick, Meshtoad, uMesh and
-RAK19714. All of meshtasticd's board files are built in, so pick your board in the setup wizard
-(or set `radio: {driver: spi, device: MeshAdv-900M30S}`; `auto` detects USB sticks and Pi HAT+
-boards). meshtasticd's own service must not be running on the same radio (the installer turns it
-off). Tested on an SX1262 over CH341 so far; HATs need testers: see [LoRa HATs and USB sticks](docs/spi-radio-testing.md).
-
-### 2a. Run it with Docker
-
-```bash
-docker run -d --name repeatertastic --restart unless-stopped \
-  --network host \
-  --device /dev/serial/by-id/usb-…-if00-port0:/dev/ttyUSB0 \
-  --group-add "$(getent group dialout | cut -d: -f3)" \
-  -e REPEATERTASTIC_RADIO_DEVICE=/dev/ttyUSB0 \
-  -v repeatertastic-data:/data \
-  ghcr.io/scotmesh/repeatertastic:latest
-```
-
-- `--device` passes the modem in; `--group-add` lets the unprivileged container user open it.
-  For a HAT pass `--device /dev/spidev0.0 --device /dev/gpiochip0` and the `spi` and `gpio` groups;
-  for a CH341 stick `--device /dev/bus/usb` and its udev group.
-- `--network host` lets the apps find identities over mDNS and joins the LAN multicast mesh. Without
-  it, publish `-p 8080:8080 -p 4403-4410:4403-4410` instead.
-- The image includes meshtasticd 2.8, which runs every node inside the container: nothing else to
-  install. Its API ports (4500 up) stay inside; don't publish them.
-- The `/data` volume holds the config, identity keys, chats and the nodes' state. Back it up.
-- Prefer Compose? Copy [`deploy/docker-compose.example.yml`](deploy/docker-compose.example.yml).
-- The image is published to `ghcr.io` with each release. To run your own build instead, build it
-  with `docker build -t repeatertastic .` and use `repeatertastic` as the image name.
-
-### 2b. Or run it standalone (systemd)
+### Run it on a Raspberry Pi
 
 ```bash
 git clone https://github.com/ScotMesh/RepeaterTastic && cd RepeaterTastic
-# binaries from the latest release: arm64 = 64-bit Raspberry Pi OS; armv7, armv6 and amd64 also available
-gh release download -R ScotMesh/RepeaterTastic -p 'repeatertastic-linux-arm64' -p 'kisstool-linux-arm64'
-sudo ./deploy/install.sh ./repeatertastic-linux-arm64 ./kisstool-linux-arm64
-journalctl -u repeatertastic -f
+sudo ./deploy/install.sh
 ```
 
-The installer creates a `repeatertastic` user in `dialout`, installs the systemd unit and writes
-`/etc/repeatertastic/repeatertastic.yaml`, pointing it at the first USB serial device it finds
-(check it if several boards are plugged in).
+This installs meshtasticd and the latest RepeaterTastic release as a service. It works on
+Raspberry Pi OS, Debian and Ubuntu.
 
-It also sets up meshtasticd (2.8.0 or newer), which runs the nodes. You choose how with
-`--meshtasticd`:
+### Or run it in Docker
 
-| Option | What it does |
-| --- | --- |
-| `auto` (default) | Uses a meshtasticd 2.8+ already on the PATH; otherwise the same as `apt` |
-| `apt` | Installs the `meshtasticd` package from Meshtastic's alpha repository (Debian 12/13, Raspberry Pi OS, Ubuntu), then turns its own service off |
-| `docker` | Pulls the meshtasticd image and lets the service use Docker (choose Docker in the setup wizard) |
-| `skip` | Leaves meshtasticd to you: build it or install it your way, then give its path in the setup wizard |
+```bash
+docker run -d --name repeatertastic --restart unless-stopped --network host \
+  --device /dev/ttyUSB0 --group-add "$(getent group dialout | cut -d: -f3)" \
+  -v repeatertastic-data:/data ghcr.io/scotmesh/repeatertastic:latest
+```
 
-For example `sudo ./deploy/install.sh --meshtasticd docker ./repeatertastic-linux-arm64`.
+The image includes meshtasticd. The `/data` volume holds your keys and chats, so back it up. For
+Compose, HATs and USB sticks, see [Docker](docs/hardware.md#docker).
 
-### 3. Set it up in the browser
+### Then open the browser
 
-1. Open `http://<host>:8080` and choose the admin password.
-2. The setup wizard finds the modem (a serial port, a HAT or USB stick from the board list, or a
-   board on Meshtastic firmware), checks meshtasticd, sets region and preset, and tests it.
-3. The **meshtasticd** chip in the top bar turns green once the relay persona runs. Amber means an
-   identity's node is down, red means meshtasticd isn't running; click it for the details.
-4. **Identities → New identity** creates a node and gives it an app port.
-5. In the Meshtastic app, add a **network** device: `<host>:<port>` (for example `192.168.1.20:4404`).
+1. Go to `http://<host>:8080` and choose an admin password. The setup wizard finds the radio and
+   meshtasticd.
+2. When the **meshtasticd** chip in the top bar turns green, every node is running.
+3. **Identities → New identity** creates a node. In the Meshtastic app, add a network device at
+   `<host>:<port>`.
 
 ### Build it yourself
 
