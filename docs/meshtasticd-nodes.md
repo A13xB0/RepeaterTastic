@@ -30,6 +30,12 @@ tracked in the epic pull request, [ScotMesh/RepeaterTastic#5](https://github.com
 - A fresh node generates its own key at first boot; RepeaterTastic replaces it on first connect,
   and doesn't let the node transmit until it holds the saved key.
 
+- **A board's first region makes its keys** (2.8, boards without a key yet): the node number
+  moves to the new key's at once, inside the same admin message. Answers go to the old number, now
+  a stranger (`PKI_SEND_FAIL_PUBLIC_KEY` for anything after it), and a commit addressed to it
+  never lands, so nothing is saved. RepeaterTastic sends a first region on its own, outside an edit
+  transaction, then reconnects and pushes the rest to the new number.
+
 ## The client API (`internal/mtclient`)
 
 - Stream framing `0x94 0xC3 len16 protobuf` on TCP and serial; console text between frames is
