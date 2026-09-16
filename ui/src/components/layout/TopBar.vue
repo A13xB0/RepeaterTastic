@@ -9,6 +9,7 @@ import type { RelayRole, Status } from '@/api/types'
 import { live, statusRadio } from '@/store/live'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
 import NodesHealthChip from '@/components/layout/NodesHealthChip.vue'
+import RadioTile from '@/components/layout/RadioTile.vue'
 import { cycleTheme, themeMode } from '@/composables/theme'
 import { toast, toastError } from '@/composables/toast'
 import { confirmDialog } from '@/composables/confirm'
@@ -66,7 +67,7 @@ const syncHex = (st: Status) => '0x' + st.phy.sync_word.toString(16).toUpperCase
 </script>
 
 <template>
-  <header class="card mb-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-2.5 sm:px-4">
+  <header class="card relative z-30 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-2.5 sm:px-4">
     <div class="flex w-full min-w-0 items-center gap-2 lg:hidden">
       <button type="button" class="icon-btn lg:hidden" aria-label="Open menu" @click="emit('menu')"><Menu class="size-5" /></button>
       <h1 class="truncate text-[15px] font-semibold tracking-tight">{{ route.meta.title }}</h1>
@@ -132,47 +133,20 @@ const syncHex = (st: Status) => '0x' + st.phy.sync_word.toString(16).toUpperCase
       </div>
     </div>
 
-    <!-- Several radios: one row each, then the site's meshtasticd health. -->
-    <div v-else-if="s" class="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
-      <div class="scroll-thin min-w-0 flex-1 overflow-x-auto">
-        <table class="w-full border-separate border-spacing-x-0 border-spacing-y-1 text-[13px]">
-          <caption class="sr-only">Radios</caption>
-          <tbody>
-            <tr v-for="st in rows" :key="statusRadio(st)" class="align-middle">
-              <th scope="row" class="whitespace-nowrap pr-4 text-left font-semibold" :title="`${st.radio.name} · ${st.radio.driver} ${st.radio.device} · rx ${st.radio.rx} · tx ${st.radio.tx}`">
-                <span :class="['dot mr-2 inline-block size-2 align-middle', st.radio.connected ? 'bg-ok' : 'bg-bad']" :aria-label="st.radio.connected ? 'connected' : 'disconnected'" />{{ st.radio_name }}
-                <span v-if="overlaps(statusRadio(st)).length" class="chip ml-1 bg-warn/15 text-warn" :title="`Shares its channel with ${overlaps(statusRadio(st)).join(', ')}: these radios take turns to transmit`">shared</span>
-              </th>
-              <td class="whitespace-nowrap pr-4 text-ink-2" :title="`sync ${syncHex(st)} · SF${st.phy.sf} / ${num(st.phy.bw_khz)} kHz · ${st.phy.tx_power_dbm} dBm`">
-                {{ st.phy.preset_name }} <span class="text-ink-3">·</span> <span class="tabular-nums">{{ st.phy.frequency_mhz.toFixed(3) }} MHz</span>
-              </td>
-              <td class="w-36 pr-4" :title="`TX airtime in the last ${st.airtime.window_s / 60} min against the duty cycle`">
-                <div class="flex items-baseline justify-between gap-2 text-2xs text-ink-3">
-                  <span>Airtime</span>
-                  <span class="tabular-nums"><span class="font-semibold text-ink">{{ st.airtime.tx_pct.toFixed(1) }}</span> / {{ num(st.airtime.duty_limit_pct) }} %</span>
-                </div>
-                <div class="mt-0.5 h-1 overflow-hidden rounded-full bg-ink-3/15">
-                  <div :class="['h-full rounded-full transition-all duration-500', gauge(st).cls]" :style="{ width: `${Math.max(gauge(st).pct, 1.5)}%` }" />
-                </div>
-              </td>
-              <td class="whitespace-nowrap">
-                <label class="sr-only" :for="`relay-${statusRadio(st)}`">Relay mode on {{ st.radio_name }}</label>
-                <select
-                  :id="`relay-${statusRadio(st)}`"
-                  class="input !h-7 !w-auto !py-0 text-xs"
-                  :class="relayModes.find((m) => m.id === st.relay.role)?.tone"
-                  :value="st.relay.role"
-                  :disabled="!!busy"
-                  @change="setRole(st, ($event.target as HTMLSelectElement).value as RelayRole)"
-                >
-                  <option v-for="m in relayModes" :key="m.id" :value="m.id" :title="m.title">{{ m.label }}</option>
-                </select>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+    <!-- Several radios: a card each, then the site's meshtasticd health. -->
+    <div v-else-if="s" class="flex min-w-0 flex-1 items-center gap-3">
+      <div class="flex min-w-0 flex-1 flex-wrap gap-2" role="list" aria-label="Radios">
+        <RadioTile
+          v-for="st in rows"
+          :key="statusRadio(st)"
+          role="listitem"
+          :status="st"
+          :shared="overlaps(statusRadio(st))"
+          :busy="!!busy"
+          @role="setRole(st, $event)"
+        />
       </div>
-      <div class="flex items-center gap-3 self-center">
+      <div class="flex shrink-0 items-center gap-3">
         <RouterLink v-if="s.nodes" :to="{ name: 'config', params: { tab: 'meshtasticd' } }" class="leading-tight" aria-label="meshtasticd status">
           <div class="text-2xs text-ink-3 max-sm:hidden">meshtasticd</div>
           <NodesHealthChip :health="s.nodes" compact />

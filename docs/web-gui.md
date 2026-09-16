@@ -12,8 +12,9 @@ many open tabs don't use up the browser's connections to the host, and catches u
 ## Top bar
 
 - **Every radio at once.** With one radio, the bar shows its modem state, frequency and preset, and
-  the **airtime gauge** (this hour's transmit time against the duty-cycle budget). With several, it
-  has a row for each radio: connection, preset and frequency, airtime gauge and its own relay mode.
+  the **airtime gauge** (this hour's transmit time against the duty-cycle budget). With several, each radio
+  has a card: connection, preset and frequency, airtime gauge and its own relay mode menu (which
+  says what each mode does).
 - **Nothing is hidden behind a radio.** Every page shows the whole site. Packets, nodes, links, the
   dashboard and statistics have a **radio filter** to narrow them to one radio, and tables show
   which radio each row belongs to. The per-radio settings under Configuration (Relay, Airtime,
