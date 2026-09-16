@@ -17,6 +17,9 @@ The top-level radio stays the **main** radio and existing configs keep working u
 - **Identities:** each lives on one radio. Move one from its editor: key, node ID, app port and
   chats go with it, and its primary channel follows the new preset. A key can't be imported onto a
   second radio.
+- **Removing a radio** that has identities asks what happens to them: move them to another radio
+  first (the default), or leave them off air on disk, where adding a radio with the same ID brings
+  them back.
 - **Relay:** each radio has its own relay role: a Meshtastic role (client, client_base, client_mute, router,
   router_late), monitor (listens only) or off
   (the radio is ignored). Set it from that radio's row in the top bar, or Configuration → Relay with that radio selected.

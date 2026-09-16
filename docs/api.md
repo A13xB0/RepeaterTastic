@@ -273,11 +273,16 @@ Without a supervisor it stays stopped.
 | --- | --- |
 | `POST /identities[?radio=<id>]` | `{"long_name", "short_name", "private_key", "api_port", "api_bind", "role", "share_limit_pct", "hop_limit", "radio_id"}` → 201 Identity |
 | `POST /identities/preview-key[?radio=<id>]` | `{"private_key"}` → `{"private_key", "public_key", "node_id", "node_num", "last_byte", "collision"}` |
-| `PATCH /identities/{node_id}` | any of `{"long_name", "short_name", "enabled", "api_port", "api_bind", "role", "share_limit_pct", "hop_limit", "position", "position_secs"}` → Identity |
+| `PATCH /identities/{node_id}` | any of `{"long_name", "short_name", "enabled", "api_port", "api_bind", "role", "share_limit_pct", "hop_limit", "position", "position_secs", "app_settings"}` → Identity |
 | `DELETE /identities/{node_id}` | → 204 |
 | `GET /identities/{node_id}/key` | → `{"private_key", "public_key"}` (base64) |
 | `POST /identities/{node_id}/move` | `{"radio_id"}` → Identity |
 | `POST /identities/{node_id}/api/restart` | → 204 |
+
+`app_settings` (default `false`) lets an app connected to the identity change its node's radio,
+device, module and position settings, and reboot or reset it. Off, the identity's app port answers
+such admin requests with a `NOT_AUTHORIZED` routing error; reading settings, and changing the names,
+channels and node list (which RepeaterTastic keeps in step), still work.
 
 - **Create:** `long_name` is required. `private_key` is an optional 32-byte base64 key; without it a
   key is generated whose last byte doesn't clash with a heard node. `api_port` 0 picks the next free

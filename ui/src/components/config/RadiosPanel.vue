@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // The radios on this site: add, rename and remove them, and the airtime budget they share.
-// Each radio's own settings (preset, relay, MQTT…) are edited with the radio switcher.
+// Each radio's relay, airtime, position and MQTT settings are on their own tabs, with a radio selector.
 import { computed, onMounted, ref, watch } from 'vue'
 import { Pencil, Plus, Radio as RadioIcon, Settings2, Trash, TriangleAlert } from '@lucide/vue'
 import { api, enc } from '@/api/client'
@@ -10,6 +10,7 @@ import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import ModemDeviceField from '@/components/config/ModemDeviceField.vue'
 import RadioSettingsModal from '@/components/config/RadioSettingsModal.vue'
+import RemoveRadioModal from '@/components/config/RemoveRadioModal.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { num } from '@/lib/format'
@@ -53,12 +54,23 @@ async function saveName(id: string) {
 }
 
 // ---- remove
+// A running radio gets the full dialog (what happens to its identities); one never started has none.
+const removing = ref<{ id: string; name: string } | null>(null)
+async function removed(restartRequired: boolean) {
+  const name = removing.value?.name ?? ''
+  removing.value = null
+  if (restartRequired) emit('restart')
+  await Promise.all([load(), refreshRadios()]).catch(toastError)
+  toast(`${name} removed`)
+}
 async function remove(id: string, name: string, running: boolean) {
+  if (running) {
+    removing.value = { id, name }
+    return
+  }
   const ok = await confirmDialog({
     title: `Remove ${name}?`,
-    body: running
-      ? 'It keeps running until the daemon restarts, then its identities go off air and their app connections stop. Its identity keys and history stay on disk, so adding a radio with the same ID brings them back.'
-      : 'It was never started, so nothing goes off air.',
+    body: 'It was never started, so nothing goes off air.',
     confirm: 'Remove radio',
     danger: true,
   })
@@ -183,7 +195,7 @@ function openSettings(id: string) {
     <template v-else>
       <div class="flex flex-wrap items-end justify-between gap-3">
         <p class="max-w-2xl text-xs text-ink-3">
-          Each radio is its own modem on its own preset, with its own relay persona and identities. Radios on the same channel take turns to transmit. <b>Edit</b> changes a radio's name and LoRa &amp; modem settings; the Relay, Airtime, Position and MQTT tabs follow the radio picked at the top of the page. Adding or removing a radio takes effect after a restart.
+          Each radio is its own modem on its own preset, with its own relay persona and identities. Radios on the same channel take turns to transmit. <b>Edit</b> changes a radio's name and LoRa &amp; modem settings; the Relay, Airtime, Position and MQTT tabs have a selector for which radio they edit. Adding or removing a radio takes effect after a restart.
         </p>
         <button type="button" class="btn btn-primary" @click="openAdd"><Plus class="size-4" />Add radio</button>
       </div>
@@ -297,6 +309,7 @@ function openSettings(id: string) {
         </div>
       </form>
     </Modal>
+    <RemoveRadioModal :radio="removing" @close="removing = null" @removed="removed" />
     <RadioSettingsModal :radio-id="settingsFor" :ports="ports" :regions="regions" @close="settingsFor = null; load()" />
   </div>
 </template>

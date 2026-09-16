@@ -86,7 +86,7 @@ async function save() {
 </script>
 
 <template>
-  <Modal :open="!!radioId" :title="`Edit ${summary?.name ?? radioId ?? ''}`" subtitle="LoRa & modem. Relay, Airtime, Position and MQTT follow the radio picked at the top of the page." size="xl" @close="emit('close')">
+  <Modal :open="!!radioId" :title="`Edit ${summary?.name ?? radioId ?? ''}`" subtitle="LoRa & modem. Relay, Airtime, Position and MQTT are on their own tabs, with a radio selector." size="xl" @close="emit('close')">
     <div v-if="loading || !form" class="h-64 animate-pulse rounded-xl bg-sunken" />
     <div v-else class="grid gap-6 lg:grid-cols-[1fr_17rem]">
       <div class="grid content-start gap-4 sm:grid-cols-2">

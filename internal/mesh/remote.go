@@ -329,6 +329,7 @@ func (h *Host) SwapRemote(old, id *Identity) error {
 	old.mu.Lock()
 	id.mu.Lock()
 	id.IsRelay, id.APIBind, id.APIPort, id.CreatedAt = old.IsRelay, old.APIBind, old.APIPort, old.CreatedAt
+	id.AppSettings = old.AppSettings
 	for s := range old.sinks {
 		id.sinks[s] = struct{}{}
 	}
