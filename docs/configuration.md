@@ -50,7 +50,7 @@ The GUI's restart shuts down cleanly and exits with status 75, so the service ma
 
 ```yaml
 radio:
-    driver: kiss          # kiss (a Mesh KISS modem), spi (experimental), meshtastic (a node on Meshtastic firmware), sim (tests), none (no radio: UDP link only)
+    driver: kiss          # kiss (a Mesh KISS modem), spi (experimental), sim (tests), none (no radio: UDP link only)
     device: /dev/serial/by-id/usb-…-if00-port0
     baud: 115200
 ```
@@ -66,13 +66,6 @@ a Linux SPI bus or a CH341 USB stick. `device` is the board:
 
 The setup wizard and Configuration → Radios offer the same choices under "Board". See
 [LoRa HATs and USB sticks](spi-radio-testing.md).
-
-`driver: meshtastic` uses a node running Meshtastic firmware as the radio: `device` is its serial
-port (`/dev/ttyACM0`, `/dev/serial/by-id/…`) or a meshtasticd address (`host` or `host:port`,
-default port 4403). The node is the radio's one identity; `mesh` and `relay.role` are written to
-the node, and what the node reports is written back here. An `identities` entry, if present, only
-gives the node's identity its `api_port` and `api_bind`. See
-[Nodes running Meshtastic firmware](hardware.md#nodes-running-meshtastic-firmware).
 
 ### `mesh`: how the radio joins the mesh
 

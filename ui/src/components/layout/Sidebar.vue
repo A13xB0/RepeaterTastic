@@ -78,7 +78,7 @@ function logout() {
 
       <div class="mx-3 rounded-xl border border-line-soft bg-raised/70 p-3">
         <div class="flex items-center justify-between gap-2">
-          <span class="eyebrow">{{ live.status?.radio.driver === 'meshtastic' ? 'Meshtastic node' : 'Relay persona' }}</span>
+          <span class="eyebrow">Relay persona</span>
           <span :class="['inline-flex items-center gap-1.5 text-2xs font-medium', live.connected ? 'text-ok' : 'text-ink-3']">
             <span :class="['dot', live.connected ? 'pulse-dot bg-ok text-ok' : 'bg-ink-3']" />{{ live.connected ? 'Live' : 'Offline' }}
           </span>

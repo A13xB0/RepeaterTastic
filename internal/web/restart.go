@@ -55,9 +55,6 @@ func (s *Server) followUnopenedDevices() {
 		if was == nil || (was.Device == cur.Radio.Device && was.Driver == cur.Radio.Driver) || was.Baud != cur.Radio.Baud {
 			continue
 		}
-		if !modemDriver(was.Driver) || !modemDriver(cur.Radio.Driver) {
-			continue // a Meshtastic node is a different kind of radio: that takes a restart
-		}
 		if rt.Retarget(cur.Radio.Driver, cur.Radio.Device) {
 			was.Driver, was.Device = cur.Radio.Driver, cur.Radio.Device
 		}
@@ -119,6 +116,3 @@ func (s *Server) restartReasons() []string {
 	}
 	return out
 }
-
-// modemDriver reports whether the lazy modem radio can switch to a driver without a restart.
-func modemDriver(d string) bool { return d == "kiss" || d == "spi" }

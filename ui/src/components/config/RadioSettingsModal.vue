@@ -100,9 +100,6 @@ async function save() {
         <div class="sm:col-span-2">
           <ModemDeviceField id="rs-port" v-model="form.port" v-model:driver="form.type" :ports="ports" restart-hint />
         </div>
-        <p v-if="form.type === 'meshtastic'" class="rounded-lg border border-brand/30 bg-brand/6 px-3 py-2 text-xs text-ink-2 sm:col-span-2">
-          These settings live on the node: saving writes region, preset, primary channel, TX power and hop limit to it. The node may reboot to apply them.
-        </p>
         <div>
           <label class="label" for="rs-region">Region</label>
           <select id="rs-region" v-model="form.region" class="input">
@@ -124,8 +121,8 @@ async function save() {
           <input id="rs-offset" v-model.number="form.frequency_offset_mhz" type="number" step="0.001" class="input tabular-nums" />
         </div>
         <div class="sm:col-span-2">
-          <label class="label" for="rs-power">TX power · {{ form.tx_power_dbm ? `${form.tx_power_dbm} dBm` : `region default (${region?.power_limit_dbm ?? '…'} dBm)` }} <span class="font-normal text-ink-3">(region max {{ region?.power_limit_dbm ?? '…' }} dBm)</span></label>
-          <input id="rs-power" v-model.number="form.tx_power_dbm" type="range" min="0" :max="region?.power_limit_dbm ?? 30" class="w-full accent-[var(--brand)]" />
+          <label class="label" for="rs-power">TX power · {{ form.tx_power_dbm }} dBm <span class="font-normal text-ink-3">(region max {{ region?.power_limit_dbm ?? '…' }} dBm)</span></label>
+          <input id="rs-power" v-model.number="form.tx_power_dbm" type="range" min="1" :max="region?.power_limit_dbm ?? 30" class="w-full accent-[var(--brand)]" />
         </div>
         <details class="rounded-xl border border-line-soft px-3.5 py-2.5 sm:col-span-2">
           <summary class="cursor-pointer text-[13px] font-medium">Advanced</summary>

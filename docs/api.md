@@ -58,7 +58,7 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
 | `GET /boards` | setup | → `[{"id", "name", "module", "bus", "source", "supported", "error"}]` |
 | `GET /regions` | setup | → `[{"name", "presets": ["LONG_FAST", …], "duty_cycle_pct", "power_limit_dbm", "start_mhz", "end_mhz"}]` |
 | `POST /phy/preview` | setup | `{"region", "preset", "primary_channel", "tx_power_dbm"}` → a [`phy`](#status-and-relay) object |
-| `POST /setup/probe` | setup | `{"device", "driver"}` → `{"ok", "driver", "firmware", "name", "sync_word_ok", "error", "details", "region", "preset"}` |
+| `POST /setup/probe` | setup | `{"device", "driver"}` → `{"ok", "driver", "firmware", "name", "sync_word_ok", "error", "details"}` |
 
 "Setup" means no token is needed while `GET /setup` reports `needed: true`; after that a token is.
 
@@ -88,12 +88,7 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
   LoRa module, `name` the board, `sync_word_ok` true, and `details` the chip's diagnostic lines
   (the SX126x/SX127x/SX128x/LR11x0 version, mode and error flags). A board a running radio
   already drives is reported without being opened. A board file outside `/etc/meshtasticd`
-  answers 400. With `driver: "meshtastic"`, `device` is a serial port or a meshtasticd address; the
-  probe connects, reads the node and disconnects: `firmware` is `Meshtastic <version>`, `name` the
-  node's long name, `region` and `preset` its LoRa settings, and `details` its number, hardware,
-  role and node count. Until a password is set, an address must resolve to this machine or the
-  local network (loopback, private or link-local), or the probe answers 400. A node a running
-  radio already uses is reported without a second connection.
+  answers 400.
 - `POST /phy/preview` answers 400 for an unknown preset or region. `tx_power_dbm` is clamped to the
   region limit in the reply.
 
@@ -223,9 +218,8 @@ Without a supervisor it stays stopped.
 ```
 
 - The relay persona is included, with `"is_relay": true` and `"api": null`.
-- `"real_node": true` marks the identity of a Meshtastic node radio (`driver: meshtastic`): it is
-  also that radio's relay persona, may have an app port, and its names and channels are written to
-  the node. `POST /identities` and `move` onto such a radio answer 409; `GET …/key` answers 404.
+- `"real_node": true` marks an identity that runs on meshtasticd (a hosted node): its names and
+  channels are written to it, and `GET …/key` answers 404 because the key stays with meshtasticd.
 - `share_pct` is this identity's part of the radio's transmit time in the last hour. `share_limit_pct`
   is its own limit, or `airtime.identity_share_percent`. `unread` counts unread browser-chat messages.
 - `position` is the identity's own fixed position `{"latitude", "longitude", "altitude"}`, or `null`
