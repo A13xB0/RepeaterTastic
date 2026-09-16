@@ -93,6 +93,7 @@ type Radio struct {
 	stop chan struct{}
 	done chan struct{}
 	once sync.Once
+	lost atomic.Bool // the adapter went away: the radio closes itself
 }
 
 // Open opens the board's bus, resets the chip, checks it answers and starts listening for
@@ -249,6 +250,12 @@ func (r *Radio) loop() {
 			wait = 10 * time.Millisecond
 		}
 		if _, err := r.hal.WaitIRQ(wait); err != nil {
+			if deviceGone(err) {
+				r.log("spi: the adapter is gone (%v); closing so it can be opened again", err)
+				r.lost.Store(true)
+				go r.Close() // Close waits for this loop to end
+				return
+			}
 			r.log("spi: waiting for IRQ: %v", err)
 			time.Sleep(wait)
 		}
@@ -345,7 +352,7 @@ func (r *Radio) Info() radio.Info {
 
 func (r *Radio) Stats(ctx context.Context) radio.Stats {
 	return radio.Stats{RxPackets: r.rx.Load(), TxPackets: r.tx.Load(), Errors: r.errs.Load(),
-		NoiseFloorDBm: int16(r.noise.Load()), Connected: true}
+		NoiseFloorDBm: int16(r.noise.Load()), Connected: !r.lost.Load()}
 }
 
 // Diagnostics describes the chip (version, mode, error flags) for bench tools.

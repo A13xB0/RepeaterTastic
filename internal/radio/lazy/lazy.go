@@ -21,6 +21,8 @@ type Radio struct {
 	mu      sync.Mutex
 	inner   radio.Radio
 	lastErr error
+	cfg     *radio.Config // the last settings, applied again when the radio is reopened
+	opened  int           // times the radio was opened
 
 	frames chan radio.Frame
 	ctx    context.Context
@@ -48,6 +50,19 @@ func (r *Radio) loop() {
 		inner, err := r.open(r.ctx, driver, device)
 		if err == nil {
 			r.mu.Lock()
+			cfg := r.cfg
+			r.opened++
+			reopened := r.opened > 1
+			r.mu.Unlock()
+			if cfg != nil {
+				if err := inner.Configure(r.ctx, *cfg); err != nil {
+					r.logf("radio reopened but not configured: %v", err)
+				}
+			}
+			if reopened {
+				r.logf("radio open again")
+			}
+			r.mu.Lock()
 			r.inner, r.lastErr = inner, nil
 			r.mu.Unlock()
 			for f := range inner.Frames() {
@@ -56,7 +71,21 @@ func (r *Radio) loop() {
 				default:
 				}
 			}
-			return
+			// The radio closed. On shutdown that's the end; otherwise it was lost: open it again.
+			r.mu.Lock()
+			r.inner = nil
+			r.mu.Unlock()
+			if r.ctx.Err() != nil {
+				return
+			}
+			_ = inner.Close()
+			r.logf("radio lost; opening it again")
+			select {
+			case <-r.ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+			continue
 		}
 		r.mu.Lock()
 		first := r.lastErr == nil
@@ -104,7 +133,13 @@ func (r *Radio) get() radio.Radio {
 
 func (r *Radio) Configure(ctx context.Context, c radio.Config) error {
 	if in := r.get(); in != nil {
-		return in.Configure(ctx, c)
+		err := in.Configure(ctx, c)
+		if err == nil {
+			r.mu.Lock()
+			r.cfg = &c
+			r.mu.Unlock()
+		}
+		return err
 	}
 	return radio.ErrNotConnected
 }
