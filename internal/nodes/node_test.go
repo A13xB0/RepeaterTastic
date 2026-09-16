@@ -267,7 +267,11 @@ func TestClientBaseRelayFavorites(t *testing.T) {
 	}
 	fake.Update(func(s *mtclienttest.State) { s.Others = append(s.Others, &pb.NodeInfo{Num: desk.NodeNum}) })
 	r.n.client.Reconnect()
-	eventually(t, "reconnected", func() bool { return len(r.n.client.Snapshot().Nodes) >= 4 })
+	eventually(t, "reconnected with the desk known", func() bool {
+		s := r.n.client.Snapshot()
+		_, known := s.Nodes[desk.NodeNum]
+		return s.Connected && known
+	})
 	cfg := r.h.Config()
 	cfg.RelayRole = mesh.RoleClientBase
 	const heardByHost = 0x77778888 // the relay never heard it; the host did
