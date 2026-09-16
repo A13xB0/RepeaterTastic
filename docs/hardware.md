@@ -8,8 +8,10 @@ RepeaterTastic doesn't run Meshtastic firmware on the radio. It drives a plain L
 that lets the host set Meshtastic's sync word (`0x2B`) and 16-symbol preamble. The board becomes a
 dumb modem: it sends and receives frames, and all the Meshtastic logic runs on the host.
 
-A Linux LoRa HAT or CH341 USB stick can be the modem too, through meshtasticd's raw modem mode: see
-[meshtasticd as the modem](meshtasticd-raw-modem.md).
+A Linux LoRa HAT or CH341 USB stick can be the radio too, with no modem board: RepeaterTastic
+drives the chip itself (`radio.driver: spi`), see [LoRa HATs and USB sticks](#lora-hats-and-usb-sticks)
+below. The same hardware can also be reached through meshtasticd's raw modem mode, behind an
+experimental switch until that mode is merged upstream: [meshtasticd as the modem](meshtasticd-raw-modem.md).
 
 ## Boards
 
@@ -110,6 +112,41 @@ docker run … \
 - If the board is unplugged and replugged, recreate the container (`docker compose up -d
   --force-recreate`) so it gets the new device node.
 - For several modems, add one `--device` per board and set each radio's device in Configuration → Radios.
+
+## LoRa HATs and USB sticks
+
+The `spi` driver talks to the LoRa chip directly over spidev and GPIO, or over a CH341 USB-to-SPI
+adapter, using meshtasticd's own board files (all 61 are built in, plus anything in
+`/etc/meshtasticd/config.d`). meshtasticd must be stopped: one program owns the radio.
+
+| Chip | Boards |
+| --- | --- |
+| SX1262, SX1268, LLCC68 | MeshAdv Pi Hat and Mini, Waveshare SX126x, RAK6421 + RAK13300/13302, NebraHat, ZebraHat, PiMesh 1W, PiTastic, Femtofox, Luckfox Lyra/Pico, Station G3, ECB41 and OK3506 variants |
+| SX1262/SX1268 on CH341 USB | MeshStick, Meshtoad, RAK19714, uMesh 30 dBm, FrameTastic, PiNedio USB, XIAO + Wio-SX1262 with the CH341 bridge firmware |
+| LR1121 | Femtofox E80, PiggyStick |
+| SX1276/SX1278 (RF95) | Adafruit RFM9x |
+| SX1280 | 2.4 GHz boards wired like meshtasticd's `Module: sx1280` |
+
+Pick the board in the setup wizard (**LoRa board on SPI or a USB stick**), or in the config:
+
+```yaml
+radio:
+    driver: spi
+    device: MeshAdv-900M30S   # a built-in board name, a board file path, or auto
+```
+
+`auto` detects CH341 sticks, Pi HAT+ boards and RAK boards with an ID EEPROM, as meshtasticd does.
+`kisstool boards` lists the built-in names; `kisstool info --board <name>` checks the chip answers.
+
+Permissions: the `spi` and `gpio` groups for a HAT (`/dev/spidev*`, `/dev/gpiochip*`); for a
+CH341 stick a udev rule such as
+`SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="5512", MODE="0660", GROUP="plugdev"`.
+In Docker pass the devices with `--device` and the groups with `--group-add`.
+
+Status: tested on air with an SX1262 over CH341 (EU_868 LongFast, receive and transmit against a
+live mesh). HATs, LR1121, RF95 and SX1280 follow the same datasheets and RadioLib sequences but
+haven't been run on hardware yet; [LoRa HATs and USB sticks](spi-radio-testing.md) is the
+step-by-step test guide, and reports are welcome.
 
 ## Several modems
 

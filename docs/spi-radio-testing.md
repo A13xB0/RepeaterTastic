@@ -1,4 +1,4 @@
-# Testing the SPI radio driver (experimental)
+# LoRa HATs and USB sticks (the spi driver)
 
 [← README](../README.md) · [Hardware](hardware.md) · [Configuration](configuration.md) · [Bench test](bench-test.md)
 
@@ -16,9 +16,11 @@ talks directly to the LoRa chip on the hardware `meshtasticd` runs on, with no m
 It reads meshtasticd's own board files, and has a copy of all 61 of them built in, so you don't
 need meshtasticd installed.
 
-**This is a draft that hasn't been run on hardware yet.** It follows the Semtech datasheets and
-the commands RadioLib sends. Please work through the steps in order and send back the output of
-each one. A failure at one step tells us which layer is wrong.
+**Status:** tested on air with an SX1262 over a CH341 USB adapter (receive and transmit against a
+live EU_868 LongFast mesh, and RepeaterTastic running on it). SPI HATs, LR1121, RF95 and SX1280
+follow the Semtech datasheets and RadioLib's command sequences but haven't been run on hardware
+yet. If you have one, please work through the steps in order and send back the output of each;
+a failure at one step tells us which layer is wrong.
 
 ## What you need
 

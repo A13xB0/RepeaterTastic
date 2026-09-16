@@ -53,6 +53,14 @@ esptool.py --chip esp32s3 --port /dev/ttyUSB0 write_flash 0x0 Heltec_v3_kiss_mod
 Plug it into the host and find its stable path: `ls -l /dev/serial/by-id/`. More in
 [Hardware and modems](docs/hardware.md).
 
+**Or skip the modem board.** RepeaterTastic can drive a LoRa HAT or USB stick itself, the hardware
+meshtasticd runs on: MeshAdv, Waveshare, RAK6421, Nebra/Zebra, PiMesh, PiTastic, Femtofox and
+Luckfox HATs (SX126x and LR1121), and CH341 USB sticks such as MeshStick, Meshtoad, uMesh and
+RAK19714. All of meshtasticd's board files are built in, so pick your board in the setup wizard
+(or set `radio: {driver: spi, device: MeshAdv-900M30S}`; `auto` detects USB sticks and Pi HAT+
+boards). meshtasticd must not be running on the same radio. Tested on an SX1262 over CH341 so
+far; HATs need testers: see [LoRa HATs and USB sticks](docs/spi-radio-testing.md).
+
 ### 2a. Run it with Docker
 
 ```bash
@@ -66,6 +74,8 @@ docker run -d --name repeatertastic --restart unless-stopped \
 ```
 
 - `--device` passes the modem in; `--group-add` lets the unprivileged container user open it.
+  For a HAT pass `--device /dev/spidev0.0 --device /dev/gpiochip0` and the `spi` and `gpio` groups;
+  for a CH341 stick `--device /dev/bus/usb` and its udev group.
 - `--network host` lets the apps find identities over mDNS and joins the LAN multicast mesh. Without
   it, publish `-p 8080:8080 -p 4403-4410:4403-4410` instead.
 - The `/data` volume holds the config, identity keys and chats. Back it up.
@@ -90,7 +100,7 @@ The installer creates a `repeatertastic` user in `dialout`, installs the systemd
 ### 3. Set it up in the browser
 
 1. Open `http://<host>:8080` and choose the admin password.
-2. The setup wizard finds the modem, sets region and preset, and checks the modem accepts Meshtastic's sync word.
+2. The setup wizard finds the modem (a serial port, or a HAT or USB stick from the board list), sets region and preset, and tests it.
 3. **Identities → New identity** creates a virtual node and gives it an app port.
 4. In the Meshtastic app, add a **network** device: `<host>:<port>` (for example `192.168.1.20:4404`).
 
@@ -112,8 +122,8 @@ Docker) bakes in a default map tile key; see [Configuration](docs/configuration.
 | Guide | What's in it |
 | --- | --- |
 | [Hardware and modems](docs/hardware.md) | Supported boards, flashing Mesh KISS, stable device paths, permissions, Docker devices, `kisstool`, troubleshooting |
-| [meshtasticd as the modem](docs/meshtasticd-raw-modem.md) | Using a Linux LoRa HAT or CH341 stick through meshtasticd's raw modem mode (`device: tcp://…`, patched meshtasticd for now) |
-| [Testing the SPI radio driver](docs/spi-radio-testing.md) | Experimental: meshtasticd Pi HATs (SX126x on SPI) without a USB modem |
+| [meshtasticd as the modem](docs/meshtasticd-raw-modem.md) | Using a radio through meshtasticd's raw modem mode (`device: tcp://…`); behind an experimental switch until that mode lands upstream |
+| [LoRa HATs and USB sticks](docs/spi-radio-testing.md) | Driving a Pi HAT or CH341 stick directly (`radio.driver: spi`): supported boards, setup, and how to test one |
 | [Configuration](docs/configuration.md) | The config file section by section, environment variables, what applies live, backups |
 | [Using the web GUI](docs/web-gui.md) | Identities, chat, channels, nodes and map, packets, statistics, configuration tabs |
 | [Several radios](docs/radios.md) | Running LongFast and MediumFast side by side, the site airtime cap, and the experimental identities on several radios |
