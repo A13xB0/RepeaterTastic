@@ -125,6 +125,7 @@ func (a *LoRaAir) serve(ctx context.Context, node *Node) {
 	}
 	if c.Snapshot().Connected {
 		register()
+		go a.introduce(ctx, n)
 	}
 	defer func() {
 		a.mu.Lock()
@@ -144,9 +145,12 @@ func (a *LoRaAir) serve(ctx context.Context, node *Node) {
 			switch e.Kind {
 			case mtclient.Configured:
 				register()
+				go a.introduce(ctx, n)
 			case mtclient.Received:
 				p := e.FromRadio.GetPacket()
-				if p.GetDecoded().GetPortnum() == pb.PortNum_SIMULATOR_APP && p.GetRxRssi() == 0 && p.GetRxSnr() == 0 {
+				// Every SIMULATOR_APP packet a node hands its client is a transmission (SimRadio's
+				// startSend). A relay keeps the RSSI and SNR it was heard with, so those say nothing.
+				if p.GetDecoded().GetPortnum() == pb.PortNum_SIMULATOR_APP {
 					if !node.OnAir() {
 						continue // not yet the node it stands for
 					}
@@ -174,8 +178,60 @@ func (a *LoRaAir) transmit(n *airNode, p *pb.MeshPacket) error {
 	if err != nil {
 		return err
 	}
+	if pkt.From == n.num && pkt.To != wire.Broadcast && !a.h.Config().LocalDMOverRF {
+		if target := a.node(pkt.To); target != nil && target != n {
+			// A direct message to a node on this same air: hand it over without going on air, as
+			// a direct neighbour would hear it (the answer comes back the same way).
+			a.inject(target, pkt, loopRSSI, loopSNR, pkt.HopLimit, pkt.HopStart)
+			a.h.LogInternal(pkt, plain)
+			return nil
+		}
+	}
 	a.recent.put(pkt)
 	return a.h.QueueHosted(pkt, plain, n.num)
+}
+
+// introduce tells a node that has just connected about every other identity on the host, and them
+// about it, with their public keys (add_contact, marked verified). Over the air nodes learn keys from
+// NodeInfo; nodes that share a host may never have heard each other's, and without the sender's key
+// a direct message between them can't be read.
+func (a *LoRaAir) introduce(ctx context.Context, n *airNode) {
+	if !n.node.OnAir() {
+		return // it takes its own key first; the next connection introduces it
+	}
+	num := n.node.client.Snapshot().NodeNum()
+	contact := func(id *mesh.Identity) *pb.AdminMessage {
+		return &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_AddContact{AddContact: &pb.SharedContact{
+			NodeNum: id.NodeNum, User: id.UserCopy(), ManuallyVerified: true}}}
+	}
+	send := func(to *Node, m *pb.AdminMessage) {
+		actx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if _, err := to.Admin(actx, m); err != nil && ctx.Err() == nil {
+			a.logf("air: %s: contact not added: %v", wire.NodeID(to.client.Snapshot().NodeNum()), err)
+		}
+	}
+	self := a.h.Identity(num)
+	for _, id := range a.h.Identities() {
+		if id.NodeNum == num || len(id.UserCopy().GetPublicKey()) != 32 {
+			continue
+		}
+		send(n.node, contact(id))
+		if other := a.node(id.NodeNum); other != nil && self != nil && len(self.UserCopy().GetPublicKey()) == 32 {
+			send(other.node, contact(self))
+		}
+	}
+	// A board relay isn't joined, but hears the node through its proxy: tell it too.
+	if a.relay != nil && a.relay != n.node && self != nil && len(self.UserCopy().GetPublicKey()) == 32 {
+		send(a.relay, contact(self))
+	}
+}
+
+// node is the joined node with that number, or nil.
+func (a *LoRaAir) node(num uint32) *airNode {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.nodes[num]
 }
 
 // frameFor builds the encrypted packet a hosted node's envelope stands for.
@@ -189,7 +245,7 @@ func (a *LoRaAir) frameFor(n *airNode, p *pb.MeshPacket) (*pb.MeshPacket, *pb.Da
 	}
 	out := &pb.MeshPacket{From: p.From, To: p.To, Id: p.Id, HopLimit: p.HopLimit, HopStart: p.HopStart,
 		WantAck: p.WantAck, ViaMqtt: p.ViaMqtt, NextHop: p.NextHop, RelayNode: p.RelayNode, Priority: p.Priority,
-		PkiEncrypted: p.PkiEncrypted}
+		PkiEncrypted: p.PkiEncrypted, TransportMechanism: pb.MeshPacket_TRANSPORT_LORA}
 	if c.Portnum == pb.PortNum_UNKNOWN_APP {
 		// Ciphertext: a PKI DM (channel 0 on air) or a channel packet the node couldn't read.
 		out.Channel = p.Channel
@@ -244,7 +300,7 @@ func (a *LoRaAir) Heard(f radio.Frame) {
 	}
 	a.recent.put(p)
 	for _, n := range a.snapshot() {
-		a.inject(n, p, p.GetRxRssi(), p.RxSnr, p.HopLimit)
+		a.inject(n, p, p.GetRxRssi(), p.RxSnr, p.HopLimit, p.HopStart)
 	}
 }
 
@@ -257,7 +313,7 @@ func (a *LoRaAir) Transmitted(frame []byte, pkt *pb.MeshPacket, origin uint32) {
 	}
 	for _, n := range a.snapshot() {
 		if n.num != origin {
-			a.inject(n, p, loopRSSI, loopSNR, 0)
+			a.inject(n, p, loopRSSI, loopSNR, 0, 0) // hop start 0 too: zero hops away, not hop-start many
 		}
 	}
 }
@@ -273,8 +329,11 @@ func (a *LoRaAir) snapshot() []*airNode {
 }
 
 // inject hands a frame to a hosted node as if its sim radio had received it.
-func (a *LoRaAir) inject(n *airNode, p *pb.MeshPacket, rssi int32, snr float32, hopLimit uint32) {
+func (a *LoRaAir) inject(n *airNode, p *pb.MeshPacket, rssi int32, snr float32, hopLimit, hopStart uint32) {
 	env, err := envelope(p, rssi, snr, hopLimit)
+	if err == nil {
+		env.HopStart = hopStart
+	}
 	if err != nil {
 		return
 	}
