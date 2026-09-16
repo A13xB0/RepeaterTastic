@@ -2,9 +2,10 @@
 // Setup wizard: modem → radio → relay → admin password → review.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Check, CircleAlert, CircleCheck, RefreshCw, Usb } from '@lucide/vue'
+import { Check, CircleAlert, CircuitBoard, CircleCheck, RefreshCw, Usb } from '@lucide/vue'
 import { request, setToken } from '@/api/client'
-import type { Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/types'
+import type { Board, Phy, ProbeResult, RelayRole, Region, SerialPort } from '@/api/types'
+import BoardSelect from '@/components/config/BoardSelect.vue'
 import Logo from '@/components/ui/Logo.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { markSetupDone } from '@/router'
@@ -17,6 +18,8 @@ const step = ref(0)
 const ports = ref<SerialPort[]>([])
 const loadingPorts = ref(false)
 const device = ref('')
+// kiss: a USB modem on the serial port `device`; spi: `device` is a LoRa board the daemon drives itself.
+const driver = ref<'kiss' | 'spi'>('kiss')
 const probe = ref<ProbeResult | null>(null)
 const probing = ref(false)
 
@@ -53,14 +56,26 @@ async function runProbe() {
   probing.value = true
   probe.value = null
   try {
-    probe.value = await post<ProbeResult>('/setup/probe', { device: device.value })
+    probe.value = await post<ProbeResult>('/setup/probe', { device: device.value, driver: driver.value })
   } catch (e) {
     probe.value = { ok: false, driver: '', firmware: '', name: '', sync_word_ok: false, error: (e as Error).message }
   } finally {
     probing.value = false
   }
 }
-watch(device, () => (probe.value = null))
+watch([device, driver], () => (probe.value = null))
+
+// A LoRa board on the Pi's SPI bus or a CH341 USB stick, run by the experimental spi driver.
+const boards = ref<Board[]>([])
+const board = ref('auto')
+const usingBoard = computed(() => driver.value === 'spi')
+function pickBoard() {
+  driver.value = 'spi'
+  device.value = board.value
+}
+watch(board, (v) => {
+  if (usingBoard.value) device.value = v
+})
 
 let previewSeq = 0
 async function preview() {
@@ -77,6 +92,11 @@ watch([region, preset, primary], preview)
 
 onMounted(async () => {
   loadPorts()
+  get<Board[]>('/boards')
+    .then((b) => (boards.value = b))
+    .catch(() => {
+      /* the board select still offers auto and a file path */
+    })
   try {
     regions.value = await get<Region[]>('/regions')
   } catch {
@@ -119,7 +139,7 @@ async function finish() {
   error.value = ''
   try {
     const r = await post<{ token: string }>('/setup', {
-      password: password.value, region: region.value, preset: preset.value, primary_channel: primary.value, device: device.value, relay_role: role.value,
+      password: password.value, region: region.value, preset: preset.value, primary_channel: primary.value, driver: driver.value, device: device.value, relay_role: role.value,
     })
     setToken(r.token)
     markSetupDone()
@@ -165,7 +185,7 @@ async function finish() {
           <section v-if="step === 0">
             <h2 class="text-base font-semibold tracking-tight">Connect the modem</h2>
             <p class="mt-1 text-[13px] text-ink-3">
-              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch). We'll ping it and check it accepts sync word 0x2B.
+              Pick the serial port of your KISS modem (a Heltec V3 or RAK4631 with the RepeaterTastic sync-word patch), or a LoRa board RepeaterTastic drives itself. We'll ping it and check it accepts sync word 0x2B.
             </p>
             <div class="mt-4 space-y-2">
               <label
@@ -173,7 +193,7 @@ async function finish() {
                 :key="p.path"
                 :class="['flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-3 transition-colors', device === p.path ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']"
               >
-                <input v-model="device" type="radio" :value="p.path" class="accent-[var(--brand)]" />
+                <input v-model="device" type="radio" :value="p.path" class="accent-[var(--brand)]" @change="driver = 'kiss'" />
                 <Usb class="size-4 shrink-0 text-ink-3" />
                 <div class="min-w-0">
                   <div class="text-[13px] font-medium">{{ p.description }}</div>
@@ -183,21 +203,36 @@ async function finish() {
               <div v-if="!ports.length && !loadingPorts" class="rounded-xl border border-dashed border-line px-4 py-6 text-center text-[13px] text-ink-3">
                 No serial ports found. Plug the modem in and refresh.
               </div>
+              <div :class="['rounded-xl border px-3.5 py-3 transition-colors', usingBoard ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
+                <label class="flex cursor-pointer items-center gap-3">
+                  <input type="radio" :checked="usingBoard" class="accent-[var(--brand)]" @change="pickBoard" />
+                  <CircuitBoard class="size-4 shrink-0 text-ink-3" />
+                  <div class="min-w-0">
+                    <div class="text-[13px] font-medium">LoRa board on SPI or a USB stick</div>
+                    <div class="text-2xs text-ink-3">A Pi HAT or CH341 stick RepeaterTastic drives itself, with no meshtasticd on it (experimental)</div>
+                  </div>
+                </label>
+                <BoardSelect v-if="usingBoard" id="setup-board" v-model="board" :boards="boards" input-class="input h-8 text-xs" class="mt-2.5 pl-7" />
+              </div>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
               <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />Test modem</button>
-              <input v-model="device" class="input h-7 min-w-0 flex-1 rounded-lg text-xs" placeholder="or type a path, e.g. /dev/ttyUSB0" />
+              <input v-if="!usingBoard" v-model="device" class="input h-7 min-w-0 flex-1 rounded-lg text-xs" placeholder="or type a path, e.g. /dev/ttyUSB0" @input="driver = 'kiss'" />
             </div>
             <div v-if="probe" :class="['mt-3 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[13px]', probe.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
               <CircleCheck v-if="probe.ok" class="mt-0.5 size-4 shrink-0 text-ok" />
               <CircleAlert v-else class="mt-0.5 size-4 shrink-0 text-bad" />
-              <div v-if="probe.ok">
+              <div v-if="probe.ok" class="min-w-0">
                 <div class="font-medium">{{ probe.name }} answered</div>
-                <div class="text-ink-2">{{ probe.firmware }} · sync word 0x2B {{ probe.sync_word_ok ? 'accepted' : 'rejected (flash the patched firmware)' }}</div>
+                <div v-if="probe.driver === 'spi'" class="text-ink-2">{{ probe.firmware }} module · ready for sync word 0x2B</div>
+                <div v-else class="text-ink-2">{{ probe.firmware }} · sync word 0x2B {{ probe.sync_word_ok ? 'accepted' : 'rejected (flash the patched firmware)' }}</div>
+                <ul v-if="probe.details?.length" class="mono mt-1.5 space-y-0.5 text-2xs text-ink-3">
+                  <li v-for="(d, i) in probe.details" :key="i" class="break-words">{{ d }}</li>
+                </ul>
               </div>
               <div v-else>
-                <div class="font-medium">No modem on this port</div>
+                <div class="font-medium">{{ usingBoard ? 'The board didn’t answer' : 'No modem on this port' }}</div>
                 <div class="text-ink-2">{{ probe.error }}</div>
               </div>
             </div>
@@ -304,7 +339,7 @@ async function finish() {
           <section v-else>
             <h2 class="text-base font-semibold tracking-tight">Ready to go</h2>
             <dl class="kv mt-4">
-              <dt>Modem</dt><dd class="mono truncate">{{ device }}</dd>
+              <dt>Modem</dt><dd class="mono truncate">{{ usingBoard ? `board · ${device}` : device }}</dd>
               <dt>Radio</dt><dd>{{ region }} · {{ phy?.preset_name }} · {{ phy?.frequency_mhz.toFixed(3) }} MHz</dd>
               <dt>Relay role</dt><dd class="capitalize">{{ role }}</dd>
               <dt>Admin password</dt><dd>{{ '•'.repeat(Math.min(password.length, 16)) }}</dd>

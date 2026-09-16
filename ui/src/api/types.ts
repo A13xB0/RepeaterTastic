@@ -295,7 +295,18 @@ export interface Region {
   power_limit_dbm: number
 }
 
-/** Proposed: POST /setup/probe */
+/** GET /boards: a LoRa board the experimental spi driver can run; `id` goes in radio.device. */
+export interface Board {
+  id: string
+  name: string
+  module: string
+  bus: string
+  source: 'auto' | 'config.d' | 'available.d' | 'built-in'
+  supported: boolean
+  error: string
+}
+
+/** POST /setup/probe */
 export interface ProbeResult {
   ok: boolean
   driver: string
@@ -303,6 +314,8 @@ export interface ProbeResult {
   name: string
   sync_word_ok: boolean
   error: string
+  /** spi: the chip's diagnostic lines */
+  details?: string[]
 }
 
 export interface ApiToken {

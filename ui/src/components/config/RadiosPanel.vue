@@ -8,6 +8,7 @@ import type { Phy, RadiosResponse, Region, SerialPort } from '@/api/types'
 import { refreshRadios } from '@/store/live'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import ModemDeviceField from '@/components/config/ModemDeviceField.vue'
 import RadioSettingsModal from '@/components/config/RadioSettingsModal.vue'
 import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
@@ -93,7 +94,7 @@ const adding = ref(false)
 /** Set when the form edits a radio that hasn't started yet. */
 const editingId = ref<string | null>(null)
 const busy = ref(false)
-const form = ref({ id: '', name: '', device: '', region: 'EU_868', preset: 'MEDIUM_FAST', tx_power_dbm: 22, relay_role: 'mute', copy_position: true })
+const form = ref({ id: '', name: '', driver: 'kiss', device: '', region: 'EU_868', preset: 'MEDIUM_FAST', tx_power_dbm: 22, relay_role: 'mute', copy_position: true })
 const addError = ref('')
 const preview = ref<Phy | null>(null)
 const region = computed(() => props.regions.find((r) => r.name === form.value.region))
@@ -101,7 +102,7 @@ function openAdd() {
   const main = data.value?.radios[0]
   const taken = new Set([...(data.value?.radios ?? []).map((r) => r.phy.preset), ...(data.value?.pending ?? []).map((p) => p.preset)])
   const preset = (region.value?.presets ?? ['MEDIUM_FAST']).find((p) => !taken.has(p)) ?? 'MEDIUM_FAST'
-  form.value = { id: '', name: '', device: '', region: main?.phy.region ?? 'EU_868', preset, tx_power_dbm: main?.phy.tx_power_dbm ?? 22, relay_role: 'mute', copy_position: true }
+  form.value = { id: '', name: '', driver: 'kiss', device: '', region: main?.phy.region ?? 'EU_868', preset, tx_power_dbm: main?.phy.tx_power_dbm ?? 22, relay_role: 'mute', copy_position: true }
   addError.value = ''
   idTouched.value = false
   editingId.value = null
@@ -112,7 +113,7 @@ function openAdd() {
 function openEditPending(p: RadiosResponse['pending'][number]) {
   const main = data.value?.radios[0]
   form.value = {
-    id: p.id, name: p.name || '', device: p.device || '', region: p.region || main?.phy.region || 'EU_868', preset: p.preset || 'LONG_FAST',
+    id: p.id, name: p.name || '', driver: p.driver || 'kiss', device: p.device || '', region: p.region || main?.phy.region || 'EU_868', preset: p.preset || 'LONG_FAST',
     tx_power_dbm: p.tx_power_dbm || main?.phy.tx_power_dbm || 22, relay_role: p.relay_role || 'mute', copy_position: true,
   }
   addError.value = ''
@@ -150,7 +151,7 @@ async function add() {
   busy.value = true
   try {
     if (editingId.value) {
-      await api.put(`/radios/${enc(editingId.value)}`, { name: form.value.name, device: form.value.device, region: form.value.region,
+      await api.put(`/radios/${enc(editingId.value)}`, { name: form.value.name, driver: form.value.driver, device: form.value.device, region: form.value.region,
         preset: form.value.preset, tx_power_dbm: form.value.tx_power_dbm, relay_role: form.value.relay_role })
       adding.value = false
       await load()
@@ -247,7 +248,7 @@ function openSettings(id: string) {
       </form>
     </template>
 
-    <Modal :open="adding" :title="editingId ? `Edit ${form.name || editingId}` : 'Add a radio'" :subtitle="editingId ? 'Not started yet: these settings apply when it starts at the next restart.' : 'Another Mesh KISS modem on this host, on its own preset.'" @close="adding = false">
+    <Modal :open="adding" :title="editingId ? `Edit ${form.name || editingId}` : 'Add a radio'" :subtitle="editingId ? 'Not started yet: these settings apply when it starts at the next restart.' : 'Another modem or LoRa board on this host, on its own preset.'" @close="adding = false">
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="add">
         <div>
           <label class="label" for="ar-region">Region</label>
@@ -271,10 +272,7 @@ function openSettings(id: string) {
           <input id="ar-name" v-model="form.name" class="input" placeholder="MediumFast" maxlength="40" />
         </div>
         <div class="sm:col-span-2">
-          <label class="label" for="ar-dev">Serial device</label>
-          <input id="ar-dev" v-model="form.device" class="input mono" list="ar-ports" placeholder="/dev/serial/by-id/…" required />
-          <datalist id="ar-ports"><option v-for="p in ports.filter((x) => !usedDevices.has(x.path))" :key="p.path" :value="p.path">{{ p.description }}</option></datalist>
-          <p class="hint">Use a <span class="mono">/dev/serial/by-id/</span> or udev name so it survives replugging. Flash the Mesh KISS firmware on it first.</p>
+          <ModemDeviceField id="ar-dev" v-model="form.device" v-model:driver="form.driver" :ports="ports.filter((x) => !usedDevices.has(x.path))" />
         </div>
         <div>
           <label class="label" for="ar-pwr">TX power · {{ form.tx_power_dbm }} dBm</label>
