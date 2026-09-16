@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 // FixedPosition is a site's surveyed location, broadcast like a fixed-position node.

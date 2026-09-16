@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -47,7 +47,8 @@ func (n *Node) ApplyConfig(ctx context.Context, cfg mesh.Config) error {
 		// A board's first region makes its keys, and its node number moves with them at once:
 		// answers to anything addressed to the old number are lost, a commit included. So the
 		// region goes on its own, saved straight away; the rest follows on the next connection.
-		return n.firstRegion(ctx, lora)
+		n.firstRegion(ctx, lora)
+		return nil
 	}
 	var msgs []*pb.AdminMessage
 	if !proto.Equal(lora, s.Config.GetLora()) {
@@ -396,7 +397,7 @@ func (n *Node) positionMsgs(s mtclient.Snapshot, h *mesh.Host, id *mesh.Identity
 
 // firstRegion sets a node's region for the first time, outside an edit transaction so the node
 // saves it at once, then reconnects to learn the node's new number. Configured then pushes the rest.
-func (n *Node) firstRegion(ctx context.Context, lora *pb.Config_LoRaConfig) error {
+func (n *Node) firstRegion(ctx context.Context, lora *pb.Config_LoRaConfig) {
 	n.logf("meshtasticd: node at %s gets its first region, %s (its node number changes with its new keys)", n.addr, lora.Region)
 	actx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	_, err := n.client.Admin(actx, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetConfig{SetConfig: &pb.Config{PayloadVariant: &pb.Config_Lora{Lora: lora}}}})
@@ -407,7 +408,6 @@ func (n *Node) firstRegion(ctx context.Context, lora *pb.Config_LoRaConfig) erro
 	n.committed.Store(time.Now().UnixMilli())
 	time.Sleep(time.Second) // let it save
 	n.client.Reconnect()
-	return nil
 }
 
 // edit applies admin messages inside begin/commit_edit_settings and refreshes the mirror.

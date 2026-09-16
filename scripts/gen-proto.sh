@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Regenerate Go code for the vendored Meshtastic protobufs (proto/, upstream commit in proto/UPSTREAM_COMMIT).
+# Regenerate the Go code for the vendored Meshtastic protobufs in api/meshtastic, next to their
+# sources (upstream commit in api/meshtastic/UPSTREAM_COMMIT).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$PATH:$(go env GOPATH)/bin"
-OUT=pb
-rm -rf "$OUT" && mkdir -p "$OUT"
+OUT=api/meshtastic
+PKG=github.com/ScotMesh/RepeaterTastic/$OUT
+rm -f "$OUT"/*.pb.go
 args=()
-for f in proto/nanopb.proto proto/meshtastic/*.proto; do
-  args+=("--go_opt=M${f#proto/}=github.com/ScotMesh/RepeaterTastic/pb;pb")
+for f in api/nanopb.proto api/meshtastic/*.proto; do
+  args+=("--go_opt=M${f#api/}=$PKG;pb")
 done
-protoc -Iproto --go_out="$OUT" --go_opt=paths=import --go_opt=module=github.com/ScotMesh/RepeaterTastic/pb "${args[@]}" \
-  proto/nanopb.proto proto/meshtastic/*.proto
+protoc -Iapi --go_out="$OUT" --go_opt=paths=import --go_opt=module="$PKG" "${args[@]}" \
+  api/nanopb.proto api/meshtastic/*.proto

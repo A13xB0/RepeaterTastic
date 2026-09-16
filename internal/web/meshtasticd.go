@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // pushOwner writes a node identity's names to the node.

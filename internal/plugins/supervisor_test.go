@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
 )
 
 const scriptManifest = "id: script\napi: 1\nrun:\n  managed:\n    exec: run.sh\n"

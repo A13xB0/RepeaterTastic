@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/phy"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func TestRegionsListAllowedPresets(t *testing.T) {

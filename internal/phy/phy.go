@@ -10,7 +10,7 @@ import (
 	"math/rand/v2"
 	"strings"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 const (

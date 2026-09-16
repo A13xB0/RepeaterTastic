@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
 )
 
 // Radio is one of the site's radios, as plugins see it.

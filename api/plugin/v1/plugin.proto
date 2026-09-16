@@ -9,7 +9,7 @@ syntax = "proto3";
 
 package repeatertastic.plugin.v1;
 
-option go_package = "github.com/ScotMesh/RepeaterTastic/pluginapi/v1;pluginv1";
+option go_package = "github.com/ScotMesh/RepeaterTastic/api/plugin/v1;pluginv1";
 
 service PluginHost {
   // Session: the plugin sends Hello first; the host answers Welcome (or closes with an error), then

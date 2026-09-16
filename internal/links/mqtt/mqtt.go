@@ -41,9 +41,9 @@ import (
 	paho "github.com/eclipse/paho.mqtt.golang"
 	"google.golang.org/protobuf/proto"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // Modes, formats and channel selection policies (as in the config).

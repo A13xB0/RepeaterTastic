@@ -49,5 +49,5 @@ linters:
       # A read error on a closed socket ends the loop; a walk skips entries it can't read.
       - linters: [nilerr]
         path: (internal/mdns/mdns\.go|internal/plugins/cli\.go)
-      - path: ^(pb|pluginapi)/
+      - path: ^api/
         linters: [staticcheck]
