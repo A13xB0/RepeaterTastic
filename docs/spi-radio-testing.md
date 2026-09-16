@@ -8,7 +8,7 @@ talks directly to the LoRa chip on the hardware `meshtasticd` runs on, with no m
 | Chip | Examples |
 |---|---|
 | SX1262, SX1268, LLCC68 | MeshAdv Pi Hat and Mini, Waveshare SX126x, RAK6421 (RAK13300/13302), Nebra and Zebra hats, PiMesh, PiTastic, Femtofox, Luckfox, Station G3 |
-| SX1262/SX1268 on a CH341 USB stick | MeshStick, Meshtoad, RAK19714, uMesh 30 dBm, FrameTastic, PiNedio USB |
+| SX1262/SX1268 on a CH341 USB stick | MeshStick, Meshtoad, RAK19714, uMesh 30 dBm, FrameTastic, PiNedio USB, XIAO + Wio-SX1262 with the CH341 bridge firmware |
 | LR1121 | Femtofox E80, PiggyStick (USB) |
 | SX1276/SX1278 (RF95) | Adafruit RFM9x |
 | SX1280 (2.4 GHz) | any SX1280 wired like meshtasticd's `Module: sx1280` |
