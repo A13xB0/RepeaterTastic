@@ -80,6 +80,7 @@ func openCH341(b Board, logf func(string, ...any)) (hal, error) {
 			h.outputs |= 1 << p.Line
 		}
 	}
+	h.drain()
 	h.state = 1 << h.cs // CS idle high
 	if b.Reset.Set {
 		h.state |= 1 << b.Reset.Line
@@ -120,12 +121,40 @@ func findUSB(id *USBID) (path, product string, err error) {
 }
 
 func (h *ch341HAL) bulk(ep uint32, data []byte) (int, error) {
-	req := usbdevfsBulk{ep: ep, len: uint32(len(data)), timeout: 1000, data: unsafe.Pointer(&data[0])}
+	return h.bulkTimeout(ep, data, 1000)
+}
+
+func (h *ch341HAL) bulkTimeout(ep uint32, data []byte, ms uint32) (int, error) {
+	req := usbdevfsBulk{ep: ep, len: uint32(len(data)), timeout: ms, data: unsafe.Pointer(&data[0])}
 	n, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(h.fd), usbdevfsBulkReq, uintptr(unsafe.Pointer(&req)))
 	if errno != 0 {
 		return 0, fmt.Errorf("ch341 USB transfer: %w", errno)
 	}
 	return int(n), nil
+}
+
+// readIn reads one reply packet. The buffer is always a whole packet: a shorter one fails with
+// EOVERFLOW when the adapter sends more than asked, as it does after an interrupted session.
+func (h *ch341HAL) readIn(want int) ([]byte, error) {
+	buf := make([]byte, ch341PacketLen)
+	n, err := h.bulkTimeout(ch341EPIn, buf, 1000)
+	if err != nil {
+		return nil, err
+	}
+	if n > want {
+		n = want
+	}
+	return buf[:n], nil
+}
+
+// drain throws away replies left over from a previous session that ended mid-transfer.
+func (h *ch341HAL) drain() {
+	buf := make([]byte, ch341PacketLen)
+	for i := 0; i < 8; i++ {
+		if n, err := h.bulkTimeout(ch341EPIn, buf, 50); err != nil || n == 0 {
+			return
+		}
+	}
 }
 
 func (h *ch341HAL) writePins() error {
@@ -148,8 +177,8 @@ func (h *ch341HAL) getPin(line int) (bool, error) {
 	if _, err := h.bulk(ch341EPOut, []byte{ch341CmdGetInput}); err != nil {
 		return false, err
 	}
-	r := make([]byte, 6)
-	if _, err := h.bulk(ch341EPIn, r); err != nil {
+	r, err := h.readIn(6)
+	if err != nil {
 		return false, err
 	}
 	return ch341Inputs(r)&(1<<line) != 0, nil
@@ -165,23 +194,22 @@ func (h *ch341HAL) Transfer(tx []byte) ([]byte, error) {
 	}
 	defer h.setPin(h.cs, true)
 	rx := make([]byte, 0, len(tx))
-	buf := make([]byte, ch341PacketLen)
 	for _, p := range ch341SPIPackets(tx) {
 		if _, err := h.bulk(ch341EPOut, p); err != nil {
 			return nil, err
 		}
 		for got := 0; got < len(p)-1; {
-			n, err := h.bulk(ch341EPIn, buf[:len(p)-1-got])
+			r, err := h.readIn(len(p) - 1 - got)
 			if err != nil {
 				return nil, err
 			}
-			if n == 0 {
+			if len(r) == 0 {
 				return nil, errors.New("ch341: short SPI read")
 			}
-			for _, b := range buf[:n] {
+			for _, b := range r {
 				rx = append(rx, reverseBits(b))
 			}
-			got += n
+			got += len(r)
 		}
 	}
 	return rx, nil
