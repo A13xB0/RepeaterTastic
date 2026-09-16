@@ -30,6 +30,13 @@ type decodeResult struct {
 // HandleReceived runs the receive pipeline for an encrypted packet from the radio or a link.
 // raw is the full LoRa frame when it came off the air (for the packet log), else nil.
 func (h *Host) HandleReceived(p *pb.MeshPacket, raw []byte) {
+	if raw == nil && p.GetEncrypted() != nil { // from a link, not the radio
+		for _, t := range h.airTaps() {
+			if lt, ok := t.(LinkTap); ok {
+				lt.LinkHeard(p)
+			}
+		}
+	}
 	if h.remoteOnly() {
 		return // a real node does its own receiving; links can't feed it frames
 	}
