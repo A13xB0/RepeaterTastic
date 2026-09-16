@@ -91,6 +91,11 @@ EventSource can't set headers. No other endpoint reads a token from the URL.
   (the SX126x/SX127x/SX128x/LR11x0 version, mode and error flags). A board a running radio
   already drives is reported without being opened. A board file outside `/etc/meshtasticd`
   answers 400.
+- With `driver: "auto"` the probe finds out what is on a serial port: it pings for a KISS modem
+  first (Meshtastic firmware ignores that), then tries the Meshtastic client API. The answer is
+  that probe's, with `driver` `kiss` or `meshtastic`; when neither answers, `driver` is empty and
+  `details` has both errors. A port a running radio uses is reported without opening it. The setup
+  wizard runs this when a listed port is picked.
 - With `driver: "meshtastic"` the probe connects to the board, reads its settings and disconnects:
   `name` is its long name, `firmware` its Meshtastic version, `region`, `preset`, `role` and
   `node_id` its current settings, and `details` a summary. A board a running radio uses is

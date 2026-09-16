@@ -158,3 +158,17 @@ func TestSetupMeshtasticBoard(t *testing.T) {
 		t.Fatalf("setup with a board %d %v", code, res)
 	}
 }
+
+func TestDetectNeedsASerialPort(t *testing.T) {
+	srv := testWebTwoRadios(t)
+	for _, dev := range []string{"", "127.0.0.1:4403", "/etc/passwd"} {
+		if code, _, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "auto", "device": dev}); code != 400 {
+			t.Errorf("detect on %q: %d", dev, code)
+		}
+	}
+	// Nothing on a port that doesn't exist: reported, with both attempts.
+	code, res, _ := call(t, srv, "POST", "/api/v1/setup/probe", "", map[string]any{"driver": "auto", "device": "/dev/ttyUSB-none"})
+	if code != 200 || res["ok"] != false || len(res["details"].([]any)) != 2 {
+		t.Fatalf("detect on a missing port: %d %v", code, res)
+	}
+}

@@ -85,8 +85,8 @@ const get = <T,>(p: string) => request<T>('GET', p, undefined, { auth: false })
 async function loadPorts() {
   loadingPorts.value = true
   try {
+    // No port is picked for you: picking one opens it to see what's there.
     ports.value = await get<SerialPort[]>('/serial-ports')
-    if (!device.value && ports.value[0]) device.value = ports.value[0].path
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -94,24 +94,70 @@ async function loadPorts() {
   }
 }
 
+// What each serial port turned out to be (KISS modem, Meshtastic board, or neither).
+const detected = ref<Record<string, ProbeResult>>({})
+// The device the shown probe result is for.
+const probedDevice = ref('')
+
+// detectPort finds out what is on a serial port and switches to that kind of radio.
+async function detectPort(path: string) {
+  probing.value = true
+  probe.value = null
+  try {
+    const r = await post<ProbeResult>('/setup/probe', { device: path, driver: 'auto' })
+    detected.value = { ...detected.value, [path]: r }
+    if (r.ok && r.driver === 'meshtastic') {
+      driver.value = 'meshtastic'
+      nodeVia.value = 'usb'
+      nodePort.value = path
+      device.value = path
+      adoptBoardSettings(r)
+    } else if (r.ok) {
+      driver.value = 'kiss'
+      device.value = path
+    }
+    probedDevice.value = device.value
+    probe.value = r
+  } catch (e) {
+    probe.value = { ok: false, driver: '', firmware: '', name: '', sync_word_ok: false, error: (e as Error).message }
+    probedDevice.value = device.value
+  } finally {
+    probing.value = false
+  }
+}
+
+function pickPort(path: string) {
+  driver.value = 'kiss'
+  device.value = path
+  detectPort(path)
+}
+
+// A board that already has a region keeps its settings unless they're changed later on.
+function adoptBoardSettings(r: ProbeResult) {
+  if (r.region && r.region !== 'UNSET') {
+    region.value = r.region
+    if (r.preset) preset.value = r.preset
+  }
+}
+
 async function runProbe() {
   if (!device.value) return
+  if (driver.value === 'kiss') return detectPort(device.value)
   probing.value = true
   probe.value = null
   try {
     probe.value = await post<ProbeResult>('/setup/probe', { device: device.value, driver: driver.value })
-    // A board that already has a region keeps its settings unless they're changed later on.
-    if (probe.value.ok && probe.value.driver === 'meshtastic' && probe.value.region && probe.value.region !== 'UNSET') {
-      region.value = probe.value.region
-      if (probe.value.preset) preset.value = probe.value.preset
-    }
+    probedDevice.value = device.value
+    if (probe.value.ok && probe.value.driver === 'meshtastic') adoptBoardSettings(probe.value)
   } catch (e) {
     probe.value = { ok: false, driver: '', firmware: '', name: '', sync_word_ok: false, error: (e as Error).message }
   } finally {
     probing.value = false
   }
 }
-watch([device, driver], () => (probe.value = null))
+watch([device, driver], () => {
+  if (device.value !== probedDevice.value) probe.value = null
+})
 
 // A LoRa board on the Pi's SPI bus or a CH341 USB stick, run by the experimental spi driver.
 const boards = ref<Board[]>([])
@@ -301,15 +347,20 @@ async function finish() {
               <label
                 v-for="p in ports"
                 :key="p.path"
-                :class="['flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-3 transition-colors', device === p.path ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']"
+                :class="['flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-3 transition-colors', device === p.path && driver !== 'spi' ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']"
               >
-                <input v-model="device" type="radio" :value="p.path" class="accent-[var(--brand)]" @change="driver = 'kiss'" />
+                <input type="radio" name="setup-port" :checked="device === p.path && driver !== 'spi'" class="accent-[var(--brand)]" @change="pickPort(p.path)" />
                 <Usb class="size-4 shrink-0 text-ink-3" />
-                <div class="min-w-0">
+                <div class="min-w-0 flex-1">
                   <div class="text-[13px] font-medium">{{ p.description }}</div>
                   <div class="mono truncate text-2xs text-ink-3">{{ p.path }}</div>
                 </div>
+                <Spinner v-if="probing && device === p.path" class="shrink-0" />
+                <span v-else-if="detected[p.path]?.ok && detected[p.path]?.driver === 'meshtastic'" class="chip shrink-0 bg-brand/12 text-brand">Meshtastic firmware</span>
+                <span v-else-if="detected[p.path]?.ok" class="chip shrink-0 bg-brand/12 text-brand">KISS modem</span>
+                <span v-else-if="detected[p.path]" class="chip shrink-0 bg-bad/12 text-bad">not recognised</span>
               </label>
+              <p class="text-2xs text-ink-3">Picking a port checks what's on it: a KISS modem, or a board running Meshtastic firmware.</p>
               <div v-if="!ports.length && !loadingPorts" class="rounded-xl border border-dashed border-line px-4 py-6 text-center text-[13px] text-ink-3">
                 No serial ports found. Plug the modem in and refresh.
               </div>
@@ -357,14 +408,14 @@ async function finish() {
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button class="btn btn-sm" :disabled="loadingPorts" @click="loadPorts"><RefreshCw :class="['size-3.5', loadingPorts && 'animate-spin']" />Refresh</button>
-              <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />{{ usingNode ? 'Test board' : 'Test modem' }}</button>
+              <button class="btn btn-sm" :disabled="!device || probing" @click="runProbe"><Spinner v-if="probing" />{{ usingNode || usingBoard ? 'Test board' : 'Detect' }}</button>
 
             </div>
             <div v-if="probe" :class="['mt-3 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[13px]', probe.ok ? 'border-ok/30 bg-ok/8' : 'border-bad/30 bg-bad/8']">
               <CircleCheck v-if="probe.ok" class="mt-0.5 size-4 shrink-0 text-ok" />
               <CircleAlert v-else class="mt-0.5 size-4 shrink-0 text-bad" />
               <div v-if="probe.ok" class="min-w-0">
-                <div class="font-medium">{{ probe.name }} answered</div>
+                <div class="font-medium">{{ probe.driver === 'meshtastic' ? `Meshtastic firmware found: ${probe.name}` : probe.driver === 'kiss' ? `KISS modem found: ${probe.name}` : `${probe.name} answered` }}</div>
                 <div v-if="probe.driver === 'spi'" class="text-ink-2">{{ probe.firmware }} module · ready for sync word 0x2B</div>
                 <div v-else-if="probe.driver === 'meshtastic'" class="text-ink-2">{{ probe.firmware }}<template v-if="probe.region && probe.region !== 'UNSET'"> · {{ probe.region }} · {{ presetLabel(probe.preset ?? '') }}</template></div>
                 <div v-else class="text-ink-2">{{ probe.firmware }} · sync word 0x2B {{ probe.sync_word_ok ? 'accepted' : 'rejected (flash the patched firmware)' }}</div>
@@ -373,8 +424,11 @@ async function finish() {
                 </ul>
               </div>
               <div v-else>
-                <div class="font-medium">{{ usingBoard || usingNode ? 'The board didn’t answer' : 'No modem on this port' }}</div>
+                <div class="font-medium">{{ usingBoard || usingNode ? 'The board didn’t answer' : 'Nothing recognised on this port' }}</div>
                 <div class="text-ink-2">{{ probe.error }}</div>
+                <ul v-if="probe.details?.length" class="mono mt-1.5 space-y-0.5 text-2xs text-ink-3">
+                  <li v-for="(d, i) in probe.details" :key="i" class="break-words">{{ d }}</li>
+                </ul>
               </div>
             </div>
           </section>

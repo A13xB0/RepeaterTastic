@@ -458,7 +458,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Device string `json:"device"`
-		Driver string `json:"driver"` // kiss (default), spi or meshtastic
+		Driver string `json:"driver"` // kiss (default), spi, meshtastic, or auto (find out what's on a serial port)
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -472,8 +472,11 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	case nodes.BoardDriver:
 		s.probeBoard(w, r, req.Device)
 		return
+	case "auto":
+		s.detect(w, r, req.Device)
+		return
 	default:
-		writeError(w, http.StatusBadRequest, "driver must be kiss, spi or meshtastic")
+		writeError(w, http.StatusBadRequest, "driver must be kiss, spi, meshtastic or auto")
 		return
 	}
 	res := map[string]any{"ok": false, "driver": "kiss", "firmware": "", "name": "", "sync_word_ok": false, "error": ""}
@@ -496,13 +499,17 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "device must be a serial port such as /dev/ttyUSB0 or /dev/serial/by-id/…")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	writeJSON(w, http.StatusOK, probeKISS(r.Context(), req.Device, res))
+}
+
+// probeKISS pings a KISS modem on a serial port and fills res.
+func probeKISS(ctx context.Context, device string, res map[string]any) map[string]any {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	m, err := kiss.Open(ctx, kiss.Options{Device: req.Device, HandshakeTimeout: 5 * time.Second, Logf: func(string, ...any) {}})
+	m, err := kiss.Open(ctx, kiss.Options{Device: device, HandshakeTimeout: 5 * time.Second, Logf: func(string, ...any) {}})
 	if err != nil {
-		res["error"] = "no modem answered on " + req.Device + ": " + err.Error()
-		writeJSON(w, http.StatusOK, res)
-		return
+		res["error"] = "no modem answered on " + device + ": " + err.Error()
+		return res
 	}
 	defer m.Close()
 	info := m.Info()
@@ -511,7 +518,48 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	if m.Version() < kiss.PatchedVersion {
 		res["error"] = "stock MeshCore KISS firmware can't use Meshtastic's sync word: flash the RepeaterTastic build"
 	}
-	writeJSON(w, http.StatusOK, res)
+	return res
+}
+
+// detect finds out what is on a serial port: a KISS modem, or a board running Meshtastic firmware.
+// The KISS ping goes first: Meshtastic firmware ignores it, while a Meshtastic handshake could
+// look like a frame to send to a KISS modem. A port a running radio uses is reported, not opened.
+func (s *Server) detect(w http.ResponseWriter, r *http.Request, device string) {
+	if !serialPath(device) {
+		writeError(w, http.StatusBadRequest, "device must be a serial port such as /dev/ttyUSB0 or /dev/serial/by-id/…")
+		return
+	}
+	for _, rc := range s.radios {
+		info := rc.host.Radio().Info()
+		if info.Device != device {
+			continue
+		}
+		if info.Driver == nodes.BoardDriver {
+			s.probeBoard(w, r, device)
+			return
+		}
+		if info.Driver == "kiss" && s.radioStats(r.Context()).Connected {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "driver": "kiss", "firmware": info.Firmware, "name": info.Name,
+				"sync_word_ok": rc.host.RadioConfigured(), "error": "", "details": []string{"this radio already uses the modem"}})
+			return
+		}
+	}
+	res := probeKISS(r.Context(), device, map[string]any{"ok": false, "driver": "kiss", "firmware": "", "name": "", "sync_word_ok": false, "error": ""})
+	if res["ok"] == true {
+		res["details"] = []string{"a KISS modem answered"}
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
+	kissErr := res["error"]
+	board := map[string]any{"ok": false, "driver": nodes.BoardDriver, "firmware": "", "name": "", "sync_word_ok": false, "error": "", "details": []string{}}
+	s.boardProbe(r.Context(), device, board, 8*time.Second)
+	if board["ok"] == true {
+		writeJSON(w, http.StatusOK, board)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": false, "driver": "", "firmware": "", "name": "", "sync_word_ok": false,
+		"error":   "nothing on " + device + " answered as a KISS modem or a board running Meshtastic firmware",
+		"details": []string{fmt.Sprint("KISS: ", kissErr), fmt.Sprint("Meshtastic: ", board["error"])}})
 }
 
 // probeSPI is the setup probe for driver spi: it opens the board, reads the chip's diagnostics
