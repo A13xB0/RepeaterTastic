@@ -77,7 +77,7 @@ watch(board, (v) => {
   if (usingBoard.value) device.value = v
 })
 
-// A serial port typed by hand, for one the daemon didn't list (or a Windows COM port).
+// A serial port typed by hand, for one the daemon didn't list.
 const manualPort = ref('')
 const usingManual = ref(false)
 watch(manualPort, (v) => {
@@ -242,10 +242,10 @@ async function finish() {
                   <Usb class="size-4 shrink-0 text-ink-3" />
                   <div class="min-w-0">
                     <div class="text-[13px] font-medium">Serial port by name</div>
-                    <div class="text-2xs text-ink-3">A KISS modem on a port that isn't listed: <span class="mono">/dev/ttyUSB0</span>, <span class="mono">/dev/serial/by-id/…</span>, or <span class="mono">COM3</span> on Windows</div>
+                    <div class="text-2xs text-ink-3">A KISS modem on a port that isn't listed: <span class="mono">/dev/ttyUSB0</span>, <span class="mono">/dev/serial/by-id/…</span> or a udev alias</div>
                   </div>
                 </label>
-                <input v-if="usingManual" id="setup-serial" v-model="manualPort" class="input h-8 mono mt-2.5 ml-7 w-[calc(100%-1.75rem)] text-xs" placeholder="/dev/ttyUSB0 or COM3" spellcheck="false" aria-label="Serial port" />
+                <input v-if="usingManual" id="setup-serial" v-model="manualPort" class="input h-8 mono mt-2.5 ml-7 w-[calc(100%-1.75rem)] text-xs" placeholder="/dev/ttyUSB0" spellcheck="false" aria-label="Serial port" />
               </div>
               <div v-if="mtdAllowed" :class="['rounded-xl border px-3.5 py-3 transition-colors', usingMtd ? 'border-brand/60 bg-brand/6' : 'border-line hover:bg-raised']">
                 <label class="flex cursor-pointer items-center gap-3">

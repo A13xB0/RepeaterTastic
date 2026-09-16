@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -985,12 +984,7 @@ func loopbackAddr(addr string) bool {
 }
 
 // serialPath limits the setup probe (reachable before a password is set) to serial devices.
-var comPort = regexp.MustCompile(`^(\\\\\.\\)?COM[0-9]+$`)
-
 func serialPath(p string) bool {
-	if comPort.MatchString(p) { // Windows
-		return true
-	}
 	p = filepath.Clean(p)
 	for _, prefix := range []string{"/dev/tty", "/dev/serial/", "/dev/cu.", "/dev/rfcomm"} {
 		if strings.HasPrefix(p, prefix) {
