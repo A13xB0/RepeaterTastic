@@ -1,1 +1,0 @@
-import{$ as e}from"./client-hGoJrhPg.js";var t=e(Date.now());setInterval(()=>t.value=Date.now(),1e3);export{t};

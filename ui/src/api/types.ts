@@ -247,6 +247,10 @@ export interface LogLine {
   time: number
   level: LogLevel
   msg: string
+  /** The radio the line is about (absent on single-radio sites and for site-wide lines). */
+  radio?: string
+  /** The identity (node ID) the line is about. */
+  identity?: string
 }
 
 export interface AirtimeBucket {

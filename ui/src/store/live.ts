@@ -1,5 +1,5 @@
 // Small reactive store fed by REST snapshots plus the SSE stream (/api/v1/events).
-import { markRaw, reactive, shallowRef, triggerRef } from 'vue'
+import { markRaw, reactive, shallowRef } from 'vue'
 import { API_BASE, MAIN_RADIO, api, token, withRadio } from '@/api/client'
 import type { Identity, LogLine, MeshNode, Message, Packet, Plugin, RadioSummary, RadiosResponse, RfStats, Status, TracerouteEvent } from '@/api/types'
 
@@ -219,10 +219,11 @@ export function connect() {
   es.addEventListener('log', (e) => {
     const l = parse<LogLine>(e as MessageEvent)
     if (!l) return
-    const arr = logs.value
-    arr.push(l)
-    if (arr.length > LOG_BUFFER) arr.splice(0, arr.length - LOG_BUFFER)
-    triggerRef(logs)
+    // A new array each time: views read the lines through computed values, which only update
+    // when the array they return is a different one.
+    const next = logs.value.length >= LOG_BUFFER ? logs.value.slice(1 - LOG_BUFFER) : logs.value.slice()
+    next.push(l)
+    logs.value = next
     listeners.log.forEach((fn) => fn(l))
   })
 }

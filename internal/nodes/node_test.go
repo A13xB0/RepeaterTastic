@@ -306,3 +306,26 @@ func TestClientBaseRelayFavorites(t *testing.T) {
 		t.Fatalf("role %v", fake.Config().Device.Role)
 	}
 }
+
+func TestSettingsTheNodeKeepsDropping(t *testing.T) {
+	n := newNode("fake", "", nil, testLogf(t))
+	lora := []*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_SetConfig{SetConfig: &pb.Config{
+		PayloadVariant: &pb.Config_Lora{Lora: &pb.Config_LoRaConfig{TxPower: 0}}}}}}
+	for i := 1; i <= maxSamePushes; i++ {
+		if n.repeating(lora) {
+			t.Fatalf("push %d held back", i)
+		}
+	}
+	if !n.repeating(lora) || n.SettingsProblem() != "doesn't keep Lora config" {
+		t.Fatalf("a push the node never keeps went out again: %q", n.SettingsProblem())
+	}
+	// Different settings go out again, and a node that has them all is fine.
+	other := []*pb.AdminMessage{{PayloadVariant: &pb.AdminMessage_SetOwner{SetOwner: &pb.User{LongName: "x"}}}}
+	if n.repeating(other) || n.SettingsProblem() != "" {
+		t.Fatal("new settings held back")
+	}
+	n.settled()
+	if n.SettingsProblem() != "" {
+		t.Fatal("problem left after settling")
+	}
+}

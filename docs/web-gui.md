@@ -43,7 +43,7 @@ many open tabs don't use up the browser's connections to the host, and catches u
 | **Links** | UDP multicast and each MQTT connection's state and counters |
 | **Configuration** | Radios, Relay, Airtime & duty, Position & hardware, MQTT, Web & API tokens, meshtasticd, Backup & restore |
 | **Plugins** | Install, attach, enable and configure plugins; their status, log and panel; **Send limits** for every plugin ([Plugins](plugins.md)) |
-| **Logs** | The daemon's log, live |
+| **Logs** | The daemon's log, live, each line labelled with its radio and identity (filter by either). Each meshtasticd's own output is under Configuration → meshtasticd → Log |
 
 ## Common jobs
 

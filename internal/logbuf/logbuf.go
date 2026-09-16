@@ -14,6 +14,9 @@ type Entry struct {
 	Time  int64  `json:"time"`
 	Level string `json:"level"`
 	Msg   string `json:"msg"`
+	// Radio and Identity say which radio and identity (node ID) a line is about, when it is.
+	Radio    string `json:"radio,omitempty"`
+	Identity string `json:"identity,omitempty"`
 }
 
 // Buffer is a ring of log entries with subscribers.
@@ -81,7 +84,17 @@ func (h *Handler) Enabled(ctx context.Context, l slog.Level) bool { return h.nex
 func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	var sb strings.Builder
 	sb.WriteString(r.Message)
+	e := Entry{Level: strings.ToLower(r.Level.String())}
 	write := func(a slog.Attr) bool {
+		// Radio and identity get their own fields (the last one given wins).
+		switch v := a.Value.String(); a.Key {
+		case "radio":
+			e.Radio = v
+			return true
+		case "identity":
+			e.Identity = v
+			return true
+		}
 		fmt.Fprintf(&sb, " %s=%v", a.Key, a.Value.Any())
 		return true
 	}
@@ -93,7 +106,8 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	if t.IsZero() {
 		t = time.Now()
 	}
-	h.buf.add(Entry{Time: t.UnixMilli(), Level: strings.ToLower(r.Level.String()), Msg: sb.String()})
+	e.Time, e.Msg = t.UnixMilli(), sb.String()
+	h.buf.add(e)
 	return h.next.Handle(ctx, r)
 }
 

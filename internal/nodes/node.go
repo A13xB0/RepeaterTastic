@@ -38,6 +38,11 @@ type Node struct {
 	seed      *mesh.IdentityRecord
 	seedTries int // key pushes that didn't take, in a row
 	pushTries int // settings pushes that failed, in a row
+	// lastPush and samePushes catch a node that comes back without the settings it was given;
+	// stuck says which (see repeating).
+	lastPush   string
+	samePushes int
+	stuck      string
 	// extra adds settings a node needs for its part (a board's MQTT proxy), in the same edit.
 	extra func(mtclient.Snapshot) []*pb.AdminMessage
 	// hopsBehind is how far the node is from the air (1 behind a board): its hop limit is that much

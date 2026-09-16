@@ -561,7 +561,7 @@ connections are edited through `PUT /config`.
 | `GET /tokens` | → `[{"id", "name", "created_at", "last_used"}]` (`last_used` is `null` or a time, updated at most hourly) |
 | `POST /tokens` | `{"name"}` → 201 `{"id", "name", "token", "created_at", "last_used": null}` |
 | `DELETE /tokens/{id}` | → 204, or 404 |
-| `GET /logs?limit=` | → `[{"time", "level", "msg"}]`, `limit` 1-2000 (default 500) |
+| `GET /logs?limit=` | → `[{"time", "level", "msg", "radio", "identity"}]`, `limit` 1-2000 (default 500); `radio` and `identity` (a node ID) say what the line is about, when it's about one |
 | `GET /backup` | → the backup file |
 | `POST /restore` | the backup file → `{"restart_required": true}` |
 

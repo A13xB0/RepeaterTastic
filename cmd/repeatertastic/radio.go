@@ -83,7 +83,7 @@ func openRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (ra
 	case nodes.BoardDriver:
 		// A board on Meshtastic firmware: it is the radio's relay, and the identities reach the air
 		// through its MQTT client proxy, a hop behind.
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.ID) }
+		logf := logfFor(log)
 		board, err := nodes.OpenBoard(ctx, rc.Radio.Device, filepath.Join(rc.StateDir, "board"), logf)
 		if err != nil {
 			return nil, nil, err
@@ -92,7 +92,7 @@ func openRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (ra
 	case "kiss", "spi":
 		// One lazy radio for both drivers, so first-time setup can switch driver as well as device
 		// before anything has opened (see web.followUnopenedDevices).
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.Radio.Driver) }
+		logf := logfFor(log.With("driver", rc.Radio.Driver))
 		open := modemOpener(rc.Radio.Baud, log)
 		return lazy.New(open, radio.Info{Driver: rc.Radio.Driver, Device: rc.Radio.Device}, 5*time.Second, logf), nil, nil
 	default:
@@ -105,7 +105,7 @@ func openRadio(ctx context.Context, rc config.RadioConfig, log *slog.Logger) (ra
 func modemOpener(baud int, log *slog.Logger) func(ctx context.Context, driver, device string) (radio.Radio, error) {
 	var logged string // the board last described, so retries don't repeat it
 	return func(ctx context.Context, driver, device string) (radio.Radio, error) {
-		logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", driver) }
+		logf := logfFor(log.With("driver", driver))
 		if driver != "spi" {
 			return kiss.Open(ctx, kiss.Options{Device: device, Baud: baud, Logf: logf})
 		}
@@ -271,12 +271,13 @@ func newUniqueIdentity(host *mesh.Host, long, short string) (*mesh.Identity, err
 func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *mesh.Host, relay *nodes.Node, log *slog.Logger) *nodes.Hosting {
 	hc := rc.Hosted
 	l := nodes.LauncherFor(hc.Meshtasticd, hc.DockerImage)
-	logf := func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...), "radio", rc.ID) }
+	logf := logfFor(log)
 	relayLong, relayShort := rc.Relay.LongName, rc.Relay.ShortName
 	air := nodes.NewLoRaAir(host, logf).WithRelay(relay)
 	opts := nodes.HostingOptions{Launcher: l, Air: air, Radio: rc.ID,
 		Dir: filepath.Join(rc.StateDir, "hosted"), PortBase: hc.RadioPortBase(index),
-		RelayOwner: func() (string, string) { return relayLong, relayShort }, Logf: logf}
+		RelayOwner: func() (string, string) { return relayLong, relayShort }, Logf: logf,
+		NodeLogf: func(nodeID string) func(string, ...any) { return logfFor(log.With("identity", nodeID)) }}
 	if relay != nil {
 		opts.HopsBehind = 1
 	}
@@ -293,4 +294,23 @@ func startHosting(ctx context.Context, rc config.RadioConfig, index int, host *m
 			"behind_board", relay != nil, "ports_from", hc.RadioPortBase(index))
 	}
 	return x
+}
+
+// logfFor adapts a logger to the printf-style logging of the radio and node packages. A message
+// marked "ERROR " or "WARN " (after its "component: " prefix) is logged at that level; lines
+// meshtasticd printed as errors are warnings here.
+func logfFor(l *slog.Logger) func(string, ...any) {
+	return func(f string, a ...any) {
+		msg := fmt.Sprintf(f, a...)
+		level := slog.LevelInfo
+		switch {
+		case strings.Contains(msg, ": ERROR "):
+			level, msg = slog.LevelError, strings.Replace(msg, ": ERROR ", ": ", 1)
+		case strings.Contains(msg, ": WARN "):
+			level, msg = slog.LevelWarn, strings.Replace(msg, ": WARN ", ": ", 1)
+		case strings.Contains(msg, "ERROR |") || strings.Contains(msg, "CRIT |"):
+			level = slog.LevelWarn
+		}
+		l.Log(context.Background(), level, msg)
+	}
 }

@@ -357,7 +357,8 @@ type Manager struct {
 
 	mu      sync.Mutex
 	servers map[uint32]*managed
-	runCtx  context.Context // Run's context: servers live as long as the manager, never a request
+	failed  map[uint32]string // the last error starting each identity's server, logged once
+	runCtx  context.Context   // Run's context: servers live as long as the manager, never a request
 }
 
 type managed struct {
@@ -368,7 +369,7 @@ type managed struct {
 }
 
 func NewManager(h *mesh.Host, log *slog.Logger) *Manager {
-	return &Manager{host: h, log: log, servers: map[uint32]*managed{}}
+	return &Manager{host: h, log: log, servers: map[uint32]*managed{}, failed: map[uint32]string{}}
 }
 
 // Run syncs servers now and whenever an identity changes.
@@ -440,9 +441,13 @@ func (m *Manager) Sync(ctx context.Context) {
 		if err != nil {
 			cancel()
 			ms.srv, ms.err = nil, err.Error()
-			m.log.Error("client API not started", "identity", byNum[num].NodeID(), "addr", addr, "err", err)
+			if m.failed[num] != ms.err {
+				m.failed[num] = ms.err
+				m.log.Error("client API not started; retrying quietly", "identity", byNum[num].NodeID(), "addr", addr, "err", err)
+			}
 			continue // retried on the next sync
 		}
+		delete(m.failed, num)
 		m.log.Info("client API listening", "identity", byNum[num].NodeID(), "addr", addr)
 		m.servers[num] = ms
 	}
