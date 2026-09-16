@@ -8,6 +8,7 @@ import {
 import Logo from '@/components/ui/Logo.vue'
 import Sparkline from '@/components/charts/Sparkline.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
+import AppFooter from '@/components/layout/AppFooter.vue'
 import { live } from '@/store/live'
 import { MAIN_RADIO, setToken } from '@/api/client'
 import { num, uptime } from '@/lib/format'
@@ -164,12 +165,15 @@ function logout() {
         </div>
       </nav>
 
-      <div class="flex items-center gap-2 border-t border-line-soft px-4 py-3">
-        <div class="min-w-0 flex-1 text-2xs leading-snug text-ink-3">
-          <div>RepeaterTastic <span class="tabular-nums">v{{ (live.status?.version ?? '…').replace(/^v/, '') }}</span></div>
-          <div>UI layout after openHop (MIT)</div>
+      <div class="border-t border-line-soft px-4 py-3">
+        <div class="flex items-center gap-2">
+          <div class="min-w-0 flex-1 text-2xs leading-snug text-ink-3">
+            <div>RepeaterTastic <span class="tabular-nums">v{{ (live.status?.version ?? '…').replace(/^v/, '') }}</span></div>
+            <div>UI layout after openHop (MIT)</div>
+          </div>
+          <button type="button" class="btn btn-sm btn-ghost" title="Sign out" @click="logout"><LogOut class="size-4" />Sign out</button>
         </div>
-        <button type="button" class="btn btn-sm btn-ghost" title="Sign out" @click="logout"><LogOut class="size-4" />Sign out</button>
+        <AppFooter class="mt-2.5 border-t border-line-soft pt-2.5" />
       </div>
     </div>
   </aside>
