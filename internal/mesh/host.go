@@ -247,8 +247,8 @@ type Host struct {
 	tapMu  sync.RWMutex
 	taps   []AirTap
 
-	appliers []ConfigApplier  // under cfgMu
-	kept     []IdentityRecord // saved identities not running here (the relay persona while it is hosted); under mu
+	appliers []ConfigApplier // under cfgMu
+	hoster   Hoster          // runs identities as real nodes (nil = all here); under mu
 	links    []Link
 
 	started       time.Time
@@ -796,23 +796,12 @@ func (h *Host) SaveIdentities() error {
 	}
 	var recs []IdentityRecord
 	for _, id := range h.Identities() {
-		if id.Remote() != nil {
+		if id.Remote() != nil && !id.Hosted() {
 			continue // a real node keeps its own identity
 		}
 		recs = append(recs, id.Record())
 	}
-	h.mu.RLock()
-	recs = append(recs, h.kept...)
-	h.mu.RUnlock()
 	return writeJSONAtomic(filepath.Join(h.stateDir, "identities.json"), recs)
-}
-
-// KeepRecord keeps a saved identity that isn't running (a relay persona replaced by a hosted
-// node) so SaveIdentities writes it back.
-func (h *Host) KeepRecord(r IdentityRecord) {
-	h.mu.Lock()
-	h.kept = append(h.kept, r)
-	h.mu.Unlock()
 }
 
 // LoadIdentityRecords reads identities saved by SaveIdentities.
@@ -849,16 +838,37 @@ func (h *Host) AddConfigApplier(ca ConfigApplier) {
 	h.cfgMu.Unlock()
 }
 
+// RemoveConfigApplier forgets a node registered with AddConfigApplier.
+func (h *Host) RemoveConfigApplier(ca ConfigApplier) {
+	h.cfgMu.Lock()
+	defer h.cfgMu.Unlock()
+	for i, x := range h.appliers {
+		if x == ca {
+			h.appliers = append(h.appliers[:i], h.appliers[i+1:]...)
+			return
+		}
+	}
+}
+
 // PushConfig hands the current settings to every registered node.
 func (h *Host) PushConfig(ctx context.Context) error {
 	h.cfgMu.RLock()
 	all := append([]ConfigApplier(nil), h.appliers...)
 	h.cfgMu.RUnlock()
 	cfg := h.Config()
-	for _, ca := range all {
-		if err := ca.ApplyConfig(ctx, cfg); err != nil {
-			return fmt.Errorf("settings saved but the node didn't take them: %w", err)
-		}
+	// Nodes that reboot take a few seconds each: push to them all at once.
+	errs := make([]error, len(all))
+	var wg sync.WaitGroup
+	for i, ca := range all {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = ca.ApplyConfig(ctx, cfg)
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("settings saved but a node didn't take them: %w", err)
 	}
 	return nil
 }

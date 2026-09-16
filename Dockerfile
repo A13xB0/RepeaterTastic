@@ -23,6 +23,26 @@ RUN --mount=type=secret,id=map_api_key \
 # distroless has no shell to chown a volume with: prepare /data here, owned by nonroot (65532).
 RUN mkdir -p /data && chown 65532:65532 /data
 
+# With meshtasticd (experimental): the relay and identities run as real Meshtastic nodes, the
+# installed launcher starting meshtasticd in this container. Build it with
+#   docker build --target meshtasticd -t repeatertastic:meshtasticd .
+# and set hosted.persona (and hosted.identities) with hosted.meshtasticd left empty. The release
+# builds only the default image below.
+FROM meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian AS meshtasticd
+RUN useradd --system --uid 65532 --home-dir /data --shell /usr/sbin/nologin repeatertastic && \
+    usermod -aG dialout repeatertastic
+COPY --from=build /out/repeatertastic /usr/local/bin/repeatertastic
+COPY --from=build /out/kisstool /usr/local/bin/kisstool
+COPY --from=build --chown=65532:65532 /data /data
+ENV REPEATERTASTIC_CONFIG=/data/repeatertastic.yaml \
+    REPEATERTASTIC_STATE_DIR=/data
+USER repeatertastic
+VOLUME /data
+# 8080 web GUI and API; 4403+ app ports; 4500-4599 the meshtasticd API ports (keep them private).
+EXPOSE 8080 4403
+HEALTHCHECK --interval=60s --timeout=5s --start-period=20s CMD ["/usr/local/bin/repeatertastic", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/repeatertastic"]
+
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/repeatertastic /repeatertastic
 COPY --from=build /out/kisstool /kisstool

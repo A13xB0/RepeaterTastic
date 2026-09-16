@@ -20,6 +20,12 @@ import (
 // Two simulated radios (LongFast main + MediumFast extra) behind one web server.
 func testWebTwoRadios(t *testing.T) *httptest.Server {
 	t.Helper()
+	srv, _ := testWebTwoRadiosHosts(t)
+	return srv
+}
+
+func testWebTwoRadiosHosts(t *testing.T) (*httptest.Server, []*mesh.Host) {
+	t.Helper()
 	cfg := config.Default()
 	cfg.StateDir = t.TempDir()
 	cfg.Radio.Driver = "none"
@@ -63,7 +69,7 @@ func testWebTwoRadios(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, hosts
 }
 
 func TestTwoRadiosRouteByRadioAndIdentity(t *testing.T) {

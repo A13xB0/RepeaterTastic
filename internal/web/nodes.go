@@ -54,7 +54,7 @@ func (s *Server) getHosted(w http.ResponseWriter, r *http.Request) {
 	if inst == nil {
 		inst = []HostedInstance{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"persona": hc.Persona, "meshtasticd": hc.Meshtasticd, "docker_image": hc.DockerImage,
+	writeJSON(w, http.StatusOK, map[string]any{"persona": hc.Persona, "identities": hc.Identities, "meshtasticd": hc.Meshtasticd, "docker_image": hc.DockerImage,
 		"port_base": hc.HostedPortBase(), "min_version": nodes.MinFirmware, "instances": inst,
 		"restart_required": len(s.restartReasons()) > 0})
 }
@@ -94,7 +94,7 @@ func (s *Server) putHosted(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.log.Info("hosted meshtasticd settings changed", "persona", req.Persona, "docker_image", req.DockerImage)
+	s.log.Info("hosted meshtasticd settings changed", "persona", req.Persona, "identities", req.Identities, "docker_image", req.DockerImage)
 	s.getHosted(w, r)
 }
 

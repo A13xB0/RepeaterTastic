@@ -139,6 +139,9 @@ func (a *LoRaAir) serve(ctx context.Context, node *Node) {
 			case mtclient.Received:
 				p := e.FromRadio.GetPacket()
 				if p.GetDecoded().GetPortnum() == pb.PortNum_SIMULATOR_APP && p.GetRxRssi() == 0 && p.GetRxSnr() == 0 {
+					if !node.OnAir() {
+						continue // not yet the node it stands for
+					}
 					if err := a.transmit(n, p); err != nil {
 						a.logf("air: %s: frame not sent: %v", wire.NodeID(n.num), err)
 					}

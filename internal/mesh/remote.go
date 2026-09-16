@@ -41,6 +41,43 @@ func NewRemoteIdentity(r Remote, st RemoteState) (*Identity, error) {
 	return id, nil
 }
 
+// NewHostedIdentity creates the identity for a node RepeaterTastic runs from a saved record: the
+// record's key (which the node is given) and the settings the host keeps (app port, hop limit,
+// position, airtime share) come from rec, the names and channels from the node.
+func NewHostedIdentity(r Remote, st RemoteState, rec IdentityRecord) (*Identity, error) {
+	id, err := NewRemoteIdentity(r, st)
+	if err != nil {
+		return nil, err
+	}
+	priv, err := rec.Key()
+	if err != nil {
+		return nil, err
+	}
+	id.PrivateKey = priv
+	id.applyRecordSettings(rec)
+	return id, nil
+}
+
+// RecordState is what a node seeded from rec looks like before it first answers.
+func RecordState(rec IdentityRecord) (RemoteState, error) {
+	id, err := IdentityFromRecord(rec)
+	if err != nil {
+		return RemoteState{}, err
+	}
+	st := RemoteState{NodeNum: id.NodeNum, User: id.UserCopy()}
+	for i := range id.Channels {
+		st.Channels = append(st.Channels, id.ChannelCopy(i))
+	}
+	return st, nil
+}
+
+// Hosted reports whether the identity is a node RepeaterTastic runs and holds the key of.
+func (id *Identity) Hosted() bool {
+	id.mu.RLock()
+	defer id.mu.RUnlock()
+	return id.remote != nil && len(id.PrivateKey) == 32
+}
+
 // Remote returns the node an identity stands for, or nil for a virtual identity.
 func (id *Identity) Remote() Remote {
 	id.mu.RLock()

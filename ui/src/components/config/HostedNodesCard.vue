@@ -14,12 +14,14 @@ const binary = ref('')
 const image = ref('meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian')
 const portBase = ref(4500)
 const persona = ref(false)
+const identities = ref(false)
 const busy = ref(false)
 const error = ref('')
 
 function load(s: HostedSettings) {
   state.value = s
   persona.value = s.persona
+  identities.value = s.identities
   via.value = s.docker_image ? 'docker' : 'exec'
   binary.value = s.meshtasticd
   if (s.docker_image) image.value = s.docker_image
@@ -40,6 +42,7 @@ async function save() {
   try {
     const s = await api.put<HostedSettings>('/hosted', {
       persona: persona.value,
+      identities: persona.value && identities.value,
       meshtasticd: via.value === 'exec' ? binary.value : '',
       docker_image: via.value === 'docker' ? image.value : '',
       port_base: portBase.value,
@@ -66,12 +69,25 @@ async function save() {
         </div>
         <p class="mt-1 text-xs text-ink-3">
           Each modem or HAT radio's relay runs as a real Meshtastic node: a meshtasticd {{ state.min_version }}+ on a simulated radio, still transmitting on this radio at zero hops.
-          Takes effect at the next restart. Your identities stay in RepeaterTastic for now.
+          It keeps its saved key, so its node number stays the same. Takes effect at the next restart.
         </p>
       </div>
       <Toggle :model-value="persona" :disabled="busy" label="Relay persona on meshtasticd" @update:model-value="persona = $event" />
     </div>
     <div v-if="persona" class="mt-3 space-y-3">
+      <div class="flex items-start justify-between gap-4 border-t border-line-soft pt-3">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2 text-[13px] font-medium">
+            Identities on meshtasticd too
+            <span :class="['chip', state.identities ? 'bg-ok/14 text-ok' : 'bg-ink-3/12 text-ink-3']">{{ state.identities ? 'on' : 'off' }}</span>
+          </div>
+          <p class="mt-1 text-xs text-ink-3">
+            Every identity becomes a meshtasticd of its own, with its saved key: node numbers, channels and chats stay. Each keeps its app port.
+            Identities routed across radios stay in RepeaterTastic, and hosted identities can only take roles that never repeat.
+          </p>
+        </div>
+        <Toggle :model-value="identities" :disabled="busy" label="Identities on meshtasticd" @update:model-value="identities = $event" />
+      </div>
       <div class="flex flex-wrap items-center gap-2">
         <div class="seg" role="group" aria-label="How to run meshtasticd">
           <button type="button" :aria-pressed="via === 'exec'" @click="via = 'exec'">Installed</button>
@@ -85,7 +101,7 @@ async function save() {
           <label class="label" for="hosted-port">API ports from</label>
           <input id="hosted-port" v-model.number="portBase" type="number" min="1024" max="64000" class="input h-8 w-28 text-xs" />
         </div>
-        <p class="hint mb-1 flex-1"><template v-if="via === 'exec'">meshtasticd listens on every interface: firewall ports {{ portBase }} onwards on a shared network, or use Docker.</template><template v-else>Docker keeps the ports on this machine.</template></p>
+        <p class="hint mb-1 flex-1"><template v-if="via === 'exec'">meshtasticd listens on every interface: firewall ports {{ portBase }}–{{ portBase + 99 }} (100 per radio) on a shared network, or use Docker.</template><template v-else>Docker keeps the ports on this machine.</template></p>
       </div>
     </div>
     <div v-if="state.instances.length" class="scroll-thin mt-3 overflow-x-auto rounded-lg border border-line-soft">
@@ -93,7 +109,7 @@ async function save() {
         <thead><tr><th>Node</th><th>Radio</th><th>meshtasticd</th><th>Port</th><th>State</th></tr></thead>
         <tbody>
           <tr v-for="x in state.instances" :key="x.name">
-            <td><span class="font-medium">{{ x.role === 'persona' ? 'Relay persona' : x.name }}</span> <span class="mono text-ink-3">{{ x.node_id }}</span></td>
+            <td><span class="font-medium">{{ x.role === 'persona' ? 'Relay persona' : 'Identity' }}</span> <span class="mono text-ink-3">{{ x.node_id }}</span></td>
             <td>{{ x.radio }}</td>
             <td :title="x.launcher">{{ x.firmware || '—' }} <span class="text-ink-3">· {{ x.launcher.startsWith('docker ') ? 'Docker' : 'installed' }}</span></td>
             <td class="mono">{{ x.port }}</td>

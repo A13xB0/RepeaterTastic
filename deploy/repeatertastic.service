@@ -4,11 +4,18 @@ Documentation=https://github.com/ScotMesh/RepeaterTastic
 After=network-online.target
 Wants=network-online.target
 
+# Hosted nodes (hosted.persona / hosted.identities, experimental): RepeaterTastic starts its own
+# meshtasticd instances, so install the meshtasticd package (2.8.0 or newer) but keep its own
+# service off, or it takes the radio and port 4403:
+#   systemctl disable --now meshtasticd
+# To run them in Docker instead (hosted.docker_image), add the docker group below.
+
 [Service]
 Type=simple
 User=repeatertastic
 Group=repeatertastic
 SupplementaryGroups=dialout
+# SupplementaryGroups=dialout docker
 ExecStart=/usr/local/bin/repeatertastic -config /etc/repeatertastic/repeatertastic.yaml
 Restart=on-failure
 RestartSec=5

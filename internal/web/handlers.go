@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -306,7 +307,7 @@ func (s *Server) identityJSON(id *mesh.Identity) map[string]any {
 	return map[string]any{
 		"node_id": id.NodeID(), "node_num": id.NodeNum, "long_name": u.LongName, "short_name": u.ShortName,
 		"role": u.Role.String(), "hw_model": rc.host.Hardware().String(), "public_key": base64.StdEncoding.EncodeToString(id.PublicKey),
-		"is_relay": id.IsRelay, "real_node": id.Remote() != nil, "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
+		"is_relay": id.IsRelay, "real_node": id.Remote() != nil, "hosted": id.Hosted(), "enabled": id.Enabled, "api": api, "outbox": id.BacklogLen(),
 		"airtime_ms_1h": mine, "share_pct": share, "created_at": id.CreatedAt.UnixMilli(), "channels": chans,
 		"last_byte": wire.LastByte(id.NodeNum), "share_limit_pct": s.shareLimit(id), "hop_limit": id.MaxHops(),
 		"position": identityPositionJSON(id), "position_secs": id.PositionInterval(),
@@ -487,13 +488,22 @@ func (s *Server) createIdentity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := host.AddIdentity(id); err != nil {
+	rec := id.Record()
+	if hs := host.Hoster(); hs != nil && hs.Takes(rec) && !nodes.IdentityRoleAllowed(id.UserCopy().GetRole()) {
+		writeError(w, http.StatusBadRequest, hostedRoleError)
+		return
+	}
+	id, err = host.AddRecord(r.Context(), rec)
+	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	s.saveIdentities()
 	writeJSON(w, http.StatusCreated, s.identityJSON(id))
 }
+
+// hostedRoleError explains the roles an identity on meshtasticd can have.
+const hostedRoleError = "an identity on meshtasticd never repeats: its role must be CLIENT_MUTE, TRACKER, SENSOR or TAK_TRACKER"
 
 // radioHolding is the radio an identity with that node number is on, or nil.
 func (s *Server) radioHolding(num uint32) *radioCtx {
@@ -538,7 +548,12 @@ func (s *Server) moveIdentity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := from.host.RemoveIdentity(id.NodeNum); err != nil {
+	rec := id.Record()
+	if hs := to.host.Hoster(); hs != nil && hs.Takes(rec) && !nodes.IdentityRoleAllowed(id.UserCopy().GetRole()) {
+		writeError(w, http.StatusConflict, hostedRoleError+"; change its role before moving it to "+to.name)
+		return
+	}
+	if err := from.host.DropIdentity(id.NodeNum); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -550,8 +565,9 @@ func (s *Server) moveIdentity(w http.ResponseWriter, r *http.Request) {
 		dropped += orc.host.DropOutgoing(id.NodeNum, "moved to "+to.name+" before it was sent")
 	}
 	msgs, read := from.host.Messages.Take(id.NodeNum)
-	if err := to.host.AddIdentity(id); err != nil {
-		_ = from.host.AddIdentity(id) // put it back as it was
+	moved, err := to.host.AddRecord(r.Context(), rec) // on meshtasticd if that radio hosts it
+	if err != nil {
+		_, _ = from.host.AddRecord(r.Context(), rec) // put it back as it was
 		from.host.Messages.Put(id.NodeNum, msgs, read)
 		if from.api != nil {
 			from.api.SyncNow()
@@ -559,6 +575,7 @@ func (s *Server) moveIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	id = moved
 	to.host.Messages.Put(id.NodeNum, msgs, read)
 	if mr := id.MultiRadio(); mr != nil { // what was on the old home follows it to the new one
 		if mr.DefaultRadio == to.id {
@@ -615,10 +632,19 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 	// Check everything first, so a request is applied completely or not at all.
 	bad := func(code int, msg string) { writeError(w, code, msg) }
 	if req.Role != nil && !id.IsRelay {
-		if _, ok := pb.Config_DeviceConfig_Role_value[strings.ToUpper(*req.Role)]; !ok {
+		v, ok := pb.Config_DeviceConfig_Role_value[strings.ToUpper(*req.Role)]
+		if !ok {
 			bad(http.StatusBadRequest, fmt.Sprintf("unknown role %q", *req.Role))
 			return
 		}
+		if id.Hosted() && !nodes.IdentityRoleAllowed(pb.Config_DeviceConfig_Role(v)) {
+			bad(http.StatusBadRequest, hostedRoleError)
+			return
+		}
+	}
+	if id.Hosted() && len(req.MultiRadio) > 0 && string(req.MultiRadio) != "null" {
+		bad(http.StatusConflict, "an identity on meshtasticd has one radio, so it can't be routed across radios")
+		return
 	}
 	var pos *mesh.IdentityPosition
 	if len(req.Position) > 0 && string(req.Position) != "null" {
@@ -718,6 +744,7 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 		id.SetMultiRadio(mr)
 		s.opt.Federation.Changed()
 	}
+	nodeSettings := req.Role != nil || req.Enabled != nil || req.HopLimit != nil || len(req.Position) > 0 || req.PosSecs != nil
 	id.SetSettings(func(x *mesh.IdentitySettings) {
 		if req.Enabled != nil && !id.IsRelay {
 			x.Enabled = *req.Enabled
@@ -736,6 +763,15 @@ func (s *Server) patchIdentity(w http.ResponseWriter, r *http.Request) {
 	s.hostFor(r).ChannelsChanged()
 	s.hostFor(r).Bus.Publish(mesh.Event{Type: "identity", Data: id.NodeID()})
 	s.saveIdentities()
+	if ca, ok := id.Remote().(mesh.ConfigApplier); ok && nodeSettings && id.Hosted() {
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		err := ca.ApplyConfig(ctx, s.hostFor(r).Config())
+		cancel()
+		if err != nil {
+			bad(http.StatusBadGateway, "saved here, but meshtasticd didn't take the settings: "+err.Error())
+			return
+		}
+	}
 	if (long != "" || short != "") && id.Remote() == nil { // a node announces its new name itself
 		s.hostFor(r).RequestNodeInfo(id, wire.Broadcast)
 	}
@@ -747,7 +783,7 @@ func (s *Server) deleteIdentity(w http.ResponseWriter, r *http.Request) {
 	if id == nil {
 		return
 	}
-	if err := s.hostFor(r).RemoveIdentity(id.NodeNum); err != nil {
+	if err := s.hostFor(r).DropIdentity(id.NodeNum); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -760,8 +796,8 @@ func (s *Server) getKey(w http.ResponseWriter, r *http.Request) {
 	if id == nil {
 		return
 	}
-	if id.Remote() != nil {
-		writeError(w, http.StatusNotFound, "this identity runs on meshtasticd, which keeps its own private key")
+	if len(id.PrivateKey) != 32 {
+		writeError(w, http.StatusNotFound, "this node keeps its own private key")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"private_key": base64.StdEncoding.EncodeToString(id.PrivateKey),

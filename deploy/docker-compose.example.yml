@@ -26,5 +26,10 @@ services:
     volumes:
       - repeatertastic-data:/data     # config, identity keys and chats: back this up
 
+  # Experimental: relay and identities as real Meshtastic nodes. Build the image with meshtasticd
+  # (docker build --target meshtasticd -t repeatertastic:meshtasticd ..) and use it instead:
+  #   image: repeatertastic:meshtasticd
+  # then set hosted.persona and hosted.identities in the GUI (Configuration → Experimental).
+
 volumes:
   repeatertastic-data:

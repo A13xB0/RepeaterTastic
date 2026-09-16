@@ -225,8 +225,12 @@ Without a supervisor it stays stopped.
 ```
 
 - The relay persona is included, with `"is_relay": true` and `"api": null`.
-- `"real_node": true` marks an identity that runs on meshtasticd (a hosted node): its names and
-  channels are written to it, and `GET …/key` answers 404 because the key stays with meshtasticd.
+- `"real_node": true` marks an identity that runs on meshtasticd: its names, channels and settings
+  are written to it. `"hosted": true` means RepeaterTastic started that meshtasticd and keeps its
+  key, so `GET …/key` answers as usual.
+- A hosted identity's `role` must be `CLIENT_MUTE`, `TRACKER`, `SENSOR` or `TAK_TRACKER` (400
+  otherwise, on create and on `PATCH`), and `multi_radio` can't be set on it (409). Creating,
+  moving and deleting start and stop its meshtasticd.
 - `share_pct` is this identity's part of the radio's transmit time in the last hour. `share_limit_pct`
   is its own limit, or `airtime.identity_share_percent`. `unread` counts unread browser-chat messages.
 - `position` is the identity's own fixed position `{"latitude", "longitude", "altitude"}`, or `null`
@@ -538,17 +542,18 @@ connections are edited through `PUT /config`.
 
 ## Experimental: hosted nodes
 
-The relay persona of each modem or HAT radio can run on meshtasticd
+The relay persona of each modem or HAT radio, and its identities, can run on meshtasticd
 ([Real Meshtastic nodes](meshtasticd-nodes.md)).
 
 | Method and path | Body → response |
 | --- | --- |
-| `GET /hosted` | → `{"persona", "meshtasticd", "docker_image", "port_base", "min_version", "instances", "restart_required"}` |
-| `PUT /hosted` | `{"persona", "meshtasticd", "docker_image", "port_base"}` → the same as `GET` (applies at restart) |
+| `GET /hosted` | → `{"persona", "identities", "meshtasticd", "docker_image", "port_base", "min_version", "instances", "restart_required"}` |
+| `PUT /hosted` | `{"persona", "identities", "meshtasticd", "docker_image", "port_base"}` → the same as `GET` (applies at restart) |
 
 - `instances` are the meshtasticd processes running now: `{"radio", "role", "name", "launcher",
   "port", "running", "connected", "restarts", "last_error", "firmware", "node_id", "log"}`, with
-  `log` the last lines meshtasticd printed.
+  `log` the last lines meshtasticd printed. `role` is `persona` or `identity`.
+- `identities: true` needs `persona: true` (400 otherwise).
 - `PUT /hosted` with `persona: true` checks meshtasticd first and answers 400 when it can't run or
   is older than `min_version`. `meshtasticd` must name a meshtasticd program (`""` = the one on
   `PATH`); `docker_image`, when set, runs it in Docker instead.

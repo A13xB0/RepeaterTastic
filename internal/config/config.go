@@ -116,15 +116,23 @@ type Hosted struct {
 	// Persona runs each modem or HAT radio's relay persona as a hosted meshtasticd, sharing the radio
 	// through the air bridge. Board radios keep the board as their persona.
 	Persona bool `yaml:"persona,omitempty" json:"persona"`
+	// Identities runs every other identity as a hosted meshtasticd too, with its saved key, so it
+	// keeps its node number, channels and chats. Needs Persona. Identities routed across radios
+	// (experimental) stay in RepeaterTastic.
+	Identities bool `yaml:"identities,omitempty" json:"identities"`
 	// Meshtasticd is the binary to run ("" = meshtasticd on PATH). It needs version 2.8 or newer.
 	Meshtasticd string `yaml:"meshtasticd,omitempty" json:"meshtasticd"`
 	// DockerImage runs the instances in Docker from this image instead (API published on
 	// 127.0.0.1 only), e.g. meshtastic/meshtasticd:2.8.0.47db0e3-alpha-debian.
 	DockerImage string `yaml:"docker_image,omitempty" json:"docker_image"`
 	// PortBase is the first client API port for hosted nodes (default 4500); radio n (0 = main)
-	// uses PortBase + 20·n onwards. meshtasticd listens on every interface when run directly.
+	// uses the block of 100 from PortBase + 100·n: its persona first, then its identities.
+	// meshtasticd listens on every interface when run directly.
 	PortBase int `yaml:"port_base,omitempty" json:"port_base"`
 }
+
+// RadioPortBase is the first client API port of radio index n's hosted nodes.
+func (h Hosted) RadioPortBase(n int) int { return h.HostedPortBase() + 100*n }
 
 // HostedPortBase is Hosted.PortBase with its default.
 func (h Hosted) HostedPortBase() int {
@@ -658,6 +666,12 @@ func (c *Config) validateOne() error {
 	}
 	if pb := c.Hosted.PortBase; pb != 0 && (pb < 1024 || pb > 64000) {
 		return errors.New("hosted.port_base must be between 1024 and 64000")
+	}
+	if c.Hosted.RadioPortBase(len(c.Radios)+1) > 65536 {
+		return errors.New("hosted.port_base is too high for this many radios (each takes 100 ports)")
+	}
+	if c.Hosted.Identities && !c.Hosted.Persona {
+		return errors.New("hosted.identities needs hosted.persona: identities join the air the persona's radio gives")
 	}
 	if b := c.Hosted.Meshtasticd; b != "" && filepath.Base(b) != "meshtasticd" {
 		return errors.New("hosted.meshtasticd must be a meshtasticd program (a path ending in /meshtasticd)")
