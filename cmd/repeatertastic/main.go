@@ -33,6 +33,9 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
 	"github.com/ScotMesh/RepeaterTastic/internal/site"
 	"github.com/ScotMesh/RepeaterTastic/internal/web"
+
+	"github.com/ScotMesh/RepeaterTastic/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 var version = "dev"
@@ -312,6 +315,12 @@ func startRadio(ctx context.Context, rc config.RadioConfig, index int, log *slog
 	}
 	var relay *nodes.Node
 	if board != nil {
+		board.SetContacts(func(num uint32) *pb.User {
+			if e, ok := host.DB.Get(num); ok && e.User != nil {
+				return proto.Clone(e.User).(*pb.User)
+			}
+			return nil
+		})
 		relay = board.Node()
 		id, err := relay.Identity(ctx, 10*time.Second)
 		if err == nil {

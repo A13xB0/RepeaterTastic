@@ -40,6 +40,42 @@ type BoardRadio struct {
 	rx, tx, errs atomic.Uint32
 	closeOnce    sync.Once
 	stop         context.CancelFunc
+
+	// contact returns what the host knows of a node (nil = nothing): a board takes a direct message
+	// over MQTT only when it knows both ends.
+	contactMu sync.Mutex
+	contact   func(num uint32) *pb.User
+}
+
+// SetContacts gives the board a way to learn nodes the host knows.
+func (b *BoardRadio) SetContacts(fn func(num uint32) *pb.User) {
+	b.contactMu.Lock()
+	b.contact = fn
+	b.contactMu.Unlock()
+}
+
+// introduce adds a node to the board as a contact when the board hasn't heard of it.
+func (b *BoardRadio) introduce(ctx context.Context, s mtclient.Snapshot, num uint32) {
+	if _, known := s.Nodes[num]; known {
+		if len(s.Nodes[num].GetUser().GetPublicKey()) == 32 {
+			return
+		}
+	}
+	b.contactMu.Lock()
+	fn := b.contact
+	b.contactMu.Unlock()
+	if fn == nil {
+		return
+	}
+	u := fn(num)
+	if u == nil || len(u.GetPublicKey()) != 32 {
+		return
+	}
+	actx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, err := b.node.Admin(actx, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_AddContact{AddContact: &pb.SharedContact{NodeNum: num, User: u}}}); err != nil {
+		b.logf("board: contact %s not added: %v", wire.NodeID(num), err)
+	}
 }
 
 var _ radio.Radio = (*BoardRadio)(nil)
@@ -135,6 +171,9 @@ func (b *BoardRadio) Send(ctx context.Context, frame []byte) error {
 		return mtclient.ErrNotConnected
 	}
 	channel, ok := downlinkChannel(s, p)
+	if ok && channel == "PKI" {
+		b.introduce(ctx, s, p.To)
+	}
 	if !ok {
 		b.errs.Add(1)
 		return fmt.Errorf("board: it has no channel with hash %d", p.Channel)
@@ -247,6 +286,21 @@ func BoardSettings(s mtclient.Snapshot) []*pb.AdminMessage {
 		msgs = append(msgs, &pb.AdminMessage{PayloadVariant: &pb.AdminMessage_SetChannel{SetChannel: c}})
 	}
 	return msgs
+}
+
+// PrepareChannel sets what a board needs on a channel written to it: MQTT uplink and downlink,
+// so the identities behind it can use the channel.
+func (n *Node) PrepareChannel(ch *pb.Channel) {
+	n.mu.Lock()
+	board := n.extra != nil
+	n.mu.Unlock()
+	if !board || ch == nil || ch.Role == pb.Channel_DISABLED {
+		return
+	}
+	if ch.Settings == nil {
+		ch.Settings = &pb.ChannelSettings{}
+	}
+	ch.Settings.UplinkEnabled, ch.Settings.DownlinkEnabled = true, true
 }
 
 // Configure does nothing: the board's settings are written as the relay's (Node.ApplyConfig).

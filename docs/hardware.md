@@ -168,6 +168,11 @@ Picking its serial port in the wizard detects the firmware and switches to this 
   "via MQTT" and keeps that flag when it repeats it on air. Apps and other nodes show your
   identities' packets as sent via MQTT, and nodes with "ignore MQTT" set drop them. The board's own
   packets are unaffected. The GUI says so wherever a board radio is chosen or shown.
+- **No direct messages to identities.** Firmware 2.8.0 passes on only what it can read, and a
+  direct message for one of your identities is encrypted for that identity, so it never reaches
+  RepeaterTastic. Channel messages both ways and direct messages from your identities work (the
+  board is given the recipient as a contact first, since it only takes a direct message over MQTT
+  when it knows both ends). Messages between the board and an identity go over the air.
 - **The board must repeat.** A role like Client or Router works; Client mute or rebroadcast mode
   None keeps identities off the air.
 - **Its MQTT module is taken over.** RepeaterTastic turns on the client proxy with encryption,

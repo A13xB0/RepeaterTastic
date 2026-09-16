@@ -157,3 +157,18 @@ func TestHostedNodesBehindABoardGetAHopMore(t *testing.T) {
 		t.Fatalf("hop limit %d, want the radio's 4 plus 1", hl)
 	}
 }
+
+func TestBoardChannelsKeepTheProxy(t *testing.T) {
+	b := &BoardRadio{node: newNode("x", "", nil, nil)}
+	ch := &pb.Channel{Index: 1, Role: pb.Channel_SECONDARY, Settings: &pb.ChannelSettings{Name: "Ops"}}
+	plain := proto.Clone(ch).(*pb.Channel)
+	newNode("y", "", nil, nil).PrepareChannel(plain)
+	if plain.Settings.UplinkEnabled {
+		t.Fatal("a node that isn't a board gets its channels as they are")
+	}
+	b.node.SetExtraSettings(BoardSettings)
+	b.node.PrepareChannel(ch)
+	if !ch.Settings.UplinkEnabled || !ch.Settings.DownlinkEnabled {
+		t.Fatalf("board channel %v", ch)
+	}
+}
