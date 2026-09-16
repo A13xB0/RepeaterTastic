@@ -194,6 +194,13 @@ hosted:
   back when `persona` is switched off.
 - Takes effect at the next restart. Configuration → Experimental has the same settings.
 
+The setup wizard offers it as an optional step, and Edit on a radio shows where the relay and each
+identity run:
+
+![Setup: run the relay on meshtasticd](images/setup-hosted-relay.png)
+
+![Radio settings with a hosted relay](images/radio-settings-hosted-relay.png)
+
 ### `radios`, `site` and `experimental`
 
 Extra radios, the site-wide airtime cap and the experimental identities on several radios are
