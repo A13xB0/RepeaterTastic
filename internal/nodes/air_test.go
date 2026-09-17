@@ -3,6 +3,7 @@ package nodes
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -247,6 +248,15 @@ func TestEnvelopeAndCache(t *testing.T) {
 	env, err := envelope(channelPacket(1, 2, 3, "x"), 0, 0, 3)
 	if err != nil || env.GetRxRssi() != 0 || env.RxSnr == 0 {
 		t.Fatalf("a zero RSSI/SNR frame must not look local to SimRadio: %v %v", env, err)
+	}
+	// meshtasticd's simulated radio takes at most 233 bytes: a near-full LoRa frame can't be wrapped.
+	big := &pb.MeshPacket{From: 1, Id: 7, PayloadVariant: &pb.MeshPacket_Encrypted{Encrypted: make([]byte, 232)}}
+	if _, err := envelope(big, 0, 0, 3); !errors.Is(err, errTooBigForSim) {
+		t.Fatalf("232-byte payload: err = %v, want errTooBigForSim", err)
+	}
+	fits := &pb.MeshPacket{From: 1, Id: 8, PayloadVariant: &pb.MeshPacket_Encrypted{Encrypted: make([]byte, 230)}}
+	if _, err := envelope(fits, 0, 0, 3); err != nil {
+		t.Fatalf("230-byte payload: %v", err)
 	}
 	c := newCipherCache(2)
 	c.put(channelPacket(1, 1, 3, "a"))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -49,6 +50,8 @@ type LoRaAir struct {
 	nodes  map[uint32]*airNode
 	joined map[*Node]context.CancelFunc
 	recent *cipherCache
+
+	lastTooBig atomic.Uint64 // from<<32 | id of the last frame reported as too big for SimRadio
 }
 
 var _ Air = (*LoRaAir)(nil)
@@ -62,7 +65,16 @@ const (
 	loopRSSI = -30  // what a co-located node hears
 	loopSNR  = 12.0 // dB
 	cacheTTL = 10 * time.Minute
+
+	// simRadioMax is what meshtasticd's simulated radio takes: the envelope's Data.payload and the
+	// Compressed.data inside it both hold at most 233 bytes (mesh.options).
+	simRadioMax = 233
 )
+
+// errTooBigForSim is returned for a frame whose envelope meshtasticd would reject as a protobuf
+// overflow. Frames that big (encrypted payloads over ~230 bytes, near the LoRa limit) can't reach
+// hosted nodes at all; sending them only fills every node's log.
+var errTooBigForSim = errors.New("frame too big for meshtasticd's simulated radio")
 
 // NewLoRaAir puts an air on h's radio.
 func NewLoRaAir(h *mesh.Host, logf func(string, ...any)) *LoRaAir {
@@ -360,12 +372,18 @@ func (a *LoRaAir) snapshot() []*airNode {
 // inject hands a frame to a hosted node as if its sim radio had received it.
 func (a *LoRaAir) inject(n *airNode, p *pb.MeshPacket, rssi int32, snr float32, hopLimit, hopStart uint32) {
 	env, err := envelope(p, rssi, snr, hopLimit)
-	if err == nil {
-		env.HopStart = hopStart
+	if errors.Is(err, errTooBigForSim) {
+		// Once per frame, not once per node.
+		if key := uint64(p.From)<<32 | uint64(p.Id); a.lastTooBig.Swap(key) != key {
+			a.logf("air: frame %08x from %s not handed to hosted nodes: its %d-byte payload doesn't fit meshtasticd's %d-byte simulated-radio field",
+				p.Id, wire.NodeID(p.From), len(p.GetEncrypted()), simRadioMax)
+		}
+		return
 	}
 	if err != nil {
 		return
 	}
+	env.HopStart = hopStart
 	if err := n.node.client.Send(&pb.ToRadio{PayloadVariant: &pb.ToRadio_Packet{Packet: env}}); err != nil && !errors.Is(err, mtclient.ErrNotConnected) {
 		a.logf("air: %s: frame not injected: %v", wire.NodeID(n.num), err)
 	}
@@ -380,6 +398,9 @@ func envelope(p *pb.MeshPacket, rssi int32, snr float32, hopLimit uint32) (*pb.M
 	cb, err := proto.Marshal(&pb.Compressed{Portnum: pb.PortNum_UNKNOWN_APP, Data: enc})
 	if err != nil {
 		return nil, err
+	}
+	if len(enc) > simRadioMax || len(cb) > simRadioMax {
+		return nil, errTooBigForSim
 	}
 	now := uint32(time.Now().Unix())
 	if rssi == 0 && snr == 0 {
