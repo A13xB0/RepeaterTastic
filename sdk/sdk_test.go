@@ -1,4 +1,4 @@
-package pluginsdk
+package sdk
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
 )
 
 func TestMain(m *testing.M) {

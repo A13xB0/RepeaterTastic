@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 type sink struct{ ch chan *pb.FromRadio }

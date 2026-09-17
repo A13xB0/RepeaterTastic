@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
 )
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

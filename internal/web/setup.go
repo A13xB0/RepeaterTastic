@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
@@ -19,7 +20,6 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/kiss"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func (s *Server) probe(w http.ResponseWriter, r *http.Request) {

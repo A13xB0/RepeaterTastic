@@ -8,8 +8,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func (h *Host) baseRecord(p *pb.MeshPacket, raw []byte, direction, kind string) PacketRecord {

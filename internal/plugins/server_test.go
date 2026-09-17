@@ -16,11 +16,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
 )
 
 // apiEnv is a started Manager with one simulated radio, listening on 127.0.0.1.

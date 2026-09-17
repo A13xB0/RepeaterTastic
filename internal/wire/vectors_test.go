@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 // Golden vectors captured from real meshtasticd (tests/interop). Every packet must decode with our

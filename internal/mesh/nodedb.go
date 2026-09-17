@@ -10,8 +10,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // NodeEntry is what we know about a node heard on the mesh (or one of our own identities).

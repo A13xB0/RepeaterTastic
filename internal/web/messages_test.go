@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // newDesk creates a hosted identity called Desk and returns its node id and number.

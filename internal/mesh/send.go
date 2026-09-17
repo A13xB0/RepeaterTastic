@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // RoutingError is a send failure the client API reports as a Routing NAK.

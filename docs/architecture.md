@@ -67,10 +67,10 @@ internal/site          several radios on one host: shared transmit turns and air
 internal/config        YAML config, validation, environment overrides
 internal/web           REST/SSE API, auth, embedded GUI
 internal/plugins       plugin bundles, supervisor, Plugin API host, permissions and budgets
-proto/plugin/v1        Plugin API definition; generated Go in pluginapi/v1 (scripts/gen-plugin-proto.sh)
-pluginsdk/             Go client for plugin authors
+api/plugin/v1          Plugin API: plugin.proto and its generated Go (scripts/gen-plugin-proto.sh)
+sdk/                   Go client for plugin authors
 examples/plugins/hello example plugin with a panel (make plugin-example)
-pb/                    generated Meshtastic protobufs (scripts/gen-proto.sh; vendored in proto/), public for plugins
+api/meshtastic         vendored Meshtastic .proto files and their generated Go, package pb (scripts/gen-proto.sh); public for plugins
 ui/                    web GUI (Vue 3 + Vite), built into internal/web/dist
 firmware/              KISS modem patch, board list, build script
 tests/interop          meshtasticd Docker harness + golden vectors

@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/sim"
-	"github.com/ScotMesh/RepeaterTastic/pb"
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
-	"github.com/ScotMesh/RepeaterTastic/pluginsdk"
+	"github.com/ScotMesh/RepeaterTastic/sdk"
 )
 
 // TestMain doubles as the plugin program: the bundle's run.sh starts this test binary with
@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 
 // runEchoPlugin answers "ping" on a relay persona's channel with "pong <greeting>".
 func runEchoPlugin() {
-	c, err := pluginsdk.Connect(context.Background(), pluginsdk.Options{Version: "0.0.1"})
+	c, err := sdk.Connect(context.Background(), sdk.Options{Version: "0.0.1"})
 	if err != nil {
 		os.Stderr.WriteString("connect: " + err.Error() + "\n")
 		os.Exit(3)
@@ -498,7 +498,7 @@ func TestAttachedPluginLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := pluginsdk.Connect(ctx, pluginsdk.Options{ID: "remote", Addr: m.Listening(), Token: tok, Version: "1"})
+	c, err := sdk.Connect(ctx, sdk.Options{ID: "remote", Addr: m.Listening(), Token: tok, Version: "1"})
 	if err != nil {
 		t.Fatal(err)
 	}

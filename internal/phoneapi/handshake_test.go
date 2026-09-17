@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 func handshakeFrames(t *testing.T, nonce uint32) []*pb.FromRadio {

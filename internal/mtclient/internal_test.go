@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 func TestMergeOneofIgnoresMismatches(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/links/mqtt"
 	"github.com/ScotMesh/RepeaterTastic/internal/links/udp"
@@ -24,7 +25,6 @@ import (
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/lazy"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/spi"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 	"google.golang.org/protobuf/proto"
 )
 

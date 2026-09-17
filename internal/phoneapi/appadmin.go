@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 // appAdminAllowed reports whether an app may send an admin message to its own node while the

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 // expectLoadErrors loads each YAML document and checks the error mentions the wanted text.

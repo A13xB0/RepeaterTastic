@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 func TestResolveErrors(t *testing.T) {

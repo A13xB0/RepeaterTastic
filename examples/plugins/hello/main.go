@@ -15,9 +15,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
-	"github.com/ScotMesh/RepeaterTastic/pluginsdk"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
+	"github.com/ScotMesh/RepeaterTastic/sdk"
 )
 
 var version = "1.0.0"
@@ -39,7 +39,7 @@ type seen struct {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	c, err := pluginsdk.Connect(ctx, pluginsdk.Options{Version: version})
+	c, err := sdk.Connect(ctx, sdk.Options{Version: version})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func main() {
 	}
 }
 
-func answer(c *pluginsdk.Client, cfg settings, t *pluginv1.TextMessageEvent) {
+func answer(c *sdk.Client, cfg settings, t *pluginv1.TextMessageEvent) {
 	if !cfg.ReplyToPing || t.Direction != "in" || !strings.EqualFold(strings.TrimSpace(t.Text), "ping") {
 		return
 	}

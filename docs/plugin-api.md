@@ -5,10 +5,10 @@
 This is the reference for plugin authors. For installing, enabling and configuring plugins, see
 [Plugins](plugins.md).
 
-- **Definition:** [`proto/plugin/v1/plugin.proto`](../proto/plugin/v1/plugin.proto), package
+- **Definition:** [`api/plugin/v1/plugin.proto`](../api/plugin/v1/plugin.proto), package
   `repeatertastic.plugin.v1`, service `PluginHost`.
-- **Generated Go:** `github.com/ScotMesh/RepeaterTastic/pluginapi/v1`.
-- **Go SDK:** `github.com/ScotMesh/RepeaterTastic/pluginsdk`.
+- **Generated Go:** `github.com/ScotMesh/RepeaterTastic/api/plugin/v1`.
+- **Go SDK:** `github.com/ScotMesh/RepeaterTastic/sdk`.
 - **Meshtastic protobufs:** `github.com/ScotMesh/RepeaterTastic/pb`.
 - **Other languages:** generate a gRPC client from the proto.
 
@@ -472,7 +472,7 @@ Build the panel from `data` with DOM methods, not `innerHTML`: packet contents c
 ## Go SDK
 
 ```go
-c, err := pluginsdk.Connect(ctx, pluginsdk.Options{Version: "1.0.0"}) // reads RT_PLUGIN_* from the environment
+c, err := sdk.Connect(ctx, sdk.Options{Version: "1.0.0"}) // reads RT_PLUGIN_* from the environment
 if err != nil { log.Fatal(err) }
 defer c.Close()
 _ = c.Status("connected", "ok", nil)

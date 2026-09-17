@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 const stranger = 0x0abc0123

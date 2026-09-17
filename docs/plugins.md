@@ -275,7 +275,7 @@ error and manifest field; in short:
 The Go SDK does the connecting for you:
 
 ```go
-c, err := pluginsdk.Connect(ctx, pluginsdk.Options{Version: "1.0.0"}) // reads RT_PLUGIN_* from the environment
+c, err := sdk.Connect(ctx, sdk.Options{Version: "1.0.0"}) // reads RT_PLUGIN_* from the environment
 if err != nil { log.Fatal(err) }
 defer c.Close()
 _ = c.Status("connected", "ok", nil)
@@ -285,4 +285,4 @@ for msg := range c.Events() {
 ```
 
 Other languages can generate a client from
-[`proto/plugin/v1/plugin.proto`](../proto/plugin/v1/plugin.proto).
+[`api/plugin/v1/plugin.proto`](../api/plugin/v1/plugin.proto).

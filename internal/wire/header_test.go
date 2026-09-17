@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 func encrypted(n int) *pb.MeshPacket_Encrypted {

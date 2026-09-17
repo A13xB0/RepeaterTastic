@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // fakeRadio is a radio the test drives: frames are injected, sends recorded, and channel-busy,

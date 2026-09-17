@@ -10,9 +10,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/wire"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // collector is a session's send function that records every frame; accept false drops them.

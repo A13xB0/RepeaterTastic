@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 func host(t *testing.T, preset pb.Config_LoRaConfig_ModemPreset, id string) *mesh.Host {

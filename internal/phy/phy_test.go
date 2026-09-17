@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ScotMesh/RepeaterTastic/pb"
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 )
 
 func TestFrequencySlots(t *testing.T) {

@@ -1,6 +1,6 @@
-// Package pluginsdk connects a Go program to RepeaterTastic as a plugin.
+// Package sdk connects a Go program to RepeaterTastic as a plugin.
 //
-//	c, err := pluginsdk.Connect(ctx, pluginsdk.Options{ID: "hello", Version: "1.0.0"})
+//	c, err := sdk.Connect(ctx, sdk.Options{ID: "hello", Version: "1.0.0"})
 //	if err != nil { log.Fatal(err) }
 //	defer c.Close()
 //	for msg := range c.Events() {
@@ -10,7 +10,7 @@
 // A managed plugin (started by RepeaterTastic) finds the socket and token in its environment.
 // An attached plugin sets Options.Addr and Options.Token, and usually Options.ManifestYAML.
 // See docs/plugins.md.
-package pluginsdk
+package sdk
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pluginv1 "github.com/ScotMesh/RepeaterTastic/pluginapi/v1"
+	pluginv1 "github.com/ScotMesh/RepeaterTastic/api/plugin/v1"
 )
 
 // Options say how to reach RepeaterTastic. Empty fields come from the environment
@@ -83,11 +83,11 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 	}
 	switch {
 	case o.ID == "":
-		return nil, errors.New("pluginsdk: no plugin id (RT_PLUGIN_ID)")
+		return nil, errors.New("sdk: no plugin id (RT_PLUGIN_ID)")
 	case target == "":
-		return nil, errors.New("pluginsdk: no RepeaterTastic to connect to (RT_PLUGIN_SOCKET or RT_PLUGIN_ADDR)")
+		return nil, errors.New("sdk: no RepeaterTastic to connect to (RT_PLUGIN_SOCKET or RT_PLUGIN_ADDR)")
 	case o.Token == "":
-		return nil, errors.New("pluginsdk: no token (RT_PLUGIN_TOKEN)")
+		return nil, errors.New("sdk: no token (RT_PLUGIN_TOKEN)")
 	}
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithPerRPCCredentials(tokenCreds(o.Token)))
@@ -112,7 +112,7 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 	}
 	if c.Welcome = first.GetWelcome(); c.Welcome == nil {
 		c.Close()
-		return nil, errors.New("pluginsdk: RepeaterTastic didn't send Welcome")
+		return nil, errors.New("sdk: RepeaterTastic didn't send Welcome")
 	}
 	c.setting = c.Welcome.SettingsJson
 	go c.readLoop()

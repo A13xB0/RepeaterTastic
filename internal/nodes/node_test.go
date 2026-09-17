@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/mesh"
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient/mtclienttest"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 const hostedNum = 0x1ee7a001

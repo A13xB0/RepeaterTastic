@@ -2092,7 +2092,7 @@ const file_plugin_proto_rawDesc = "" +
 	"\tListNodes\x12*.repeatertastic.plugin.v1.ListNodesRequest\x1a+.repeatertastic.plugin.v1.ListNodesResponse\x12]\n" +
 	"\bSendText\x12).repeatertastic.plugin.v1.SendTextRequest\x1a&.repeatertastic.plugin.v1.SendResponse\x12a\n" +
 	"\n" +
-	"Traceroute\x12+.repeatertastic.plugin.v1.TracerouteRequest\x1a&.repeatertastic.plugin.v1.SendResponseB:Z8github.com/ScotMesh/RepeaterTastic/pluginapi/v1;pluginv1b\x06proto3"
+	"Traceroute\x12+.repeatertastic.plugin.v1.TracerouteRequest\x1a&.repeatertastic.plugin.v1.SendResponseB;Z9github.com/ScotMesh/RepeaterTastic/api/plugin/v1;pluginv1b\x06proto3"
 
 var (
 	file_plugin_proto_rawDescOnce sync.Once

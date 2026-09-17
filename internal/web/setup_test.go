@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/ScotMesh/RepeaterTastic/api/meshtastic"
 	"github.com/ScotMesh/RepeaterTastic/internal/config"
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient"
 	"github.com/ScotMesh/RepeaterTastic/internal/mtclient/mtclienttest"
 	"github.com/ScotMesh/RepeaterTastic/internal/nodes"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio"
 	"github.com/ScotMesh/RepeaterTastic/internal/radio/null"
-	"github.com/ScotMesh/RepeaterTastic/pb"
 )
 
 // fakeModem is a radio that reports a driver, a device and whether it answers.
