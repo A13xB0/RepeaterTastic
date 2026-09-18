@@ -73,8 +73,9 @@ type Setting struct {
 	Key   string `yaml:"key" json:"key"`
 	Label string `yaml:"label" json:"label"`
 	// string, secret, url, bool, int, number, select, multiselect (a list from options), radios
-	// (a list of the site's radio IDs; empty usually means every radio) or identities (a list of
-	// the site's identities' node IDs)
+	// (a list of the site's radio IDs; empty usually means every radio), identities (a list of
+	// the site's identities' node IDs) or nodes (a list of node IDs picked from the nodes the
+	// site has heard)
 	Type        string   `yaml:"type" json:"type"`
 	Help        string   `yaml:"help" json:"help,omitempty"`
 	Required    bool     `yaml:"required" json:"required,omitempty"`
@@ -86,7 +87,7 @@ type Setting struct {
 var (
 	idPattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
 	settingPattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
-	settingTypes    = []string{"string", "secret", "url", "bool", "int", "number", "select", "multiselect", "radios", "identities"}
+	settingTypes    = []string{"string", "secret", "url", "bool", "int", "number", "select", "multiselect", "radios", "identities", "nodes"}
 	logoExtensions  = []string{".png", ".svg", ".webp"}
 	errNoManagedRun = errors.New("plugin has no run.managed.exec")
 )

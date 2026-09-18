@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import { CloudOff, RefreshCw, Search, Store } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Plugin, StorePlugin, StoreResponse } from '@/api/types'
+import { relTime } from '@/lib/format'
 import { toast, toastError } from '@/composables/toast'
 import StoreCard from './StoreCard.vue'
 
@@ -27,14 +28,7 @@ const shown = computed(() => {
   })
 })
 const updates = computed(() => (data.value?.plugins ?? []).filter((p) => p.update_available).length)
-const fetched = computed(() => {
-  const at = data.value?.fetched_at
-  if (!at) return ''
-  const mins = Math.round((Date.now() / 1000 - at) / 60)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins} min ago`
-  return `${Math.round(mins / 60)} h ago`
-})
+const fetched = computed(() => (data.value?.fetched_at ? relTime(data.value.fetched_at * 1000) : ''))
 
 async function load(refresh = false) {
   loading.value = true

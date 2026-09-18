@@ -453,7 +453,7 @@ export type PluginState =
 export interface PluginSetting {
   key: string
   label: string
-  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select' | 'multiselect' | 'radios' | 'identities'
+  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select' | 'multiselect' | 'radios' | 'identities' | 'nodes'
   help?: string
   required?: boolean
   default?: unknown

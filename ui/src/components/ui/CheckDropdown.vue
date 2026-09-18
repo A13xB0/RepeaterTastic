@@ -9,6 +9,15 @@ const props = withDefaults(
 )
 const model = defineModel<string[]>({ required: true })
 const open = ref(false)
+// A long list (the site's nodes, say) needs a way in other than scrolling.
+const filter = ref('')
+const searchable = computed(() => props.options.length > 12)
+const shown = computed(() => {
+  const q = filter.value.trim().toLowerCase()
+  if (!q) return props.options
+  return props.options.filter((o) => o.label.toLowerCase().includes(q) || o.hint?.toLowerCase().includes(q))
+})
+const search = ref<HTMLInputElement | null>(null)
 const root = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const trigger = ref<HTMLButtonElement | null>(null)
@@ -23,7 +32,7 @@ function position() {
   const gap = 4
   const below = window.innerHeight - r.bottom - gap - 8
   const above = r.top - gap - 8
-  const want = Math.min(288, (props.options.length + (model.value.length ? 1 : 0)) * 40 + 16)
+  const want = Math.min(288, (shown.value.length + (model.value.length ? 1 : 0)) * 40 + 16 + (searchable.value ? 44 : 0))
   if (below >= want || below >= above) {
     place.value = { left: r.left, width: r.width, top: r.bottom + gap, bottom: undefined, maxHeight: Math.max(120, Math.min(288, below)) }
   } else {
@@ -34,7 +43,9 @@ function position() {
 const summary = computed(() => {
   const chosen = props.options.filter((o) => model.value.includes(o.value))
   if (!chosen.length) return props.emptyLabel
-  if (chosen.length === props.options.length && props.options.length > 1) return `All ${chosen.length}: ${chosen.map((o) => o.label).join(', ')}`
+  if (chosen.length === props.options.length && props.options.length > 1) return `All ${chosen.length}`
+  // Past a few, the names stop being readable in one line and the count is what matters.
+  if (chosen.length > 3) return `${chosen.length} chosen`
   return chosen.map((o) => o.label).join(', ')
 })
 
@@ -61,8 +72,13 @@ function onKey(e: KeyboardEvent) {
   const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
+    if (at < 0 && document.activeElement === search.value) {
+      if (e.key === 'ArrowDown') buttons[0]?.focus()
+      return
+    }
     const next = e.key === 'ArrowDown' ? Math.min(buttons.length - 1, at + 1) : Math.max(0, at - 1)
-    buttons[next]?.focus()
+    if (e.key === 'ArrowUp' && at === 0 && search.value) search.value.focus()
+    else buttons[next]?.focus()
   } else if (e.key === 'Tab' && at >= 0) {
     e.preventDefault()
     open.value = false
@@ -82,11 +98,14 @@ function listen(on: boolean) {
 watch(open, async (o) => {
   listen(o)
   if (!o) return
+  filter.value = ''
   position()
   await nextTick()
   position()
-  optionButtons()[0]?.focus()
+  if (searchable.value) search.value?.focus()
+  else optionButtons()[0]?.focus()
 })
+watch(filter, () => void nextTick(position))
 onBeforeUnmount(() => listen(false))
 </script>
 
@@ -113,8 +132,19 @@ onBeforeUnmount(() => listen(false))
       class="fixed z-[400] overflow-y-auto rounded-xl border border-line bg-surface-solid p-1 shadow-xl"
       :style="{ left: `${place.left}px`, width: `${place.width}px`, top: place.top !== undefined ? `${place.top}px` : undefined, bottom: place.bottom !== undefined ? `${place.bottom}px` : undefined, maxHeight: `${place.maxHeight}px` }"
     >
+      <div v-if="searchable" class="sticky top-0 z-10 bg-surface-solid p-1 pb-1.5">
+        <input
+          ref="search"
+          v-model="filter"
+          type="search"
+          class="input h-8 w-full text-[13px]"
+          placeholder="Search"
+          :aria-label="`Search ${options.length} options`"
+          @keydown.stop.escape="open = false"
+        />
+      </div>
       <ul>
-        <li v-for="o in options" :key="o.value">
+        <li v-for="o in shown" :key="o.value">
           <button
             type="button"
             :aria-pressed="model.includes(o.value)"
@@ -137,6 +167,7 @@ onBeforeUnmount(() => listen(false))
         </li>
       </ul>
       <div v-if="!options.length" class="px-2.5 py-2 text-[13px] text-ink-3">Nothing to choose from.</div>
+      <div v-else-if="!shown.length" class="px-2.5 py-2 text-[13px] text-ink-3">Nothing matches “{{ filter }}”.</div>
       <div v-if="model.length" class="border-t border-line-soft px-1 pt-1">
         <button type="button" class="w-full rounded-lg px-2.5 py-1.5 text-left text-xs text-ink-3 hover:bg-sunken hover:text-ink" @click="model = []">
           Clear ({{ emptyLabel.toLowerCase() }})
