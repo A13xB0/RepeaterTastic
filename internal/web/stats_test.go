@@ -104,9 +104,12 @@ func TestStatsIdentitiesAirtimeAndPorts(t *testing.T) {
 // checkAirtimeStats checks the airtime buckets add up TX, RX, relay and per-identity time.
 func checkAirtimeStats(t *testing.T, env *testEnv, tok, deskID string) {
 	t.Helper()
+	// An hour's worth is answered from the per-minute ring: bucketFor has always
+	// said a minute for this window, and now the data behind it is per-minute too
+	// rather than ten-minute buckets labelled 600.
 	code, obj, _ := call(t, env.srv, "GET", "/api/v1/stats/airtime?window=1h", tok, nil)
 	buckets, _ := obj["buckets"].([]any)
-	if code != 200 || obj["bucket_s"] != float64(600) || len(buckets) == 0 {
+	if code != 200 || obj["bucket_s"] != float64(60) || len(buckets) == 0 {
 		t.Fatalf("airtime: %d %v", code, obj)
 	}
 	var tx, rx, relay, desk float64
@@ -295,4 +298,38 @@ func TestBucketParamClampsToWhatWasRecorded(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Asking for a coarser bucket than the store holds groups the stored ones; the
+// totals must survive the grouping either way.
+func TestAirtimeCoarseBucketKeepsTheTotals(t *testing.T) {
+	env := newTestEnv(t, nil)
+	tok := env.signIn(t)
+	now := time.Now()
+	env.host.Air.AddTx(now.Add(-2*time.Minute), 150, 0x1234)
+	env.host.Air.AddRx(now.Add(-2*time.Minute), 50)
+
+	fine := airtimeTotal(t, env, tok, "window=1h&bucket=1m")
+	coarse := airtimeTotal(t, env, tok, "window=1h&bucket=1h")
+	if fine != coarse {
+		t.Errorf("totals differ by resolution: 1m gave %v, 1h gave %v", fine, coarse)
+	}
+	if fine != 200 {
+		t.Errorf("total tx+rx = %v, want 200", fine)
+	}
+}
+
+func airtimeTotal(t *testing.T, env *testEnv, tok, query string) float64 {
+	t.Helper()
+	code, obj, _ := call(t, env.srv, "GET", "/api/v1/stats/airtime?"+query, tok, nil)
+	if code != 200 {
+		t.Fatalf("airtime %s: %d", query, code)
+	}
+	buckets, _ := obj["buckets"].([]any)
+	var total float64
+	for _, b := range buckets {
+		m := b.(map[string]any)
+		total += m["tx_ms"].(float64) + m["rx_ms"].(float64)
+	}
+	return total
 }
