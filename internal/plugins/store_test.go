@@ -68,7 +68,7 @@ func (f *fakeStore) setIndex(t *testing.T, plugins ...StorePlugin) {
 	f.index.Store(b)
 }
 
-func (f *fakeStore) url() string { return f.Server.URL + "/index.json" }
+func (f *fakeStore) url() string { return f.URL + "/index.json" }
 
 // samplePlugin is one store entry pointing at the fake server's bundle.
 func (f *fakeStore) samplePlugin() StorePlugin {
@@ -78,7 +78,7 @@ func (f *fakeStore) samplePlugin() StorePlugin {
 		Homepage: "https://example.invalid", License: "GPL-3.0-or-later", Logo: "logos/meshflow.png",
 		Permissions: []string{"packets.read", "nodes.read"},
 		Latest: Release{
-			Version: "0.1.1", API: 1, MinHost: "0.3.0", URL: f.Server.URL + "/bundle.zip",
+			Version: "0.1.1", API: 1, MinHost: "0.3.0", URL: f.URL + "/bundle.zip",
 			SHA256: hex.EncodeToString(sum[:]), Size: int64(len(f.bundle)),
 			Arches: []string{thisArch()},
 		},
