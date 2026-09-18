@@ -387,7 +387,9 @@ func (p StorePlugin) Unusable(hostVersion string) string {
 	if len(r.Arches) > 0 && !slices.Contains(r.Arches, thisArch()) {
 		return fmt.Sprintf("there is no build for %s", thisArch())
 	}
-	if r.MinHost != "" && compareVersions(hostVersion, r.MinHost) < 0 {
+	// A build with no version number ("dev", a local build) is assumed new enough: a developer
+	// running from source shouldn't be told every plugin needs a newer RepeaterTastic.
+	if r.MinHost != "" && len(versionParts(hostVersion)) > 0 && compareVersions(hostVersion, r.MinHost) < 0 {
 		return fmt.Sprintf("it needs RepeaterTastic %s or newer", r.MinHost)
 	}
 	for _, perm := range p.Permissions {

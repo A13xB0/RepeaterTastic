@@ -252,6 +252,11 @@ func TestUpdateForComparesNumerically(t *testing.T) {
 	if _, ok := p.UpdateFor(""); ok {
 		t.Error("nothing installed is not an update")
 	}
+	// A build with no version number shouldn't be told everything needs a newer host.
+	dev := StorePlugin{Permissions: []string{}, Latest: Release{Version: "1.0.0", API: 1, MinHost: "0.3.0", Arches: []string{thisArch()}}}
+	if why := dev.Unusable("dev"); why != "" {
+		t.Errorf("a dev build should still be able to install: %s", why)
+	}
 	if compareVersions("v1.2.3-dev", "1.2.3") != 0 {
 		t.Error("a v prefix and a -suffix should not change the order")
 	}

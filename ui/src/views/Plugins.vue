@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Gauge, Link2, Plus, Puzzle, RefreshCw } from '@lucide/vue'
+import { ArrowUpCircle, Gauge, Link2, Plus, Puzzle, RefreshCw, Store } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Plugin, PluginsResponse } from '@/api/types'
 import Toggle from '@/components/ui/Toggle.vue'
@@ -11,6 +11,7 @@ import InstallPluginModal from '@/components/plugins/InstallPluginModal.vue'
 import EnablePluginModal from '@/components/plugins/EnablePluginModal.vue'
 import AttachPluginModal from '@/components/plugins/AttachPluginModal.vue'
 import SendLimitsModal from '@/components/plugins/SendLimitsModal.vue'
+import StoreBrowser from '@/components/plugins/StoreBrowser.vue'
 import { toast, toastError } from '@/composables/toast'
 import { on } from '@/store/live'
 
@@ -21,6 +22,8 @@ const installOpen = ref(false)
 const attachOpen = ref(false)
 const limitsOpen = ref(false)
 const enabling = ref<Plugin | null>(null)
+// Installed or the store. The store tab is only offered when the node has one.
+const tab = ref<'installed' | 'store'>('installed')
 
 async function load() {
   loading.value = true
@@ -63,6 +66,13 @@ function installed(p: Plugin) {
   router.push({ name: 'plugin', params: { id: p.id } })
 }
 
+// A store install lands in the list and refreshes the update count, but stays put: whoever is
+// browsing the store usually wants to carry on browsing.
+function installedFromStore(p: Plugin) {
+  upsert(p)
+  void load()
+}
+
 const off = on('plugin', upsert)
 const offResync = on('resync', () => void load())
 onMounted(load)
@@ -80,7 +90,7 @@ onBeforeUnmount(() => {
         <p class="page-sub">Programs that extend RepeaterTastic: uploaders, bots, dashboards. Each runs as its own program; its permissions limit what it gets from RepeaterTastic, so only install plugins you trust.</p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
+        <button v-if="tab === 'installed'" type="button" class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :class="['size-3.5', loading && 'animate-spin']" />Refresh</button>
         <button
           v-if="data?.enabled"
           type="button"
@@ -94,6 +104,30 @@ onBeforeUnmount(() => {
         <button type="button" v-if="data?.enabled" class="btn btn-sm btn-primary" @click="installOpen = true"><Plus class="size-3.5" />Install plugin</button>
       </div>
     </div>
+
+    <div v-if="data?.enabled && data.store?.enabled" class="tabs mb-4" role="tablist">
+      <button type="button" role="tab" :aria-selected="tab === 'installed'" @click="tab = 'installed'">
+        Installed<template v-if="data.plugins.length"> ({{ data.plugins.length }})</template>
+      </button>
+      <button type="button" role="tab" :aria-selected="tab === 'store'" @click="tab = 'store'">
+        Browse store
+        <span v-if="data.store.updates" class="ml-1.5 chip bg-info/12 text-info">{{ data.store.updates }}</span>
+      </button>
+    </div>
+
+    <StoreBrowser v-if="tab === 'store'" :permissions="data?.permissions ?? {}" @installed="installedFromStore" />
+
+    <template v-else>
+    <button
+      v-if="data?.store?.enabled && data.store.updates"
+      type="button"
+      class="mb-4 flex w-full items-center gap-2.5 rounded-xl bg-info/10 px-4 py-3 text-left text-[13px] text-info"
+      @click="tab = 'store'"
+    >
+      <ArrowUpCircle class="size-4 shrink-0" />
+      <span>{{ data.store.updates }} plugin{{ data.store.updates === 1 ? ' has' : 's have' }} a newer version in the store.</span>
+      <span class="ml-auto font-medium underline underline-offset-2">Review</span>
+    </button>
 
     <div v-if="data?.error" class="mb-4 rounded-xl bg-bad/10 px-4 py-3 text-[13px] text-bad">
       Plugins couldn't start: <span class="mono">{{ data.error }}</span>. Installed plugins won't run until this is fixed and RepeaterTastic restarts.
@@ -110,10 +144,12 @@ onBeforeUnmount(() => {
       <span class="flex size-12 items-center justify-center rounded-2xl bg-sunken text-ink-3"><Puzzle class="size-6" /></span>
       <h3 class="mt-3 text-[15px] font-semibold">No plugins yet</h3>
       <p class="mt-1 max-w-md text-[13px] text-ink-3">
-        Install a plugin bundle (.zip) from your computer or a URL, drop one into the plugins folder, or attach a plugin that runs elsewhere.
+        <template v-if="data.store?.enabled">Browse the store, install a bundle (.zip) from your computer or a URL, drop one into the plugins folder, or attach a plugin that runs elsewhere.</template>
+        <template v-else>Install a plugin bundle (.zip) from your computer or a URL, drop one into the plugins folder, or attach a plugin that runs elsewhere.</template>
       </p>
-      <div class="mt-4 flex gap-2">
-        <button type="button" class="btn btn-primary" @click="installOpen = true"><Plus class="size-4" />Install plugin</button>
+      <div class="mt-4 flex flex-wrap justify-center gap-2">
+        <button v-if="data.store?.enabled" type="button" class="btn btn-primary" @click="tab = 'store'"><Store class="size-4" />Browse store</button>
+        <button type="button" class="btn" :class="!data.store?.enabled && 'btn-primary'" @click="installOpen = true"><Plus class="size-4" />Install plugin</button>
         <button type="button" class="btn" @click="attachOpen = true"><Link2 class="size-4" />Attach</button>
       </div>
     </div>
@@ -155,6 +191,8 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
+    </template>
 
     <InstallPluginModal :open="installOpen" :allow-url="!!data?.allow_url_install" :folder="data?.folder" @close="installOpen = false" @installed="installed" />
     <SendLimitsModal
