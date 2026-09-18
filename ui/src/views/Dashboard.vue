@@ -39,8 +39,8 @@ const flashSeq = ref(0)
 
 async function load() {
   const [a, r, p] = await Promise.allSettled([
-    api.get<AirtimeStats>(withRadio('/stats/airtime?window=1h', radioFilter.value)),
-    api.get<RfStats>(withRadio('/stats/rf?window=1h', radioFilter.value)),
+    api.get<AirtimeStats>(withRadio('/stats/airtime?window=24h', radioFilter.value)),
+    api.get<RfStats>(withRadio('/stats/rf?window=24h', radioFilter.value)),
     api.get<PortStat[]>(withRadio('/stats/ports?window=24h', radioFilter.value)),
   ])
   if (a.status === 'fulfilled') airtime.value = a.value
@@ -125,7 +125,7 @@ const noiseSeries = computed(() => {
   const id = scopeRadioId.value
   if (!id) return []
   const hist = rf.value?.points.map((p) => p.noise_floor_dbm) ?? []
-  return [...hist.slice(-40), ...(live.history[id] ?? []).map((h) => h.noise)]
+  return [...hist, ...(live.history[id] ?? []).map((h) => h.noise)]
 })
 
 const portRows = computed(() =>
@@ -181,8 +181,8 @@ const lastPacket = computed(() => scopedPackets.value[0])
       <section class="card xl:col-span-2">
         <div class="card-head">
           <div>
-            <h3 class="card-title">Airtime · last hour</h3>
-            <p class="card-sub">Share of each minute spent transmitting vs. hearing traffic, against the region duty cycle</p>
+            <h3 class="card-title">Airtime · last 24 hours</h3>
+            <p class="card-sub">Share of each ten minutes spent transmitting vs. hearing traffic, against the region duty cycle</p>
           </div>
           <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
             <span class="inline-flex items-center gap-1.5"><span class="h-0.5 w-3 rounded bg-s3" />Our TX</span>
@@ -207,7 +207,7 @@ const lastPacket = computed(() => scopedPackets.value[0])
         <section v-if="scopeRadioId" class="card">
           <div class="card-head">
             <h3 class="card-title">Noise floor</h3>
-            <span class="text-2xs text-ink-3">last hour + live</span>
+            <span class="text-2xs text-ink-3">last 24 hours + live</span>
           </div>
           <div class="px-4 pb-4 sm:px-5">
             <div class="flex items-end gap-4">
