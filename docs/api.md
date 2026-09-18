@@ -642,8 +642,10 @@ A Plugin:
 
 | Method and path | Body → response |
 | --- | --- |
-| `GET /plugins` | → `{"enabled", "error", "plugins": [Plugin], "permissions": {key: text}, "identities", "attach_address", "allow_url_install", "folder", "messages_per_hour", "traceroutes_per_hour"}` |
+| `GET /plugins` | → `{"enabled", "error", "plugins": [Plugin], "permissions": {key: text}, "identities", "attach_address", "allow_url_install", "folder", "messages_per_hour", "traceroutes_per_hour", "store": {"enabled", "updates"}}` |
 | `POST /plugins` | multipart field `bundle`, or JSON `{"url"}` → 201 Plugin |
+| `GET /plugins/store[?refresh=1]` | → `{"enabled", "url", "fetched_at", "error", "plugins": [StorePlugin]}` |
+| `POST /plugins/store/{id}/install` | → 201 Plugin |
 | `PUT /plugins/limits` | `{"messages_per_hour", "traceroutes_per_hour"}` → the same |
 | `POST /plugins/attach` | `{"id", "name", "permissions": []}` → 201 `{"plugin", "token", "address"}` |
 | `GET /plugins/{id}` | → Plugin |
@@ -656,6 +658,34 @@ A Plugin:
 | `GET /plugins/{id}/logs` | → `[{"time", "level", "source", "message"}]` |
 | `GET /plugins/{id}/panel-data` | → the plugin's panel JSON, or `null` |
 | `POST /plugins/{id}/panel-action` | `{"name", "payload"}` → 202 |
+
+A StorePlugin, from `GET /plugins/store`:
+
+```json
+{"id": "meshflow", "name": "Meshflow", "summary": "Reports what each radio hears…",
+ "description": "…", "author": "ScotMesh", "homepage": "…", "license": "GPL-3.0-or-later",
+ "tags": ["mapping"], "permissions": ["packets.read"], "network": ["your Meshflow API server"],
+ "latest": {"version": "0.1.1", "api": 1, "min_host": "0.3.0", "released": "2026-09-15T19:00:58Z",
+            "url": "https://…/plugin-v0.1.1.zip", "sha256": "90f0fe…", "size": 14498857,
+            "arches": ["linux/amd64", "linux/arm64"], "notes": "First public release."},
+ "logo_url": "/plugin-store-logo/<key>/meshflow", "installed": "0.1.0", "update_available": true}
+```
+
+- `installed` is the version running here, left out when it isn't installed; `update_available`
+  compares it with `latest.version` numerically, so 0.10.0 beats 0.9.0.
+- `unusable` says why this node can't install it (no build for this CPU, a newer RepeaterTastic
+  needed, a permission this version doesn't have, or it runs in its own container). It is left out
+  when the plugin can be installed.
+- `image` marks a plugin that runs in its own container: attach it rather than installing it.
+- The logo is served by the daemon, not the store, so a browser that can't reach the store still
+  shows it. The key lasts until the daemon restarts.
+
+- **Store:** `GET /plugins/store` answers 200 with `{"enabled": false}` when `plugins.store_url`
+  is `off`. A store that can't be read still answers 200, with the cached list and an `error`
+  saying why it may be out of date. `?refresh=1` asks the store instead of using the cached copy.
+- **Install from the store:** the daemon downloads the bundle, checks it against the `sha256` in
+  the index and checks the bundle calls itself the id on the card. Either mismatch is a 400 and
+  nothing is installed. The plugin arrives switched off, like any other install.
 
 - **List:** `error` says why the plugin system couldn't start (`""` when it did); the daemon keeps
   running without plugins. `identities` lists every identity on every radio as
