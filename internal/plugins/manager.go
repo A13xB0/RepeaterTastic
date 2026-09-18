@@ -47,8 +47,9 @@ var (
 
 // Manager owns the installed plugins, runs the managed ones and serves the Plugin API.
 type Manager struct {
-	opt Options
-	log *slog.Logger
+	opt   Options
+	log   *slog.Logger
+	store *Store // the plugin store the Browse tab lists; nil when it is turned off
 
 	mu        sync.Mutex
 	st        stateFile
@@ -94,6 +95,9 @@ func New(opt Options) (*Manager, error) {
 		opt.Log = slog.Default()
 	}
 	m := &Manager{opt: opt, log: opt.Log.With("component", "plugins"), plugins: map[string]*plugin{}, notifyPending: map[string]bool{}}
+	if opt.Config.StoreURL != "off" {
+		m.store = NewStore(opt.Config.StoreURL, filepath.Join(opt.Dir, "store"), opt.Version)
+	}
 	for _, d := range []string{m.installedDir(), m.dataRoot(), m.inboxDir()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return nil, err

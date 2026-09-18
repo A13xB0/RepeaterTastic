@@ -113,6 +113,36 @@ func loadUnpacked(dir string) (*Manifest, error) {
 }
 
 // bundlePrefix is "folder/" when every entry sits in one top-level folder holding plugin.yaml.
+// peek reads a bundle's manifest without unpacking it, for checks that should happen before
+// anything is written to disk. It doesn't check the bundle's files, so the manifest it returns is
+// only good for reading what the bundle says it is.
+func peek(r io.ReaderAt, size int64) (*Manifest, error) {
+	zr, err := zip.NewReader(r, size)
+	if err != nil {
+		return nil, errors.New("not a zip file")
+	}
+	prefix, err := bundlePrefix(zr.File)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range zr.File {
+		if f.Name != prefix+ManifestFile {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		b, err := io.ReadAll(io.LimitReader(rc, 1<<20))
+		if err != nil {
+			return nil, err
+		}
+		return ParseManifest(b)
+	}
+	return nil, fmt.Errorf("the bundle has no %s", ManifestFile)
+}
+
 func bundlePrefix(files []*zip.File) (string, error) {
 	for _, f := range files {
 		if f.Name == ManifestFile {
