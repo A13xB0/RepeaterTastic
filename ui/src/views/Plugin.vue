@@ -17,7 +17,7 @@ import { confirmDialog } from '@/composables/confirm'
 import { toast, toastError } from '@/composables/toast'
 import { now } from '@/composables/now'
 import { on } from '@/store/live'
-import { dateTime, relTime } from '@/lib/format'
+import { dateTime, relTime, safeLink } from '@/lib/format'
 
 type Tab = 'overview' | 'settings' | 'panel' | 'logs'
 const route = useRoute()
@@ -176,7 +176,7 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
             <span v-if="plugin.version">v{{ plugin.version }}</span>
             <span v-if="plugin.author">by {{ plugin.author }}</span>
             <span v-if="plugin.license">{{ plugin.license }}</span>
-            <a v-if="plugin.homepage" :href="plugin.homepage" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 hover:text-ink">
+            <a v-if="safeLink(plugin.homepage)" :href="safeLink(plugin.homepage)" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 hover:text-ink">
               Homepage<ExternalLink class="size-3" />
             </a>
           </div>

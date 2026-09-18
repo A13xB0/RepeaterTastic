@@ -57,6 +57,10 @@ type Plugins struct {
 	Listen string `yaml:"listen,omitempty" json:"listen,omitempty"`
 	// AllowURLInstall lets the GUI download bundles from a URL.
 	AllowURLInstall bool `yaml:"allow_url_install" json:"allow_url_install"`
+	// StoreURL is the plugin store the Browse tab lists ("" = the ScotMesh store, "off" = no
+	// store at all). A store is only a list of names, logos and download addresses; the
+	// checksum in it is what the daemon checks a downloaded bundle against.
+	StoreURL string `yaml:"store_url,omitempty" json:"store_url,omitempty"`
 	// MessagesPerHour and traceroutesPerHour cap what each plugin may transmit.
 	MessagesPerHour    int           `yaml:"messages_per_hour" json:"messages_per_hour"`
 	TraceroutesPerHour int           `yaml:"traceroutes_per_hour" json:"traceroutes_per_hour"`
@@ -668,6 +672,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Plugins.MessagesPerHour < 0 || c.Plugins.MessagesPerHour > 600 || c.Plugins.TraceroutesPerHour < 0 || c.Plugins.TraceroutesPerHour > 120 {
 		return errors.New("plugins.messages_per_hour must be 0-600 and traceroutes_per_hour 0-120")
+	}
+	if u := c.Plugins.StoreURL; u != "" && u != "off" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+		return errors.New(`plugins.store_url must be an http(s) URL, or "off" to hide the store`)
 	}
 	seen := map[string]bool{}
 	for _, e := range c.Plugins.Entries {

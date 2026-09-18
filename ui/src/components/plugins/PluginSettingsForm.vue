@@ -8,9 +8,10 @@ import CheckDropdown from '@/components/ui/CheckDropdown.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { toast } from '@/composables/toast'
 import { live } from '@/store/live'
+import { relTime } from '@/lib/format'
 
 const MASK = '••••••••'
-const isList = (t: string) => t === 'multiselect' || t === 'radios' || t === 'identities'
+const isList = (t: string) => t === 'multiselect' || t === 'radios' || t === 'identities' || t === 'nodes'
 
 function listOptions(s: Plugin['settings'][number]) {
   if (s.type === 'radios') return live.radios.map((r) => ({ value: r.id, label: r.name || r.id, hint: `${r.phy.preset_name} · ${r.relay.node_id}` }))
@@ -21,6 +22,17 @@ function listOptions(s: Plugin['settings'][number]) {
       label: `${i.long_name || i.node_id}${i.is_relay ? ' (relay persona)' : ''}`,
       hint: several ? `${i.node_id} · ${i.radio_name}` : i.node_id,
     }))
+  }
+  // Nodes the site has heard, most recently heard first: the ones worth picking are the ones
+  // that have been about lately.
+  if (s.type === 'nodes') {
+    return Object.values(live.nodes)
+      .sort((a, b) => (b.last_heard ?? 0) - (a.last_heard ?? 0))
+      .map((n) => ({
+        value: n.node_id,
+        label: n.long_name || n.short_name || n.node_id,
+        hint: `${n.node_id} · heard ${relTime(n.last_heard)}`,
+      }))
   }
   return (s.options ?? []).map((o) => ({ value: o, label: o }))
 }
@@ -111,7 +123,7 @@ async function save() {
             v-model="form[s.key] as string[]"
             :options="listOptions(s)"
             :disabled="plugin.pinned"
-            :empty-label="s.placeholder || (s.type === 'radios' ? 'All radios' : s.type === 'identities' ? 'None chosen' : 'None')"
+            :empty-label="s.placeholder || (s.type === 'radios' ? 'All radios' : s.type === 'identities' || s.type === 'nodes' ? 'None chosen' : 'None')"
           />
           <select v-else-if="s.type === 'select'" :id="`ps-${s.key}`" v-model="form[s.key]" class="input" :disabled="plugin.pinned">
             <option v-if="!s.required" value="">—</option>

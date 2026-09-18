@@ -57,9 +57,19 @@ func TestPluginsAPI(t *testing.T) {
 // testPluginServer is a set-up web server with plugins turned on, and a session token.
 func testPluginServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
+	return testPluginServerWith(t, nil)
+}
+
+// testPluginServerWith is testPluginServer with a chance to change the config first, for tests
+// that need a plugin store or other non-default settings.
+func testPluginServerWith(t *testing.T, adjust func(*config.Config)) (*httptest.Server, string) {
+	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
 	cfg.StateDir = dir
+	if adjust != nil {
+		adjust(cfg)
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h, err := mesh.NewHost(cfg.MeshConfig(), null.New(), log)
 	if err != nil {

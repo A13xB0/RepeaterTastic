@@ -25,6 +25,9 @@ service PluginHost {
   // traceroute.send: from the identity chosen in the plugin's "identities" settings on that radio
   // (the relay persona when none is), within the plugin's send budget.
   rpc Traceroute(TracerouteRequest) returns (SendResponse);
+  // status.read: how the radios are doing right now. Radio says what a radio *is*; this says what
+  // it is *doing* — the figures a dashboard, an exporter or an alert would want.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
 }
 
 // ------------------------------------------------------------------------------------ session
@@ -49,6 +52,7 @@ message HostMessage {
     SettingsChanged settings = 6;
     Stop stop = 7;
     PanelAction action = 8;
+    StatusEvent status_event = 9;
   }
 }
 
@@ -116,6 +120,38 @@ message Radio {
   Identity relay = 8;         // the radio's relay persona
   repeated Identity identities = 9; // every identity on the radio, the relay persona first
 }
+
+// RadioStatus is a radio's live figures. Counters are totals since the daemon started, so a
+// consumer should treat them as monotonic and diff them rather than reading them as rates.
+message RadioStatus {
+  string radio_id = 1;
+  bool connected = 2;         // the modem is up and configured
+  int32 noise_floor_dbm = 3;
+  double airtime_tx_pct = 4;  // of the last hour
+  double duty_limit_pct = 5;  // the region's limit, or the configured override
+  double channel_util_pct = 6;
+  uint32 queue = 7;           // packets waiting to transmit
+  uint64 rx = 8;
+  uint64 tx = 9;
+  uint64 rx_dupe = 10;
+  uint64 rx_undecryptable = 11;
+  uint64 rx_bad = 12;
+  uint64 tx_failed = 13;
+  uint64 ack_ok = 14;
+  uint64 ack_fail = 15;
+  uint64 dropped_duty = 16;
+  int64 uptime_s = 17;
+  uint32 nodes_heard = 18;    // heard in the last two hours
+}
+
+message GetStatusRequest {
+  string radio_id = 1;        // "" = every radio
+}
+message GetStatusResponse { repeated RadioStatus radios = 1; }
+
+// StatusEvent arrives on the session stream for plugins holding status.read, every 30 seconds,
+// so a publisher does not have to poll.
+message StatusEvent { repeated RadioStatus radios = 1; }
 
 message Identity {
   string node_id = 1;         // "!a1c40e07"

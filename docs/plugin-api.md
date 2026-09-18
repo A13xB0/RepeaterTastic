@@ -445,6 +445,7 @@ settings:
 | `multiselect` | tick-box list of `options` | a list of `options` |
 | `radios` | tick-box list of the site's radios | a list of radio ids. Empty usually means every radio |
 | `identities` | tick-box list of the site's identities | a list of node ids, e.g. `["!a1c40e07"]`. It chooses who `Traceroute` sends from |
+| `nodes` | searchable tick-box list of the nodes the site has heard, most recent first | a list of node ids, e.g. `["!a1c40e07"]`, of nodes out on the mesh |
 
 - An empty string or empty list removes the value, so the default applies again.
 - Secrets reach the plugin in full, but the API and GUI only show that one is saved.

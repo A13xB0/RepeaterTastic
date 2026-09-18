@@ -453,7 +453,7 @@ export type PluginState =
 export interface PluginSetting {
   key: string
   label: string
-  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select' | 'multiselect' | 'radios' | 'identities'
+  type: 'string' | 'secret' | 'url' | 'bool' | 'int' | 'number' | 'select' | 'multiselect' | 'radios' | 'identities' | 'nodes'
   help?: string
   required?: boolean
   default?: unknown
@@ -506,6 +506,55 @@ export interface PluginsResponse {
   messages_per_hour?: number
   traceroutes_per_hour?: number
   identities?: PluginIdentityChoice[]
+  store?: { enabled: boolean; updates: number }
+}
+
+/** One plugin as the store describes it, next to what this node knows about it. */
+export interface StorePlugin {
+  id: string
+  name: string
+  summary: string
+  description?: string
+  author: string
+  homepage: string
+  license: string
+  tags?: string[]
+  /** What it will ask for once installed, shown before anyone presses Install. */
+  permissions: string[]
+  /** What it talks to; empty means nothing leaves the node. */
+  network?: string[]
+  /** Set for plugins that run in their own container: attach those rather than installing. */
+  image?: string
+  /** Absent for an attached plugin, which has a container rather than a bundle. */
+  latest?: StoreRelease
+  logo_url?: string
+  /** The version running here, absent when it isn't installed. */
+  installed?: string
+  update_available: boolean
+  /** Why this node can't install it, absent when it can. */
+  unusable?: string
+}
+
+export interface StoreRelease {
+  version: string
+  api: number
+  min_host?: string
+  released?: string
+  url: string
+  sha256: string
+  size: number
+  arches: string[]
+  notes?: string
+}
+
+export interface StoreResponse {
+  enabled: boolean
+  url?: string
+  plugins: StorePlugin[]
+  /** When the list last came off the wire. */
+  fetched_at?: number
+  /** Why the list might be out of date. */
+  error?: string
 }
 
 export interface PluginIdentityChoice {

@@ -21,6 +21,30 @@ For plugin authors, the [Plugin API reference](plugin-api.md) covers every messa
 manifest field and setting type. The plugin endpoints of the HTTP API are in
 [HTTP API → Plugins](api.md#plugins).
 
+## The store
+
+**Plugins → Browse store** lists plugins from a store index, which is a JSON file someone
+publishes over HTTPS: names, logos, permissions and download addresses. Nothing in the store runs
+on your node. Press **Install** and RepeaterTastic downloads the bundle from wherever the index
+points, **checks it against the sha256 the store lists**, refuses it if that doesn't match, and
+then installs it like any other bundle: switched off, waiting for you to grant its permissions.
+
+Before you install, the card shows what the plugin will ask for, what it talks to over the
+network, and whether it sends on the radio. A plugin this node can't run says so instead of
+offering a button that fails: no build for this CPU, a newer RepeaterTastic needed, or a
+permission this version doesn't have.
+
+When the store lists a newer version of something you have installed, the Plugins tab badges it
+and the card offers **Update**. An update keeps the plugin's switch, settings and grants.
+
+The default store is [ScotMesh's](https://github.com/ScotMesh/repeatertastic-plugins). Point
+`plugins.store_url` at your own index to run a different one, or set it to `off` to hide the tab
+entirely. The index is cached on disk with its ETag, so a node that checks regularly costs the
+server a 304, and the Browse tab still lists what it last saw when the node is off the internet.
+
+The daemon does the fetching, the downloading and the logos, not your browser, so the store works
+on a node you reach over the mesh, a VPN or a private network.
+
 ## Installing
 
 A plugin comes as a **bundle**: a `.zip` holding a `plugin.yaml`, its program (usually one
@@ -29,6 +53,7 @@ off**.
 
 | How | What to do |
 | --- | --- |
+| Store | **Plugins → Browse store**, then **Install** (see [The store](#the-store)) |
 | GUI | **Plugins → Install plugin**, then drop the .zip or paste a URL |
 | Folder | Copy the .zip into the plugins folder's `inbox/` (`<state_dir>/plugins/inbox/`, or `<plugins.dir>/inbox/` when `plugins.dir` is set). It installs within a few seconds; a bundle that can't be used moves to `inbox/.rejected/` next to a `.error.txt` giving the reason |
 | Command line | `sudo -u repeatertastic repeatertastic plugin install hello-plugin.zip` (a file or an `http(s)://` URL) |
@@ -160,6 +185,7 @@ plugins:
     dir: ""                       # "" = <state_dir>/plugins
     listen: ""                    # TCP address for attached plugins, e.g. 127.0.0.1:4450 ("" = off)
     allow_url_install: true       # the GUI may download bundles from a URL
+    store_url: ""                 # "" = the ScotMesh store; an index.json URL for your own; "off" = no store tab
     messages_per_hour: 30         # per plugin, 0-600; 0 = plugins may not send messages (also Plugins → Send limits)
     traceroutes_per_hour: 12      # per plugin, 0-120; 0 = plugins may not send traceroutes
     entries:                      # pin plugins: the GUI shows these as "config file" and won't change them
@@ -180,6 +206,7 @@ plugins/
   inbox/               drop bundles here (.rejected/ holds refused ones)
   installed/<id>/      unpacked bundles
   data/<id>/           each plugin's own folder (its HOME and RT_PLUGIN_DATA)
+  store/               the cached store index, its logos and in-flight downloads
 ```
 
 ### Command line

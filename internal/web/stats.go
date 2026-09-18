@@ -39,7 +39,7 @@ const rfKeep = 7 * 24 * 60
 // reboot left the charts blank until the day filled up again.
 const rfHistoryFile = "rf-history.json"
 
-func (h *rfHistory) save(path string, now time.Time) error {
+func (h *rfHistory) save(path string) error {
 	h.mu.Lock()
 	points := append([]rfPoint(nil), h.points...)
 	h.mu.Unlock()
@@ -95,7 +95,7 @@ func (s *Server) sampleRFEvery(ctx context.Context, rc *radioCtx, every time.Dur
 			s.log.Warn("RF history not loaded", "radio", rc.id, "err", err)
 		}
 		defer func() {
-			if err := rc.rf.save(path, time.Now()); err != nil {
+			if err := rc.rf.save(path); err != nil {
 				s.log.Warn("saving RF history", "radio", rc.id, "err", err)
 			}
 		}()
@@ -123,7 +123,7 @@ func (s *Server) sampleRFEvery(ctx context.Context, rc *radioCtx, every time.Dur
 			rc.rf.mu.Unlock()
 			if path != "" && now.Sub(lastSave) >= saveEvery {
 				lastSave = now
-				if err := rc.rf.save(path, now); err != nil {
+				if err := rc.rf.save(path); err != nil {
 					s.log.Warn("saving RF history", "radio", rc.id, "err", err)
 				}
 			}

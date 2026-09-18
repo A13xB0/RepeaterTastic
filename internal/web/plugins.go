@@ -71,6 +71,7 @@ func (s *Server) pluginRoutes(priv func(string, http.HandlerFunc)) {
 	priv("GET /api/v1/plugins/{id}/panel-data", s.pluginPanelData)
 	priv("POST /api/v1/plugins/{id}/panel-action", s.pluginPanelAction)
 	s.mux.HandleFunc("GET /plugin-assets/{id}/{key}/{file...}", s.pluginAsset)
+	s.storeRoutes(priv)
 }
 
 // pluginJSON adds the asset URLs to a plugin's info.
@@ -132,9 +133,12 @@ func (s *Server) listPlugins(w http.ResponseWriter, r *http.Request) {
 				"radio_id": rc.id, "radio_name": rc.name, "is_relay": id.IsRelay})
 		}
 	}
+	// The update count comes off the cached index, so the Plugins tab can badge Updates without
+	// waiting on the store.
+	store := map[string]any{"enabled": m.Store() != nil, "updates": len(m.StoreUpdates())}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "error": m.StartError(), "plugins": list, "permissions": perms, "identities": identities,
 		"attach_address": m.Listening(), "allow_url_install": pc.AllowURLInstall, "folder": m.InboxDir(),
-		"messages_per_hour": pc.MessagesPerHour, "traceroutes_per_hour": pc.TraceroutesPerHour})
+		"messages_per_hour": pc.MessagesPerHour, "traceroutes_per_hour": pc.TraceroutesPerHour, "store": store})
 }
 
 // putPluginLimits is PUT /plugins/limits {"messages_per_hour", "traceroutes_per_hour"}: every
