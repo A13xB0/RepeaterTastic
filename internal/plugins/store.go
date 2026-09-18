@@ -111,7 +111,7 @@ func NewStore(u, dir, host string) *Store {
 func (s *Store) URL() string { return s.url }
 
 func (s *Store) indexPath() string { return filepath.Join(s.dir, "index.json") }
-func (s *Store) etagPath() string  { return filepath.Join(s.dir, "index.etag") }
+func (s *Store) etagPath() string  { return filepath.Join(s.dir, "index.meta") }
 func (s *Store) logoPath(id string) string {
 	return filepath.Join(s.dir, "logos", filepath.Base(id)+".png")
 }
@@ -226,7 +226,22 @@ func parseIndex(body []byte) (*Index, error) {
 	return &idx, nil
 }
 
+// cacheMeta records which store the cached index came from. Without the URL, changing store_url
+// would leave the old store's index on disk and its ETag would make the new store answer 304,
+// so the node would keep listing the old store's plugins.
+type cacheMeta struct {
+	URL  string `json:"url"`
+	ETag string `json:"etag,omitempty"`
+}
+
 func (s *Store) loadCacheLocked() {
+	var meta cacheMeta
+	if b, err := os.ReadFile(s.etagPath()); err == nil {
+		_ = json.Unmarshal(b, &meta)
+	}
+	if meta.URL != s.url {
+		return // the cache belongs to a different store: start again rather than trust it
+	}
 	body, err := os.ReadFile(s.indexPath())
 	if err != nil {
 		return
@@ -235,21 +250,21 @@ func (s *Store) loadCacheLocked() {
 	if err != nil {
 		return
 	}
-	s.index = idx
-	if tag, err := os.ReadFile(s.etagPath()); err == nil {
-		s.etag = strings.TrimSpace(string(tag))
-	}
-	// Left at zero: a cache off the disk is old by definition, so the next Index fetches.
+	s.index, s.etag = idx, meta.ETag
+	// fetched is left at zero: a cache off the disk is old by definition, so the next read fetches.
 }
 
+// saveCacheLocked writes the index and its ETag together. They are only ever written as a pair,
+// so an ETag can't end up validating a body it didn't come with.
 func (s *Store) saveCacheLocked(body []byte) {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return
 	}
-	_ = os.WriteFile(s.indexPath(), body, 0o644)
-	if s.etag != "" {
-		_ = os.WriteFile(s.etagPath(), []byte(s.etag), 0o644)
+	if err := os.WriteFile(s.indexPath(), body, 0o644); err != nil {
+		return
 	}
+	meta, _ := json.Marshal(cacheMeta{URL: s.url, ETag: s.etag})
+	_ = os.WriteFile(s.etagPath(), meta, 0o644)
 }
 
 // Logo returns a plugin's logo, from the disk cache when it is there. Logos are small and change

@@ -449,3 +449,31 @@ func TestStoreOffMeansNoStore(t *testing.T) {
 		t.Errorf("no store means no updates, got %+v", got)
 	}
 }
+
+func TestStoreIgnoresACacheFromADifferentStore(t *testing.T) {
+	first := newFakeStore(t)
+	first.setIndex(t, first.samplePlugin())
+	dir := filepath.Join(t.TempDir(), "store")
+	if _, err := NewStore(first.url(), dir, "0.3.3").Index(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The operator points store_url somewhere else. The old store's index must not be listed as
+	// if it were the new one's, and its ETag must not be offered to the new server.
+	second := newFakeStore(t)
+	other := second.samplePlugin()
+	other.ID, other.Name = "somethingelse", "Something Else"
+	second.setIndex(t, other)
+	second.etag = first.etag // the worst case: the new store happens to use the same ETag
+
+	idx, err := NewStore(second.url(), dir, "0.3.3").Index(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Plugins) != 1 || idx.Plugins[0].ID != "somethingelse" {
+		t.Fatalf("wanted the new store's plugins, got %v", pluginIDs(idx))
+	}
+	if second.notMod.Load() != 0 {
+		t.Error("the old store's ETag was sent to the new store")
+	}
+}
