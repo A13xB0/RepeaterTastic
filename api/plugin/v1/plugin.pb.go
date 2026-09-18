@@ -10,7 +10,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.36.1
-// source: plugin.proto
+// source: plugin/v1/plugin.proto
 
 package pluginv1
 
@@ -45,7 +45,7 @@ type PluginMessage struct {
 
 func (x *PluginMessage) Reset() {
 	*x = PluginMessage{}
-	mi := &file_plugin_proto_msgTypes[0]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -57,7 +57,7 @@ func (x *PluginMessage) String() string {
 func (*PluginMessage) ProtoMessage() {}
 
 func (x *PluginMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[0]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -70,7 +70,7 @@ func (x *PluginMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PluginMessage.ProtoReflect.Descriptor instead.
 func (*PluginMessage) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{0}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *PluginMessage) GetMsg() isPluginMessage_Msg {
@@ -171,6 +171,7 @@ type HostMessage struct {
 	//	*HostMessage_Settings
 	//	*HostMessage_Stop
 	//	*HostMessage_Action
+	//	*HostMessage_StatusEvent
 	Msg           isHostMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -178,7 +179,7 @@ type HostMessage struct {
 
 func (x *HostMessage) Reset() {
 	*x = HostMessage{}
-	mi := &file_plugin_proto_msgTypes[1]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -190,7 +191,7 @@ func (x *HostMessage) String() string {
 func (*HostMessage) ProtoMessage() {}
 
 func (x *HostMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[1]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -203,7 +204,7 @@ func (x *HostMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostMessage.ProtoReflect.Descriptor instead.
 func (*HostMessage) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{1}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *HostMessage) GetMsg() isHostMessage_Msg {
@@ -285,6 +286,15 @@ func (x *HostMessage) GetAction() *PanelAction {
 	return nil
 }
 
+func (x *HostMessage) GetStatusEvent() *StatusEvent {
+	if x != nil {
+		if x, ok := x.Msg.(*HostMessage_StatusEvent); ok {
+			return x.StatusEvent
+		}
+	}
+	return nil
+}
+
 type isHostMessage_Msg interface {
 	isHostMessage_Msg()
 }
@@ -321,6 +331,10 @@ type HostMessage_Action struct {
 	Action *PanelAction `protobuf:"bytes,8,opt,name=action,proto3,oneof"`
 }
 
+type HostMessage_StatusEvent struct {
+	StatusEvent *StatusEvent `protobuf:"bytes,9,opt,name=status_event,json=statusEvent,proto3,oneof"`
+}
+
 func (*HostMessage_Welcome) isHostMessage_Msg() {}
 
 func (*HostMessage_Packet) isHostMessage_Msg() {}
@@ -337,6 +351,8 @@ func (*HostMessage_Stop) isHostMessage_Msg() {}
 
 func (*HostMessage_Action) isHostMessage_Msg() {}
 
+func (*HostMessage_StatusEvent) isHostMessage_Msg() {}
+
 type Hello struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PluginId      string                 `protobuf:"bytes,1,opt,name=plugin_id,json=pluginId,proto3" json:"plugin_id,omitempty"`
@@ -351,7 +367,7 @@ type Hello struct {
 
 func (x *Hello) Reset() {
 	*x = Hello{}
-	mi := &file_plugin_proto_msgTypes[2]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -363,7 +379,7 @@ func (x *Hello) String() string {
 func (*Hello) ProtoMessage() {}
 
 func (x *Hello) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[2]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -376,7 +392,7 @@ func (x *Hello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Hello.ProtoReflect.Descriptor instead.
 func (*Hello) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{2}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Hello) GetPluginId() string {
@@ -421,7 +437,7 @@ type Welcome struct {
 
 func (x *Welcome) Reset() {
 	*x = Welcome{}
-	mi := &file_plugin_proto_msgTypes[3]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -433,7 +449,7 @@ func (x *Welcome) String() string {
 func (*Welcome) ProtoMessage() {}
 
 func (x *Welcome) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[3]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -446,7 +462,7 @@ func (x *Welcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Welcome.ProtoReflect.Descriptor instead.
 func (*Welcome) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{3}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Welcome) GetApiVersion() uint32 {
@@ -502,7 +518,7 @@ type Status struct {
 
 func (x *Status) Reset() {
 	*x = Status{}
-	mi := &file_plugin_proto_msgTypes[4]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -514,7 +530,7 @@ func (x *Status) String() string {
 func (*Status) ProtoMessage() {}
 
 func (x *Status) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[4]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -527,7 +543,7 @@ func (x *Status) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Status.ProtoReflect.Descriptor instead.
 func (*Status) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{4}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Status) GetSummary() string {
@@ -561,7 +577,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_plugin_proto_msgTypes[5]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -573,7 +589,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[5]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -586,7 +602,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{5}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *LogLine) GetLevel() string {
@@ -611,7 +627,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_plugin_proto_msgTypes[6]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -623,7 +639,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[6]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -636,7 +652,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{6}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{6}
 }
 
 // PanelData: JSON for the plugin's own GUI panel, if it has one. The panel receives the latest
@@ -650,7 +666,7 @@ type PanelData struct {
 
 func (x *PanelData) Reset() {
 	*x = PanelData{}
-	mi := &file_plugin_proto_msgTypes[7]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -662,7 +678,7 @@ func (x *PanelData) String() string {
 func (*PanelData) ProtoMessage() {}
 
 func (x *PanelData) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[7]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -675,7 +691,7 @@ func (x *PanelData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PanelData.ProtoReflect.Descriptor instead.
 func (*PanelData) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{7}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PanelData) GetJson() string {
@@ -696,7 +712,7 @@ type PanelAction struct {
 
 func (x *PanelAction) Reset() {
 	*x = PanelAction{}
-	mi := &file_plugin_proto_msgTypes[8]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -708,7 +724,7 @@ func (x *PanelAction) String() string {
 func (*PanelAction) ProtoMessage() {}
 
 func (x *PanelAction) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[8]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -721,7 +737,7 @@ func (x *PanelAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PanelAction.ProtoReflect.Descriptor instead.
 func (*PanelAction) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{8}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PanelAction) GetName() string {
@@ -747,7 +763,7 @@ type SettingsChanged struct {
 
 func (x *SettingsChanged) Reset() {
 	*x = SettingsChanged{}
-	mi := &file_plugin_proto_msgTypes[9]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -759,7 +775,7 @@ func (x *SettingsChanged) String() string {
 func (*SettingsChanged) ProtoMessage() {}
 
 func (x *SettingsChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[9]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -772,7 +788,7 @@ func (x *SettingsChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettingsChanged.ProtoReflect.Descriptor instead.
 func (*SettingsChanged) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{9}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SettingsChanged) GetSettingsJson() string {
@@ -791,7 +807,7 @@ type Stop struct {
 
 func (x *Stop) Reset() {
 	*x = Stop{}
-	mi := &file_plugin_proto_msgTypes[10]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -803,7 +819,7 @@ func (x *Stop) String() string {
 func (*Stop) ProtoMessage() {}
 
 func (x *Stop) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[10]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -816,7 +832,7 @@ func (x *Stop) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Stop.ProtoReflect.Descriptor instead.
 func (*Stop) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{10}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Stop) GetReason() string {
@@ -843,7 +859,7 @@ type Radio struct {
 
 func (x *Radio) Reset() {
 	*x = Radio{}
-	mi := &file_plugin_proto_msgTypes[11]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -855,7 +871,7 @@ func (x *Radio) String() string {
 func (*Radio) ProtoMessage() {}
 
 func (x *Radio) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[11]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -868,7 +884,7 @@ func (x *Radio) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Radio.ProtoReflect.Descriptor instead.
 func (*Radio) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{11}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Radio) GetId() string {
@@ -934,6 +950,322 @@ func (x *Radio) GetIdentities() []*Identity {
 	return nil
 }
 
+// RadioStatus is a radio's live figures. Counters are totals since the daemon started, so a
+// consumer should treat them as monotonic and diff them rather than reading them as rates.
+type RadioStatus struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RadioId         string                 `protobuf:"bytes,1,opt,name=radio_id,json=radioId,proto3" json:"radio_id,omitempty"`
+	Connected       bool                   `protobuf:"varint,2,opt,name=connected,proto3" json:"connected,omitempty"` // the modem is up and configured
+	NoiseFloorDbm   int32                  `protobuf:"varint,3,opt,name=noise_floor_dbm,json=noiseFloorDbm,proto3" json:"noise_floor_dbm,omitempty"`
+	AirtimeTxPct    float64                `protobuf:"fixed64,4,opt,name=airtime_tx_pct,json=airtimeTxPct,proto3" json:"airtime_tx_pct,omitempty"` // of the last hour
+	DutyLimitPct    float64                `protobuf:"fixed64,5,opt,name=duty_limit_pct,json=dutyLimitPct,proto3" json:"duty_limit_pct,omitempty"` // the region's limit, or the configured override
+	ChannelUtilPct  float64                `protobuf:"fixed64,6,opt,name=channel_util_pct,json=channelUtilPct,proto3" json:"channel_util_pct,omitempty"`
+	Queue           uint32                 `protobuf:"varint,7,opt,name=queue,proto3" json:"queue,omitempty"` // packets waiting to transmit
+	Rx              uint64                 `protobuf:"varint,8,opt,name=rx,proto3" json:"rx,omitempty"`
+	Tx              uint64                 `protobuf:"varint,9,opt,name=tx,proto3" json:"tx,omitempty"`
+	RxDupe          uint64                 `protobuf:"varint,10,opt,name=rx_dupe,json=rxDupe,proto3" json:"rx_dupe,omitempty"`
+	RxUndecryptable uint64                 `protobuf:"varint,11,opt,name=rx_undecryptable,json=rxUndecryptable,proto3" json:"rx_undecryptable,omitempty"`
+	RxBad           uint64                 `protobuf:"varint,12,opt,name=rx_bad,json=rxBad,proto3" json:"rx_bad,omitempty"`
+	TxFailed        uint64                 `protobuf:"varint,13,opt,name=tx_failed,json=txFailed,proto3" json:"tx_failed,omitempty"`
+	AckOk           uint64                 `protobuf:"varint,14,opt,name=ack_ok,json=ackOk,proto3" json:"ack_ok,omitempty"`
+	AckFail         uint64                 `protobuf:"varint,15,opt,name=ack_fail,json=ackFail,proto3" json:"ack_fail,omitempty"`
+	DroppedDuty     uint64                 `protobuf:"varint,16,opt,name=dropped_duty,json=droppedDuty,proto3" json:"dropped_duty,omitempty"`
+	UptimeS         int64                  `protobuf:"varint,17,opt,name=uptime_s,json=uptimeS,proto3" json:"uptime_s,omitempty"`
+	NodesHeard      uint32                 `protobuf:"varint,18,opt,name=nodes_heard,json=nodesHeard,proto3" json:"nodes_heard,omitempty"` // heard in the last two hours
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RadioStatus) Reset() {
+	*x = RadioStatus{}
+	mi := &file_plugin_v1_plugin_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RadioStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RadioStatus) ProtoMessage() {}
+
+func (x *RadioStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_v1_plugin_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RadioStatus.ProtoReflect.Descriptor instead.
+func (*RadioStatus) Descriptor() ([]byte, []int) {
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *RadioStatus) GetRadioId() string {
+	if x != nil {
+		return x.RadioId
+	}
+	return ""
+}
+
+func (x *RadioStatus) GetConnected() bool {
+	if x != nil {
+		return x.Connected
+	}
+	return false
+}
+
+func (x *RadioStatus) GetNoiseFloorDbm() int32 {
+	if x != nil {
+		return x.NoiseFloorDbm
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetAirtimeTxPct() float64 {
+	if x != nil {
+		return x.AirtimeTxPct
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetDutyLimitPct() float64 {
+	if x != nil {
+		return x.DutyLimitPct
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetChannelUtilPct() float64 {
+	if x != nil {
+		return x.ChannelUtilPct
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetQueue() uint32 {
+	if x != nil {
+		return x.Queue
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetRx() uint64 {
+	if x != nil {
+		return x.Rx
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetTx() uint64 {
+	if x != nil {
+		return x.Tx
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetRxDupe() uint64 {
+	if x != nil {
+		return x.RxDupe
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetRxUndecryptable() uint64 {
+	if x != nil {
+		return x.RxUndecryptable
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetRxBad() uint64 {
+	if x != nil {
+		return x.RxBad
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetTxFailed() uint64 {
+	if x != nil {
+		return x.TxFailed
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetAckOk() uint64 {
+	if x != nil {
+		return x.AckOk
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetAckFail() uint64 {
+	if x != nil {
+		return x.AckFail
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetDroppedDuty() uint64 {
+	if x != nil {
+		return x.DroppedDuty
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetUptimeS() int64 {
+	if x != nil {
+		return x.UptimeS
+	}
+	return 0
+}
+
+func (x *RadioStatus) GetNodesHeard() uint32 {
+	if x != nil {
+		return x.NodesHeard
+	}
+	return 0
+}
+
+type GetStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RadioId       string                 `protobuf:"bytes,1,opt,name=radio_id,json=radioId,proto3" json:"radio_id,omitempty"` // "" = every radio
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetStatusRequest) Reset() {
+	*x = GetStatusRequest{}
+	mi := &file_plugin_v1_plugin_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetStatusRequest) ProtoMessage() {}
+
+func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_v1_plugin_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetStatusRequest.ProtoReflect.Descriptor instead.
+func (*GetStatusRequest) Descriptor() ([]byte, []int) {
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetStatusRequest) GetRadioId() string {
+	if x != nil {
+		return x.RadioId
+	}
+	return ""
+}
+
+type GetStatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Radios        []*RadioStatus         `protobuf:"bytes,1,rep,name=radios,proto3" json:"radios,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetStatusResponse) Reset() {
+	*x = GetStatusResponse{}
+	mi := &file_plugin_v1_plugin_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetStatusResponse) ProtoMessage() {}
+
+func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_v1_plugin_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetStatusResponse.ProtoReflect.Descriptor instead.
+func (*GetStatusResponse) Descriptor() ([]byte, []int) {
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *GetStatusResponse) GetRadios() []*RadioStatus {
+	if x != nil {
+		return x.Radios
+	}
+	return nil
+}
+
+// StatusEvent arrives on the session stream for plugins holding status.read, once every
+// status_interval_s (see Welcome), so a publisher does not have to poll.
+type StatusEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Radios        []*RadioStatus         `protobuf:"bytes,1,rep,name=radios,proto3" json:"radios,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusEvent) Reset() {
+	*x = StatusEvent{}
+	mi := &file_plugin_v1_plugin_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusEvent) ProtoMessage() {}
+
+func (x *StatusEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_v1_plugin_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusEvent.ProtoReflect.Descriptor instead.
+func (*StatusEvent) Descriptor() ([]byte, []int) {
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *StatusEvent) GetRadios() []*RadioStatus {
+	if x != nil {
+		return x.Radios
+	}
+	return nil
+}
+
 type Identity struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // "!a1c40e07"
@@ -947,7 +1279,7 @@ type Identity struct {
 
 func (x *Identity) Reset() {
 	*x = Identity{}
-	mi := &file_plugin_proto_msgTypes[12]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -959,7 +1291,7 @@ func (x *Identity) String() string {
 func (*Identity) ProtoMessage() {}
 
 func (x *Identity) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[12]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -972,7 +1304,7 @@ func (x *Identity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Identity.ProtoReflect.Descriptor instead.
 func (*Identity) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{12}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Identity) GetNodeId() string {
@@ -1030,7 +1362,7 @@ type Node struct {
 
 func (x *Node) Reset() {
 	*x = Node{}
-	mi := &file_plugin_proto_msgTypes[13]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1042,7 +1374,7 @@ func (x *Node) String() string {
 func (*Node) ProtoMessage() {}
 
 func (x *Node) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[13]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1055,7 +1387,7 @@ func (x *Node) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Node.ProtoReflect.Descriptor instead.
 func (*Node) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{13}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Node) GetNodeNum() uint32 {
@@ -1173,7 +1505,7 @@ type PacketEvent struct {
 
 func (x *PacketEvent) Reset() {
 	*x = PacketEvent{}
-	mi := &file_plugin_proto_msgTypes[14]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1185,7 +1517,7 @@ func (x *PacketEvent) String() string {
 func (*PacketEvent) ProtoMessage() {}
 
 func (x *PacketEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[14]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1198,7 +1530,7 @@ func (x *PacketEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PacketEvent.ProtoReflect.Descriptor instead.
 func (*PacketEvent) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{14}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PacketEvent) GetRadioId() string {
@@ -1288,7 +1620,7 @@ type ChannelHolder struct {
 
 func (x *ChannelHolder) Reset() {
 	*x = ChannelHolder{}
-	mi := &file_plugin_proto_msgTypes[15]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1300,7 +1632,7 @@ func (x *ChannelHolder) String() string {
 func (*ChannelHolder) ProtoMessage() {}
 
 func (x *ChannelHolder) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[15]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1313,7 +1645,7 @@ func (x *ChannelHolder) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChannelHolder.ProtoReflect.Descriptor instead.
 func (*ChannelHolder) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{15}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ChannelHolder) GetNodeNum() uint32 {
@@ -1339,7 +1671,7 @@ type NodeEvent struct {
 
 func (x *NodeEvent) Reset() {
 	*x = NodeEvent{}
-	mi := &file_plugin_proto_msgTypes[16]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1351,7 +1683,7 @@ func (x *NodeEvent) String() string {
 func (*NodeEvent) ProtoMessage() {}
 
 func (x *NodeEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[16]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1364,7 +1696,7 @@ func (x *NodeEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeEvent.ProtoReflect.Descriptor instead.
 func (*NodeEvent) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{16}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *NodeEvent) GetNode() *Node {
@@ -1393,7 +1725,7 @@ type TextMessageEvent struct {
 
 func (x *TextMessageEvent) Reset() {
 	*x = TextMessageEvent{}
-	mi := &file_plugin_proto_msgTypes[17]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1405,7 +1737,7 @@ func (x *TextMessageEvent) String() string {
 func (*TextMessageEvent) ProtoMessage() {}
 
 func (x *TextMessageEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[17]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1418,7 +1750,7 @@ func (x *TextMessageEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextMessageEvent.ProtoReflect.Descriptor instead.
 func (*TextMessageEvent) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{17}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *TextMessageEvent) GetRadioId() string {
@@ -1506,7 +1838,7 @@ type TracerouteEvent struct {
 
 func (x *TracerouteEvent) Reset() {
 	*x = TracerouteEvent{}
-	mi := &file_plugin_proto_msgTypes[18]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1518,7 +1850,7 @@ func (x *TracerouteEvent) String() string {
 func (*TracerouteEvent) ProtoMessage() {}
 
 func (x *TracerouteEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[18]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1531,7 +1863,7 @@ func (x *TracerouteEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TracerouteEvent.ProtoReflect.Descriptor instead.
 func (*TracerouteEvent) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{18}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *TracerouteEvent) GetRadioId() string {
@@ -1591,7 +1923,7 @@ type ListRadiosRequest struct {
 
 func (x *ListRadiosRequest) Reset() {
 	*x = ListRadiosRequest{}
-	mi := &file_plugin_proto_msgTypes[19]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1603,7 +1935,7 @@ func (x *ListRadiosRequest) String() string {
 func (*ListRadiosRequest) ProtoMessage() {}
 
 func (x *ListRadiosRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[19]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1616,7 +1948,7 @@ func (x *ListRadiosRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRadiosRequest.ProtoReflect.Descriptor instead.
 func (*ListRadiosRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{19}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{23}
 }
 
 type ListRadiosResponse struct {
@@ -1628,7 +1960,7 @@ type ListRadiosResponse struct {
 
 func (x *ListRadiosResponse) Reset() {
 	*x = ListRadiosResponse{}
-	mi := &file_plugin_proto_msgTypes[20]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1640,7 +1972,7 @@ func (x *ListRadiosResponse) String() string {
 func (*ListRadiosResponse) ProtoMessage() {}
 
 func (x *ListRadiosResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[20]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1653,7 +1985,7 @@ func (x *ListRadiosResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRadiosResponse.ProtoReflect.Descriptor instead.
 func (*ListRadiosResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{20}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ListRadiosResponse) GetRadios() []*Radio {
@@ -1672,7 +2004,7 @@ type ListNodesRequest struct {
 
 func (x *ListNodesRequest) Reset() {
 	*x = ListNodesRequest{}
-	mi := &file_plugin_proto_msgTypes[21]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1684,7 +2016,7 @@ func (x *ListNodesRequest) String() string {
 func (*ListNodesRequest) ProtoMessage() {}
 
 func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[21]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1697,7 +2029,7 @@ func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListNodesRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{21}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ListNodesRequest) GetRadioId() string {
@@ -1716,7 +2048,7 @@ type ListNodesResponse struct {
 
 func (x *ListNodesResponse) Reset() {
 	*x = ListNodesResponse{}
-	mi := &file_plugin_proto_msgTypes[22]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1728,7 +2060,7 @@ func (x *ListNodesResponse) String() string {
 func (*ListNodesResponse) ProtoMessage() {}
 
 func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[22]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1741,7 +2073,7 @@ func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListNodesResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{22}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ListNodesResponse) GetNodes() []*Node {
@@ -1764,7 +2096,7 @@ type SendTextRequest struct {
 
 func (x *SendTextRequest) Reset() {
 	*x = SendTextRequest{}
-	mi := &file_plugin_proto_msgTypes[23]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1776,7 +2108,7 @@ func (x *SendTextRequest) String() string {
 func (*SendTextRequest) ProtoMessage() {}
 
 func (x *SendTextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[23]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1789,7 +2121,7 @@ func (x *SendTextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendTextRequest.ProtoReflect.Descriptor instead.
 func (*SendTextRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{23}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *SendTextRequest) GetRadioId() string {
@@ -1839,7 +2171,7 @@ type TracerouteRequest struct {
 
 func (x *TracerouteRequest) Reset() {
 	*x = TracerouteRequest{}
-	mi := &file_plugin_proto_msgTypes[24]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1851,7 +2183,7 @@ func (x *TracerouteRequest) String() string {
 func (*TracerouteRequest) ProtoMessage() {}
 
 func (x *TracerouteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[24]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1864,7 +2196,7 @@ func (x *TracerouteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TracerouteRequest.ProtoReflect.Descriptor instead.
 func (*TracerouteRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{24}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *TracerouteRequest) GetRadioId() string {
@@ -1897,7 +2229,7 @@ type SendResponse struct {
 
 func (x *SendResponse) Reset() {
 	*x = SendResponse{}
-	mi := &file_plugin_proto_msgTypes[25]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1909,7 +2241,7 @@ func (x *SendResponse) String() string {
 func (*SendResponse) ProtoMessage() {}
 
 func (x *SendResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[25]
+	mi := &file_plugin_v1_plugin_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1922,7 +2254,7 @@ func (x *SendResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendResponse.ProtoReflect.Descriptor instead.
 func (*SendResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{25}
+	return file_plugin_v1_plugin_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *SendResponse) GetPacketId() uint32 {
@@ -1932,18 +2264,18 @@ func (x *SendResponse) GetPacketId() uint32 {
 	return 0
 }
 
-var File_plugin_proto protoreflect.FileDescriptor
+var File_plugin_v1_plugin_proto protoreflect.FileDescriptor
 
-const file_plugin_proto_rawDesc = "" +
+const file_plugin_v1_plugin_proto_rawDesc = "" +
 	"\n" +
-	"\fplugin.proto\x12\x18repeatertastic.plugin.v1\"\xc4\x02\n" +
+	"\x16plugin/v1/plugin.proto\x12\x18repeatertastic.plugin.v1\"\xc4\x02\n" +
 	"\rPluginMessage\x127\n" +
 	"\x05hello\x18\x01 \x01(\v2\x1f.repeatertastic.plugin.v1.HelloH\x00R\x05hello\x12:\n" +
 	"\x06status\x18\x02 \x01(\v2 .repeatertastic.plugin.v1.StatusH\x00R\x06status\x125\n" +
 	"\x03log\x18\x03 \x01(\v2!.repeatertastic.plugin.v1.LogLineH\x00R\x03log\x12C\n" +
 	"\theartbeat\x18\x04 \x01(\v2#.repeatertastic.plugin.v1.HeartbeatH\x00R\theartbeat\x12;\n" +
 	"\x05panel\x18\x05 \x01(\v2#.repeatertastic.plugin.v1.PanelDataH\x00R\x05panelB\x05\n" +
-	"\x03msg\"\x9e\x04\n" +
+	"\x03msg\"\xea\x04\n" +
 	"\vHostMessage\x12=\n" +
 	"\awelcome\x18\x01 \x01(\v2!.repeatertastic.plugin.v1.WelcomeH\x00R\awelcome\x12?\n" +
 	"\x06packet\x18\x02 \x01(\v2%.repeatertastic.plugin.v1.PacketEventH\x00R\x06packet\x129\n" +
@@ -1954,7 +2286,8 @@ const file_plugin_proto_rawDesc = "" +
 	"traceroute\x12G\n" +
 	"\bsettings\x18\x06 \x01(\v2).repeatertastic.plugin.v1.SettingsChangedH\x00R\bsettings\x124\n" +
 	"\x04stop\x18\a \x01(\v2\x1e.repeatertastic.plugin.v1.StopH\x00R\x04stop\x12?\n" +
-	"\x06action\x18\b \x01(\v2%.repeatertastic.plugin.v1.PanelActionH\x00R\x06actionB\x05\n" +
+	"\x06action\x18\b \x01(\v2%.repeatertastic.plugin.v1.PanelActionH\x00R\x06action\x12J\n" +
+	"\fstatus_event\x18\t \x01(\v2%.repeatertastic.plugin.v1.StatusEventH\x00R\vstatusEventB\x05\n" +
 	"\x03msg\"\x91\x01\n" +
 	"\x05Hello\x12\x1b\n" +
 	"\tplugin_id\x18\x01 \x01(\tR\bpluginId\x12\x1f\n" +
@@ -2002,7 +2335,34 @@ const file_plugin_proto_rawDesc = "" +
 	"\x05relay\x18\b \x01(\v2\".repeatertastic.plugin.v1.IdentityR\x05relay\x12B\n" +
 	"\n" +
 	"identities\x18\t \x03(\v2\".repeatertastic.plugin.v1.IdentityR\n" +
-	"identities\"\x95\x01\n" +
+	"identities\"\xa3\x04\n" +
+	"\vRadioStatus\x12\x19\n" +
+	"\bradio_id\x18\x01 \x01(\tR\aradioId\x12\x1c\n" +
+	"\tconnected\x18\x02 \x01(\bR\tconnected\x12&\n" +
+	"\x0fnoise_floor_dbm\x18\x03 \x01(\x05R\rnoiseFloorDbm\x12$\n" +
+	"\x0eairtime_tx_pct\x18\x04 \x01(\x01R\fairtimeTxPct\x12$\n" +
+	"\x0eduty_limit_pct\x18\x05 \x01(\x01R\fdutyLimitPct\x12(\n" +
+	"\x10channel_util_pct\x18\x06 \x01(\x01R\x0echannelUtilPct\x12\x14\n" +
+	"\x05queue\x18\a \x01(\rR\x05queue\x12\x0e\n" +
+	"\x02rx\x18\b \x01(\x04R\x02rx\x12\x0e\n" +
+	"\x02tx\x18\t \x01(\x04R\x02tx\x12\x17\n" +
+	"\arx_dupe\x18\n" +
+	" \x01(\x04R\x06rxDupe\x12)\n" +
+	"\x10rx_undecryptable\x18\v \x01(\x04R\x0frxUndecryptable\x12\x15\n" +
+	"\x06rx_bad\x18\f \x01(\x04R\x05rxBad\x12\x1b\n" +
+	"\ttx_failed\x18\r \x01(\x04R\btxFailed\x12\x15\n" +
+	"\x06ack_ok\x18\x0e \x01(\x04R\x05ackOk\x12\x19\n" +
+	"\back_fail\x18\x0f \x01(\x04R\aackFail\x12!\n" +
+	"\fdropped_duty\x18\x10 \x01(\x04R\vdroppedDuty\x12\x19\n" +
+	"\buptime_s\x18\x11 \x01(\x03R\auptimeS\x12\x1f\n" +
+	"\vnodes_heard\x18\x12 \x01(\rR\n" +
+	"nodesHeard\"-\n" +
+	"\x10GetStatusRequest\x12\x19\n" +
+	"\bradio_id\x18\x01 \x01(\tR\aradioId\"R\n" +
+	"\x11GetStatusResponse\x12=\n" +
+	"\x06radios\x18\x01 \x03(\v2%.repeatertastic.plugin.v1.RadioStatusR\x06radios\"L\n" +
+	"\vStatusEvent\x12=\n" +
+	"\x06radios\x18\x01 \x03(\v2%.repeatertastic.plugin.v1.RadioStatusR\x06radios\"\x95\x01\n" +
 	"\bIdentity\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x19\n" +
 	"\bnode_num\x18\x02 \x01(\rR\anodeNum\x12\x1b\n" +
@@ -2083,7 +2443,7 @@ const file_plugin_proto_rawDesc = "" +
 	"\x06target\x18\x02 \x01(\tR\x06target\x12\x12\n" +
 	"\x04from\x18\x03 \x01(\tR\x04from\"+\n" +
 	"\fSendResponse\x12\x1b\n" +
-	"\tpacket_id\x18\x01 \x01(\rR\bpacketId2\xfc\x03\n" +
+	"\tpacket_id\x18\x01 \x01(\rR\bpacketId2\xe2\x04\n" +
 	"\n" +
 	"PluginHost\x12]\n" +
 	"\aSession\x12'.repeatertastic.plugin.v1.PluginMessage\x1a%.repeatertastic.plugin.v1.HostMessage(\x010\x01\x12g\n" +
@@ -2092,22 +2452,23 @@ const file_plugin_proto_rawDesc = "" +
 	"\tListNodes\x12*.repeatertastic.plugin.v1.ListNodesRequest\x1a+.repeatertastic.plugin.v1.ListNodesResponse\x12]\n" +
 	"\bSendText\x12).repeatertastic.plugin.v1.SendTextRequest\x1a&.repeatertastic.plugin.v1.SendResponse\x12a\n" +
 	"\n" +
-	"Traceroute\x12+.repeatertastic.plugin.v1.TracerouteRequest\x1a&.repeatertastic.plugin.v1.SendResponseB;Z9github.com/ScotMesh/RepeaterTastic/api/plugin/v1;pluginv1b\x06proto3"
+	"Traceroute\x12+.repeatertastic.plugin.v1.TracerouteRequest\x1a&.repeatertastic.plugin.v1.SendResponse\x12d\n" +
+	"\tGetStatus\x12*.repeatertastic.plugin.v1.GetStatusRequest\x1a+.repeatertastic.plugin.v1.GetStatusResponseB;Z9github.com/ScotMesh/RepeaterTastic/api/plugin/v1;pluginv1b\x06proto3"
 
 var (
-	file_plugin_proto_rawDescOnce sync.Once
-	file_plugin_proto_rawDescData []byte
+	file_plugin_v1_plugin_proto_rawDescOnce sync.Once
+	file_plugin_v1_plugin_proto_rawDescData []byte
 )
 
-func file_plugin_proto_rawDescGZIP() []byte {
-	file_plugin_proto_rawDescOnce.Do(func() {
-		file_plugin_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_plugin_proto_rawDesc), len(file_plugin_proto_rawDesc)))
+func file_plugin_v1_plugin_proto_rawDescGZIP() []byte {
+	file_plugin_v1_plugin_proto_rawDescOnce.Do(func() {
+		file_plugin_v1_plugin_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_plugin_v1_plugin_proto_rawDesc), len(file_plugin_v1_plugin_proto_rawDesc)))
 	})
-	return file_plugin_proto_rawDescData
+	return file_plugin_v1_plugin_proto_rawDescData
 }
 
-var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
-var file_plugin_proto_goTypes = []any{
+var file_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_plugin_v1_plugin_proto_goTypes = []any{
 	(*PluginMessage)(nil),      // 0: repeatertastic.plugin.v1.PluginMessage
 	(*HostMessage)(nil),        // 1: repeatertastic.plugin.v1.HostMessage
 	(*Hello)(nil),              // 2: repeatertastic.plugin.v1.Hello
@@ -2120,74 +2481,83 @@ var file_plugin_proto_goTypes = []any{
 	(*SettingsChanged)(nil),    // 9: repeatertastic.plugin.v1.SettingsChanged
 	(*Stop)(nil),               // 10: repeatertastic.plugin.v1.Stop
 	(*Radio)(nil),              // 11: repeatertastic.plugin.v1.Radio
-	(*Identity)(nil),           // 12: repeatertastic.plugin.v1.Identity
-	(*Node)(nil),               // 13: repeatertastic.plugin.v1.Node
-	(*PacketEvent)(nil),        // 14: repeatertastic.plugin.v1.PacketEvent
-	(*ChannelHolder)(nil),      // 15: repeatertastic.plugin.v1.ChannelHolder
-	(*NodeEvent)(nil),          // 16: repeatertastic.plugin.v1.NodeEvent
-	(*TextMessageEvent)(nil),   // 17: repeatertastic.plugin.v1.TextMessageEvent
-	(*TracerouteEvent)(nil),    // 18: repeatertastic.plugin.v1.TracerouteEvent
-	(*ListRadiosRequest)(nil),  // 19: repeatertastic.plugin.v1.ListRadiosRequest
-	(*ListRadiosResponse)(nil), // 20: repeatertastic.plugin.v1.ListRadiosResponse
-	(*ListNodesRequest)(nil),   // 21: repeatertastic.plugin.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),  // 22: repeatertastic.plugin.v1.ListNodesResponse
-	(*SendTextRequest)(nil),    // 23: repeatertastic.plugin.v1.SendTextRequest
-	(*TracerouteRequest)(nil),  // 24: repeatertastic.plugin.v1.TracerouteRequest
-	(*SendResponse)(nil),       // 25: repeatertastic.plugin.v1.SendResponse
-	nil,                        // 26: repeatertastic.plugin.v1.Status.FieldsEntry
+	(*RadioStatus)(nil),        // 12: repeatertastic.plugin.v1.RadioStatus
+	(*GetStatusRequest)(nil),   // 13: repeatertastic.plugin.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),  // 14: repeatertastic.plugin.v1.GetStatusResponse
+	(*StatusEvent)(nil),        // 15: repeatertastic.plugin.v1.StatusEvent
+	(*Identity)(nil),           // 16: repeatertastic.plugin.v1.Identity
+	(*Node)(nil),               // 17: repeatertastic.plugin.v1.Node
+	(*PacketEvent)(nil),        // 18: repeatertastic.plugin.v1.PacketEvent
+	(*ChannelHolder)(nil),      // 19: repeatertastic.plugin.v1.ChannelHolder
+	(*NodeEvent)(nil),          // 20: repeatertastic.plugin.v1.NodeEvent
+	(*TextMessageEvent)(nil),   // 21: repeatertastic.plugin.v1.TextMessageEvent
+	(*TracerouteEvent)(nil),    // 22: repeatertastic.plugin.v1.TracerouteEvent
+	(*ListRadiosRequest)(nil),  // 23: repeatertastic.plugin.v1.ListRadiosRequest
+	(*ListRadiosResponse)(nil), // 24: repeatertastic.plugin.v1.ListRadiosResponse
+	(*ListNodesRequest)(nil),   // 25: repeatertastic.plugin.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),  // 26: repeatertastic.plugin.v1.ListNodesResponse
+	(*SendTextRequest)(nil),    // 27: repeatertastic.plugin.v1.SendTextRequest
+	(*TracerouteRequest)(nil),  // 28: repeatertastic.plugin.v1.TracerouteRequest
+	(*SendResponse)(nil),       // 29: repeatertastic.plugin.v1.SendResponse
+	nil,                        // 30: repeatertastic.plugin.v1.Status.FieldsEntry
 }
-var file_plugin_proto_depIdxs = []int32{
+var file_plugin_v1_plugin_proto_depIdxs = []int32{
 	2,  // 0: repeatertastic.plugin.v1.PluginMessage.hello:type_name -> repeatertastic.plugin.v1.Hello
 	4,  // 1: repeatertastic.plugin.v1.PluginMessage.status:type_name -> repeatertastic.plugin.v1.Status
 	5,  // 2: repeatertastic.plugin.v1.PluginMessage.log:type_name -> repeatertastic.plugin.v1.LogLine
 	6,  // 3: repeatertastic.plugin.v1.PluginMessage.heartbeat:type_name -> repeatertastic.plugin.v1.Heartbeat
 	7,  // 4: repeatertastic.plugin.v1.PluginMessage.panel:type_name -> repeatertastic.plugin.v1.PanelData
 	3,  // 5: repeatertastic.plugin.v1.HostMessage.welcome:type_name -> repeatertastic.plugin.v1.Welcome
-	14, // 6: repeatertastic.plugin.v1.HostMessage.packet:type_name -> repeatertastic.plugin.v1.PacketEvent
-	16, // 7: repeatertastic.plugin.v1.HostMessage.node:type_name -> repeatertastic.plugin.v1.NodeEvent
-	17, // 8: repeatertastic.plugin.v1.HostMessage.text:type_name -> repeatertastic.plugin.v1.TextMessageEvent
-	18, // 9: repeatertastic.plugin.v1.HostMessage.traceroute:type_name -> repeatertastic.plugin.v1.TracerouteEvent
+	18, // 6: repeatertastic.plugin.v1.HostMessage.packet:type_name -> repeatertastic.plugin.v1.PacketEvent
+	20, // 7: repeatertastic.plugin.v1.HostMessage.node:type_name -> repeatertastic.plugin.v1.NodeEvent
+	21, // 8: repeatertastic.plugin.v1.HostMessage.text:type_name -> repeatertastic.plugin.v1.TextMessageEvent
+	22, // 9: repeatertastic.plugin.v1.HostMessage.traceroute:type_name -> repeatertastic.plugin.v1.TracerouteEvent
 	9,  // 10: repeatertastic.plugin.v1.HostMessage.settings:type_name -> repeatertastic.plugin.v1.SettingsChanged
 	10, // 11: repeatertastic.plugin.v1.HostMessage.stop:type_name -> repeatertastic.plugin.v1.Stop
 	8,  // 12: repeatertastic.plugin.v1.HostMessage.action:type_name -> repeatertastic.plugin.v1.PanelAction
-	11, // 13: repeatertastic.plugin.v1.Welcome.radios:type_name -> repeatertastic.plugin.v1.Radio
-	26, // 14: repeatertastic.plugin.v1.Status.fields:type_name -> repeatertastic.plugin.v1.Status.FieldsEntry
-	12, // 15: repeatertastic.plugin.v1.Radio.relay:type_name -> repeatertastic.plugin.v1.Identity
-	12, // 16: repeatertastic.plugin.v1.Radio.identities:type_name -> repeatertastic.plugin.v1.Identity
-	15, // 17: repeatertastic.plugin.v1.PacketEvent.holders:type_name -> repeatertastic.plugin.v1.ChannelHolder
-	13, // 18: repeatertastic.plugin.v1.NodeEvent.node:type_name -> repeatertastic.plugin.v1.Node
-	11, // 19: repeatertastic.plugin.v1.ListRadiosResponse.radios:type_name -> repeatertastic.plugin.v1.Radio
-	13, // 20: repeatertastic.plugin.v1.ListNodesResponse.nodes:type_name -> repeatertastic.plugin.v1.Node
-	0,  // 21: repeatertastic.plugin.v1.PluginHost.Session:input_type -> repeatertastic.plugin.v1.PluginMessage
-	19, // 22: repeatertastic.plugin.v1.PluginHost.ListRadios:input_type -> repeatertastic.plugin.v1.ListRadiosRequest
-	21, // 23: repeatertastic.plugin.v1.PluginHost.ListNodes:input_type -> repeatertastic.plugin.v1.ListNodesRequest
-	23, // 24: repeatertastic.plugin.v1.PluginHost.SendText:input_type -> repeatertastic.plugin.v1.SendTextRequest
-	24, // 25: repeatertastic.plugin.v1.PluginHost.Traceroute:input_type -> repeatertastic.plugin.v1.TracerouteRequest
-	1,  // 26: repeatertastic.plugin.v1.PluginHost.Session:output_type -> repeatertastic.plugin.v1.HostMessage
-	20, // 27: repeatertastic.plugin.v1.PluginHost.ListRadios:output_type -> repeatertastic.plugin.v1.ListRadiosResponse
-	22, // 28: repeatertastic.plugin.v1.PluginHost.ListNodes:output_type -> repeatertastic.plugin.v1.ListNodesResponse
-	25, // 29: repeatertastic.plugin.v1.PluginHost.SendText:output_type -> repeatertastic.plugin.v1.SendResponse
-	25, // 30: repeatertastic.plugin.v1.PluginHost.Traceroute:output_type -> repeatertastic.plugin.v1.SendResponse
-	26, // [26:31] is the sub-list for method output_type
-	21, // [21:26] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	15, // 13: repeatertastic.plugin.v1.HostMessage.status_event:type_name -> repeatertastic.plugin.v1.StatusEvent
+	11, // 14: repeatertastic.plugin.v1.Welcome.radios:type_name -> repeatertastic.plugin.v1.Radio
+	30, // 15: repeatertastic.plugin.v1.Status.fields:type_name -> repeatertastic.plugin.v1.Status.FieldsEntry
+	16, // 16: repeatertastic.plugin.v1.Radio.relay:type_name -> repeatertastic.plugin.v1.Identity
+	16, // 17: repeatertastic.plugin.v1.Radio.identities:type_name -> repeatertastic.plugin.v1.Identity
+	12, // 18: repeatertastic.plugin.v1.GetStatusResponse.radios:type_name -> repeatertastic.plugin.v1.RadioStatus
+	12, // 19: repeatertastic.plugin.v1.StatusEvent.radios:type_name -> repeatertastic.plugin.v1.RadioStatus
+	19, // 20: repeatertastic.plugin.v1.PacketEvent.holders:type_name -> repeatertastic.plugin.v1.ChannelHolder
+	17, // 21: repeatertastic.plugin.v1.NodeEvent.node:type_name -> repeatertastic.plugin.v1.Node
+	11, // 22: repeatertastic.plugin.v1.ListRadiosResponse.radios:type_name -> repeatertastic.plugin.v1.Radio
+	17, // 23: repeatertastic.plugin.v1.ListNodesResponse.nodes:type_name -> repeatertastic.plugin.v1.Node
+	0,  // 24: repeatertastic.plugin.v1.PluginHost.Session:input_type -> repeatertastic.plugin.v1.PluginMessage
+	23, // 25: repeatertastic.plugin.v1.PluginHost.ListRadios:input_type -> repeatertastic.plugin.v1.ListRadiosRequest
+	25, // 26: repeatertastic.plugin.v1.PluginHost.ListNodes:input_type -> repeatertastic.plugin.v1.ListNodesRequest
+	27, // 27: repeatertastic.plugin.v1.PluginHost.SendText:input_type -> repeatertastic.plugin.v1.SendTextRequest
+	28, // 28: repeatertastic.plugin.v1.PluginHost.Traceroute:input_type -> repeatertastic.plugin.v1.TracerouteRequest
+	13, // 29: repeatertastic.plugin.v1.PluginHost.GetStatus:input_type -> repeatertastic.plugin.v1.GetStatusRequest
+	1,  // 30: repeatertastic.plugin.v1.PluginHost.Session:output_type -> repeatertastic.plugin.v1.HostMessage
+	24, // 31: repeatertastic.plugin.v1.PluginHost.ListRadios:output_type -> repeatertastic.plugin.v1.ListRadiosResponse
+	26, // 32: repeatertastic.plugin.v1.PluginHost.ListNodes:output_type -> repeatertastic.plugin.v1.ListNodesResponse
+	29, // 33: repeatertastic.plugin.v1.PluginHost.SendText:output_type -> repeatertastic.plugin.v1.SendResponse
+	29, // 34: repeatertastic.plugin.v1.PluginHost.Traceroute:output_type -> repeatertastic.plugin.v1.SendResponse
+	14, // 35: repeatertastic.plugin.v1.PluginHost.GetStatus:output_type -> repeatertastic.plugin.v1.GetStatusResponse
+	30, // [30:36] is the sub-list for method output_type
+	24, // [24:30] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
-func init() { file_plugin_proto_init() }
-func file_plugin_proto_init() {
-	if File_plugin_proto != nil {
+func init() { file_plugin_v1_plugin_proto_init() }
+func file_plugin_v1_plugin_proto_init() {
+	if File_plugin_v1_plugin_proto != nil {
 		return
 	}
-	file_plugin_proto_msgTypes[0].OneofWrappers = []any{
+	file_plugin_v1_plugin_proto_msgTypes[0].OneofWrappers = []any{
 		(*PluginMessage_Hello)(nil),
 		(*PluginMessage_Status)(nil),
 		(*PluginMessage_Log)(nil),
 		(*PluginMessage_Heartbeat)(nil),
 		(*PluginMessage_Panel)(nil),
 	}
-	file_plugin_proto_msgTypes[1].OneofWrappers = []any{
+	file_plugin_v1_plugin_proto_msgTypes[1].OneofWrappers = []any{
 		(*HostMessage_Welcome)(nil),
 		(*HostMessage_Packet)(nil),
 		(*HostMessage_Node)(nil),
@@ -2196,22 +2566,23 @@ func file_plugin_proto_init() {
 		(*HostMessage_Settings)(nil),
 		(*HostMessage_Stop)(nil),
 		(*HostMessage_Action)(nil),
+		(*HostMessage_StatusEvent)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plugin_proto_rawDesc), len(file_plugin_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plugin_v1_plugin_proto_rawDesc), len(file_plugin_v1_plugin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_plugin_proto_goTypes,
-		DependencyIndexes: file_plugin_proto_depIdxs,
-		MessageInfos:      file_plugin_proto_msgTypes,
+		GoTypes:           file_plugin_v1_plugin_proto_goTypes,
+		DependencyIndexes: file_plugin_v1_plugin_proto_depIdxs,
+		MessageInfos:      file_plugin_v1_plugin_proto_msgTypes,
 	}.Build()
-	File_plugin_proto = out.File
-	file_plugin_proto_goTypes = nil
-	file_plugin_proto_depIdxs = nil
+	File_plugin_v1_plugin_proto = out.File
+	file_plugin_v1_plugin_proto_goTypes = nil
+	file_plugin_v1_plugin_proto_depIdxs = nil
 }

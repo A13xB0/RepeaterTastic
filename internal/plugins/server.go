@@ -70,6 +70,7 @@ const (
 	permMessagesRead   = "messages.read"
 	permMessagesSend   = "messages.send"
 	permTracerouteSend = "traceroute.send"
+	permStatusRead     = "status.read"
 )
 
 // serve listens on the Unix socket (and TCP, if configured) and serves the Plugin API.
@@ -229,6 +230,9 @@ func (h *hostServer) Session(stream pluginv1.PluginHost_SessionServer) error {
 	defer cancel()
 	for _, r := range m.opt.Radios {
 		go m.pump(ctx, sess, p, r, granted)
+	}
+	if slices.Contains(granted, permStatusRead) {
+		go m.pumpStatus(ctx, sess)
 	}
 	recvErr := make(chan error, 1)
 	go func() { recvErr <- h.receive(stream, p) }()

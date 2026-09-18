@@ -10,7 +10,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.36.1
-// source: plugin.proto
+// source: plugin/v1/plugin.proto
 
 package pluginv1
 
@@ -32,6 +32,7 @@ const (
 	PluginHost_ListNodes_FullMethodName  = "/repeatertastic.plugin.v1.PluginHost/ListNodes"
 	PluginHost_SendText_FullMethodName   = "/repeatertastic.plugin.v1.PluginHost/SendText"
 	PluginHost_Traceroute_FullMethodName = "/repeatertastic.plugin.v1.PluginHost/Traceroute"
+	PluginHost_GetStatus_FullMethodName  = "/repeatertastic.plugin.v1.PluginHost/GetStatus"
 )
 
 // PluginHostClient is the client API for PluginHost service.
@@ -50,6 +51,9 @@ type PluginHostClient interface {
 	// traceroute.send: from the identity chosen in the plugin's "identities" settings on that radio
 	// (the relay persona when none is), within the plugin's send budget.
 	Traceroute(ctx context.Context, in *TracerouteRequest, opts ...grpc.CallOption) (*SendResponse, error)
+	// status.read: how the radios are doing right now. Radio says what a radio *is*; this says what
+	// it is *doing* — the figures a dashboard, an exporter or an alert would want.
+	GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error)
 }
 
 type pluginHostClient struct {
@@ -113,6 +117,16 @@ func (c *pluginHostClient) Traceroute(ctx context.Context, in *TracerouteRequest
 	return out, nil
 }
 
+func (c *pluginHostClient) GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetStatusResponse)
+	err := c.cc.Invoke(ctx, PluginHost_GetStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PluginHostServer is the server API for PluginHost service.
 // All implementations must embed UnimplementedPluginHostServer
 // for forward compatibility.
@@ -129,6 +143,9 @@ type PluginHostServer interface {
 	// traceroute.send: from the identity chosen in the plugin's "identities" settings on that radio
 	// (the relay persona when none is), within the plugin's send budget.
 	Traceroute(context.Context, *TracerouteRequest) (*SendResponse, error)
+	// status.read: how the radios are doing right now. Radio says what a radio *is*; this says what
+	// it is *doing* — the figures a dashboard, an exporter or an alert would want.
+	GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error)
 	mustEmbedUnimplementedPluginHostServer()
 }
 
@@ -153,6 +170,9 @@ func (UnimplementedPluginHostServer) SendText(context.Context, *SendTextRequest)
 }
 func (UnimplementedPluginHostServer) Traceroute(context.Context, *TracerouteRequest) (*SendResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Traceroute not implemented")
+}
+func (UnimplementedPluginHostServer) GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetStatus not implemented")
 }
 func (UnimplementedPluginHostServer) mustEmbedUnimplementedPluginHostServer() {}
 func (UnimplementedPluginHostServer) testEmbeddedByValue()                    {}
@@ -254,6 +274,24 @@ func _PluginHost_Traceroute_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PluginHost_GetStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PluginHostServer).GetStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PluginHost_GetStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PluginHostServer).GetStatus(ctx, req.(*GetStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PluginHost_ServiceDesc is the grpc.ServiceDesc for PluginHost service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -277,6 +315,10 @@ var PluginHost_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Traceroute",
 			Handler:    _PluginHost_Traceroute_Handler,
 		},
+		{
+			MethodName: "GetStatus",
+			Handler:    _PluginHost_GetStatus_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -286,5 +328,5 @@ var PluginHost_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "plugin.proto",
+	Metadata: "plugin/v1/plugin.proto",
 }

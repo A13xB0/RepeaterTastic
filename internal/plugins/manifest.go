@@ -29,6 +29,7 @@ var Permissions = map[string]string{
 	"messages.read":   "Read text messages to and from each radio's relay persona",
 	"messages.send":   "Send text messages from each radio's relay persona",
 	"traceroute.send": "Send traceroutes from the identity chosen in the plugin's settings (or the radio's relay persona)",
+	"status.read":     "See how the radios are doing: airtime, noise floor, channel use and the packet counters",
 }
 
 // Manifest is plugin.yaml.
