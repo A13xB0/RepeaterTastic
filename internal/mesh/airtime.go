@@ -5,9 +5,14 @@ import (
 	"time"
 )
 
+// StatBucket is the resolution airtime statistics are stored at beyond the
+// rolling hour: asking the API for anything finer over a longer window would be
+// inventing detail that was never recorded.
+const StatBucket = 10 * time.Minute
+
 const (
 	minuteSlots = 60 // rolling hour, 1-minute resolution (duty cycle)
-	statBucket  = 10 * time.Minute
+	statBucket  = StatBucket
 	statSlots   = 7 * 24 * 6 // 7 days of 10-minute buckets
 )
 
