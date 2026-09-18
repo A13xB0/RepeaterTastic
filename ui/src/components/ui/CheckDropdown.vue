@@ -68,23 +68,29 @@ function close() {
   void nextTick(() => trigger.value?.focus())
 }
 
+// Arrow keys walk the options, and step back into the search box above the first one.
+function moveFocus(down: boolean) {
+  const buttons = optionButtons()
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+  if (at < 0) {
+    if (down) buttons[0]?.focus()
+    return
+  }
+  if (!down && at === 0 && search.value) {
+    search.value.focus()
+    return
+  }
+  const next = down ? Math.min(buttons.length - 1, at + 1) : Math.max(0, at - 1)
+  buttons[next]?.focus()
+}
+
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     close()
-    return
-  }
-  const buttons = optionButtons()
-  const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
-    if (at < 0 && document.activeElement === search.value) {
-      if (e.key === 'ArrowDown') buttons[0]?.focus()
-      return
-    }
-    const next = e.key === 'ArrowDown' ? Math.min(buttons.length - 1, at + 1) : Math.max(0, at - 1)
-    if (e.key === 'ArrowUp' && at === 0 && search.value) search.value.focus()
-    else buttons[next]?.focus()
-  } else if (e.key === 'Tab' && at >= 0) {
+    moveFocus(e.key === 'ArrowDown')
+  } else if (e.key === 'Tab' && optionButtons().includes(document.activeElement as HTMLButtonElement)) {
     e.preventDefault()
     close()
   }

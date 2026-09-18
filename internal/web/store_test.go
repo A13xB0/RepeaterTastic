@@ -115,7 +115,42 @@ func TestStoreAPI(t *testing.T) {
 		t.Errorf("it should be installable here: %v", entry["unusable"])
 	}
 
-	// The logo comes through the daemon, so a browser that can't reach the store still sees it.
+	checkLogo(t, srv, entry)
+	checkInstall(t, srv, tok)
+}
+
+// checkInstall installs the store's one plugin and reads back what both tabs then say about it.
+func checkInstall(t *testing.T, srv *httptest.Server, tok string) {
+	t.Helper()
+	code, obj, _ := call(t, srv, "POST", "/api/v1/plugins/store/gadget/install", tok, nil)
+	if code != http.StatusCreated || obj["id"] != "gadget" || obj["version"] != "2.0.0" {
+		t.Fatalf("install from store: %d %v", code, obj)
+	}
+	if obj["state"] != "disabled" {
+		t.Errorf("it should arrive switched off pending review, got %v", obj["state"])
+	}
+
+	// The list now knows it is installed, and the Plugins tab shows no updates.
+	_, obj, _ = call(t, srv, "GET", "/api/v1/plugins/store?refresh=1", tok, nil)
+	entry := obj["plugins"].([]any)[0].(map[string]any)
+	if entry["installed"] != "2.0.0" || entry["update_available"] != false {
+		t.Fatalf("wanted 2.0.0 installed and no update, got %v", entry)
+	}
+	_, obj, _ = call(t, srv, "GET", "/api/v1/plugins", tok, nil)
+	st, _ := obj["store"].(map[string]any)
+	if st == nil || st["enabled"] != true || st["updates"].(float64) != 0 {
+		t.Fatalf("plugins list store block: %v", obj["store"])
+	}
+
+	// Something that isn't in the store.
+	if code, _, _ := call(t, srv, "POST", "/api/v1/plugins/store/nosuch/install", tok, nil); code != http.StatusNotFound {
+		t.Errorf("installing a plugin the store doesn't list: %d", code)
+	}
+}
+
+// checkLogo reads a store logo the way a browser would: no bearer token, just the capability URL.
+func checkLogo(t *testing.T, srv *httptest.Server, entry map[string]any) {
+	t.Helper()
 	logoURL, _ := entry["logo_url"].(string)
 	if !strings.HasPrefix(logoURL, "/plugin-store-logo/") {
 		t.Fatalf("no logo URL: %v", entry)
@@ -141,32 +176,6 @@ func TestStoreAPI(t *testing.T) {
 	bad.Body.Close()
 	if bad.StatusCode != http.StatusNotFound {
 		t.Errorf("a wrong key should 404, got %d", bad.StatusCode)
-	}
-
-	// Install it.
-	code, obj, _ = call(t, srv, "POST", "/api/v1/plugins/store/gadget/install", tok, nil)
-	if code != http.StatusCreated || obj["id"] != "gadget" || obj["version"] != "2.0.0" {
-		t.Fatalf("install from store: %d %v", code, obj)
-	}
-	if obj["state"] != "disabled" {
-		t.Errorf("it should arrive switched off pending review, got %v", obj["state"])
-	}
-
-	// The list now knows it is installed, and the Plugins tab shows no updates.
-	_, obj, _ = call(t, srv, "GET", "/api/v1/plugins/store?refresh=1", tok, nil)
-	entry = obj["plugins"].([]any)[0].(map[string]any)
-	if entry["installed"] != "2.0.0" || entry["update_available"] != false {
-		t.Fatalf("wanted 2.0.0 installed and no update, got %v", entry)
-	}
-	_, obj, _ = call(t, srv, "GET", "/api/v1/plugins", tok, nil)
-	st, _ := obj["store"].(map[string]any)
-	if st == nil || st["enabled"] != true || st["updates"].(float64) != 0 {
-		t.Fatalf("plugins list store block: %v", obj["store"])
-	}
-
-	// Something that isn't in the store.
-	if code, _, _ := call(t, srv, "POST", "/api/v1/plugins/store/nosuch/install", tok, nil); code != http.StatusNotFound {
-		t.Errorf("installing a plugin the store doesn't list: %d", code)
 	}
 }
 

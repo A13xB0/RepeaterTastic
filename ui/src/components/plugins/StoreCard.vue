@@ -13,12 +13,13 @@ const emit = defineEmits<{ install: [plugin: StorePlugin] }>()
 
 const p = computed(() => props.plugin)
 const home = computed(() => safeLink(p.value.homepage))
-// A permission list the store left out reads as null over the wire; without this the whole grid
-// fails to render, not just this card.
-const permissions = computed(() => p.value.permissions ?? [])
+// What this plugin asks for. A list the store left out reads as null over the wire; without this
+// the whole grid fails to render, not just this card. (props.permissions is a different thing:
+// the sentence the host shows for each permission key.)
+const asks = computed(() => p.value.permissions ?? [])
 const logoFailed = ref(false)
 watch(() => p.value.logo_url, () => (logoFailed.value = false))
-const sends = computed(() => permissions.value.some(transmits))
+const sends = computed(() => asks.value.some(transmits))
 // An attached plugin has a container rather than a bundle, so there is no version or size.
 const release = computed(() => p.value.latest)
 const size = computed(() => {
@@ -52,10 +53,10 @@ const attachOnly = computed(() => !!p.value.image)
     <p class="mt-3 line-clamp-2 text-xs leading-relaxed text-ink-2">{{ p.summary }}</p>
 
     <div class="mt-3 flex flex-wrap gap-1.5">
-      <span v-for="key in permissions" :key="key" class="chip bg-sunken text-ink-2" :title="props.permissions[key] ?? key">
+      <span v-for="key in asks" :key="key" class="chip bg-sunken text-ink-2" :title="permissions[key] ?? key">
         <Radio v-if="transmits(key)" class="size-3 text-warn" />{{ key }}
       </span>
-      <span v-if="!permissions.length" class="chip bg-sunken text-ink-3">asks for nothing</span>
+      <span v-if="!asks.length" class="chip bg-sunken text-ink-3">asks for nothing</span>
     </div>
 
     <p v-if="p.network?.length" class="mt-2 flex items-start gap-1.5 text-xs text-ink-3">
