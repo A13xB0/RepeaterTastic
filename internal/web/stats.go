@@ -4,7 +4,11 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,10 +35,73 @@ type rfHistory struct {
 
 const rfKeep = 7 * 24 * 60
 
+// rfHistoryFile keeps the noise-floor record across a restart. Without it a
+// reboot left the charts blank until the day filled up again.
+const rfHistoryFile = "rf-history.json"
+
+func (h *rfHistory) save(path string, now time.Time) error {
+	h.mu.Lock()
+	points := append([]rfPoint(nil), h.points...)
+	h.mu.Unlock()
+	b, err := json.Marshal(points)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func (h *rfHistory) load(path string, now time.Time) error {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var points []rfPoint
+	if err := json.Unmarshal(b, &points); err != nil {
+		return err
+	}
+	cut := now.Add(-rfKeep * time.Minute).UnixMilli()
+	kept := points[:0]
+	for _, p := range points {
+		// Drop what has aged out, and anything stamped in the future: a stale
+		// file or a clock that moved should not outrank live samples.
+		if p.Time >= cut && p.Time <= now.UnixMilli() {
+			kept = append(kept, p)
+		}
+	}
+	h.mu.Lock()
+	h.points = append(kept, h.points...)
+	if len(h.points) > rfKeep {
+		h.points = h.points[len(h.points)-rfKeep:]
+	}
+	h.mu.Unlock()
+	return nil
+}
+
 func (s *Server) sampleRF(ctx context.Context, rc *radioCtx) { s.sampleRFEvery(ctx, rc, time.Minute) }
 
 // sampleRFEvery is sampleRF with the sampling period as a parameter (tests sample faster).
 func (s *Server) sampleRFEvery(ctx context.Context, rc *radioCtx, every time.Duration) {
+	path := ""
+	if dir := rc.host.Config().StateDir; dir != "" {
+		path = filepath.Join(dir, rfHistoryFile)
+		if err := rc.rf.load(path, time.Now()); err != nil {
+			s.log.Warn("RF history not loaded", "radio", rc.id, "err", err)
+		}
+		defer func() {
+			if err := rc.rf.save(path, time.Now()); err != nil {
+				s.log.Warn("saving RF history", "radio", rc.id, "err", err)
+			}
+		}()
+	}
+	saveEvery := 10 * time.Minute
+	lastSave := time.Now()
 	t := time.NewTicker(every)
 	defer t.Stop()
 	var lastRx, lastTx uint64
@@ -54,6 +121,12 @@ func (s *Server) sampleRFEvery(ctx context.Context, rc *radioCtx, every time.Dur
 				rc.rf.points = rc.rf.points[len(rc.rf.points)-rfKeep:]
 			}
 			rc.rf.mu.Unlock()
+			if path != "" && now.Sub(lastSave) >= saveEvery {
+				lastSave = now
+				if err := rc.rf.save(path, now); err != nil {
+					s.log.Warn("saving RF history", "radio", rc.id, "err", err)
+				}
+			}
 		}
 	}
 }
@@ -328,13 +401,24 @@ func (s *Server) statsAirtime(w http.ResponseWriter, r *http.Request) {
 		ByIdentity map[string]float64 `json:"by_identity"`
 	}
 	window := windowParam(r)
-	// Ten minutes is the floor: that is how airtime is stored beyond the
-	// rolling hour. A coarser bucket than that just groups the stored ones.
-	size := bucketParam(r, window, mesh.StatBucket)
+	// Per-minute airtime is kept for the recent past; beyond that only
+	// ten-minute buckets exist, so that is the floor for a longer window.
+	floor := mesh.StatBucket
+	fine := window <= mesh.FineWindow
+	if fine {
+		floor = mesh.FineBucket
+	}
+	size := bucketParam(r, window, floor)
+	// No point walking the per-minute ring to build ten-minute buckets.
+	fine = fine && size < mesh.StatBucket
 	byTime := map[int64]*bucket{}
 	now := time.Now()
 	for _, rc := range s.radiosFor(r) {
-		for _, b := range rc.host.Air.Buckets(now, window) {
+		buckets := rc.host.Air.Buckets(now, window)
+		if fine {
+			buckets = rc.host.Air.FineBuckets(now, window)
+		}
+		for _, b := range buckets {
 			t := b.Start.Truncate(size).UnixMilli()
 			o := byTime[t]
 			if o == nil {

@@ -133,6 +133,7 @@ func (h *Host) Transmits() bool {
 const (
 	nodeDBFile   = "nodedb.json"
 	messagesFile = "messages.json"
+	airtimeFile  = "airtime.json"
 )
 
 const (
@@ -573,6 +574,9 @@ func (h *Host) Run(ctx context.Context) error {
 		if err := h.Messages.Load(filepath.Join(h.stateDir, messagesFile)); err != nil {
 			h.log.Warn("messages not loaded", "err", err)
 		}
+		if err := h.Air.LoadFrom(filepath.Join(h.stateDir, airtimeFile), time.Now()); err != nil {
+			h.log.Warn("airtime history not loaded", "err", err)
+		}
 		for _, id := range h.Identities() { // re-assert local entries over stale saved ones
 			h.DB.Update(id.NodeNum, func(e *NodeEntry) { e.Local = true; e.User = id.UserCopy(); e.HopsAway = 0 })
 		}
@@ -587,6 +591,7 @@ func (h *Host) Run(ctx context.Context) error {
 	if h.stateDir != "" {
 		_ = h.DB.Save(filepath.Join(h.stateDir, nodeDBFile))
 		_ = h.Messages.Save(filepath.Join(h.stateDir, messagesFile))
+		_ = h.Air.SaveTo(filepath.Join(h.stateDir, airtimeFile), time.Now())
 	}
 	return ctx.Err()
 }
@@ -678,6 +683,10 @@ func (h *Host) saveState() {
 	}
 	if err := h.Messages.Save(filepath.Join(h.stateDir, messagesFile)); err != nil {
 		h.log.Warn("saving messages", "err", err)
+	}
+	// So a reboot costs the charts minutes of history rather than a day of it.
+	if err := h.Air.SaveTo(filepath.Join(h.stateDir, airtimeFile), time.Now()); err != nil {
+		h.log.Warn("saving airtime history", "err", err)
 	}
 }
 
