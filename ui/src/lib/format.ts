@@ -1,5 +1,15 @@
 export const BROADCAST = '!ffffffff'
 
+/**
+ * A URL that is safe to put in an href. Anything but http(s) — javascript:, data:, a custom
+ * scheme — comes back undefined, so the link renders as plain text rather than running in this
+ * page with the operator's session.
+ */
+export function safeLink(url?: string): string | undefined {
+  if (!url) return undefined
+  return /^https?:\/\//i.test(url.trim()) ? url : undefined
+}
+
 export function relTime(t: number, now = Date.now()): string {
   if (!t) return 'never'
   const s = Math.max(0, Math.round((now - t) / 1000))

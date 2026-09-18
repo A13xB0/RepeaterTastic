@@ -62,10 +62,15 @@ function onPointer(e: PointerEvent) {
 const optionButtons = () => Array.from(menu.value?.querySelectorAll<HTMLButtonElement>('li > button') ?? [])
 
 // The list lives at the end of <body>, so keyboard focus is moved into it and back by hand.
+// Closing always puts focus back on the trigger, wherever the Escape came from.
+function close() {
+  open.value = false
+  void nextTick(() => trigger.value?.focus())
+}
+
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') {
-    open.value = false
-    trigger.value?.focus()
+    close()
     return
   }
   const buttons = optionButtons()
@@ -81,8 +86,7 @@ function onKey(e: KeyboardEvent) {
     else buttons[next]?.focus()
   } else if (e.key === 'Tab' && at >= 0) {
     e.preventDefault()
-    open.value = false
-    trigger.value?.focus()
+    close()
   }
 }
 
@@ -140,7 +144,7 @@ onBeforeUnmount(() => listen(false))
           class="input h-8 w-full text-[13px]"
           placeholder="Search"
           :aria-label="`Search ${options.length} options`"
-          @keydown.stop.escape="open = false"
+          @keydown.escape="close()"
         />
       </div>
       <ul>

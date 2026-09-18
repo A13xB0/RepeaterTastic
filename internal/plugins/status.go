@@ -44,12 +44,7 @@ func radioStatus(ctx context.Context, r Radio) *pluginv1.RadioStatus {
 		duty = cfg.DutyCyclePct
 	}
 
-	heard := 0
-	for _, n := range h.DB.Snapshot() {
-		if !n.Local && !n.LastHeard.IsZero() && now.Sub(n.LastHeard) < 2*time.Hour {
-			heard++
-		}
-	}
+	heard := h.DB.HeardSince(now.Add(-2 * time.Hour))
 
 	return &pluginv1.RadioStatus{
 		RadioId:         r.ID,

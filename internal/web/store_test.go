@@ -129,6 +129,10 @@ func TestStoreAPI(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !bytes.HasPrefix(body, []byte("\x89PNG")) {
 		t.Fatalf("logo: %d %q", resp.StatusCode, body)
 	}
+	// A store can list an SVG, which is a document on this origin if someone opens it directly.
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") {
+		t.Errorf("a store logo is served without a sandbox: %q", csp)
+	}
 	// A made-up key gets nothing.
 	bad, err := http.Get(srv.URL + "/plugin-store-logo/deadbeef/gadget")
 	if err != nil {

@@ -157,6 +157,21 @@ func (db *NodeDB) LastByteCollision(num uint32) uint32 {
 	return 0
 }
 
+// HeardSince counts the nodes other than our own that have been heard since t. Snapshot copies
+// and sorts the whole database, which is far more than a count needs when the database holds
+// thousands of nodes and something asks every thirty seconds.
+func (db *NodeDB) HeardSince(t time.Time) int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	n := 0
+	for _, e := range db.nodes {
+		if !e.Local && !e.LastHeard.IsZero() && e.LastHeard.After(t) {
+			n++
+		}
+	}
+	return n
+}
+
 func (db *NodeDB) Snapshot() []NodeEntry {
 	db.mu.RLock()
 	defer db.mu.RUnlock()

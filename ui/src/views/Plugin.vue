@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ExternalLink, KeyRound, RotateCw, Trash } from '@lucide/vue'
 import { api, enc } from '@/api/client'
+import { safeLink } from '@/lib/format'
 import type { Plugin, PluginLogLine, PluginsResponse } from '@/api/types'
 import Toggle from '@/components/ui/Toggle.vue'
 import CopyButton from '@/components/ui/CopyButton.vue'
@@ -176,7 +177,7 @@ const granted = computed(() => plugin.value?.permissions.filter((p) => p.granted
             <span v-if="plugin.version">v{{ plugin.version }}</span>
             <span v-if="plugin.author">by {{ plugin.author }}</span>
             <span v-if="plugin.license">{{ plugin.license }}</span>
-            <a v-if="plugin.homepage" :href="plugin.homepage" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 hover:text-ink">
+            <a v-if="safeLink(plugin.homepage)" :href="safeLink(plugin.homepage)" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 hover:text-ink">
               Homepage<ExternalLink class="size-3" />
             </a>
           </div>

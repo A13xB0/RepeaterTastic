@@ -525,7 +525,8 @@ export interface StorePlugin {
   network?: string[]
   /** Set for plugins that run in their own container: attach those rather than installing. */
   image?: string
-  latest: StoreRelease
+  /** Absent for an attached plugin, which has a container rather than a bundle. */
+  latest?: StoreRelease
   logo_url?: string
   /** The version running here, absent when it isn't installed. */
   installed?: string

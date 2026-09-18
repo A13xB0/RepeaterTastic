@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The Browse store tab. The daemon reads the store and does the downloading, so this only asks it
 // what's on offer and what's already installed here.
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { CloudOff, RefreshCw, Search, Store } from '@lucide/vue'
 import { api, enc } from '@/api/client'
 import type { Plugin, StorePlugin, StoreResponse } from '@/api/types'
@@ -14,6 +14,8 @@ const emit = defineEmits<{ installed: [plugin: Plugin] }>()
 
 const data = ref<StoreResponse | null>(null)
 const loading = ref(false)
+// Why the last read failed, when there isn't even a cached list to show.
+const failed = ref('')
 const installing = ref('')
 const query = ref('')
 const updatesOnly = ref(false)
@@ -22,24 +24,35 @@ const shown = computed(() => {
   const list = data.value?.plugins ?? []
   const q = query.value.trim().toLowerCase()
   return list.filter((p) => {
-    if (updatesOnly.value && !p.update_available) return false
+    if (updatesOnly.value && !(p.update_available && !p.unusable)) return false
     if (!q) return true
     return [p.name, p.summary, p.author, ...(p.tags ?? [])].some((s) => s?.toLowerCase().includes(q))
   })
 })
-const updates = computed(() => (data.value?.plugins ?? []).filter((p) => p.update_available).length)
+// An update this node can't install isn't an update worth counting: the Plugins tab's badge
+// leaves those out, and two different numbers for the same thing is worse than either.
+const updatable = computed(() => (data.value?.plugins ?? []).filter((p) => p.update_available && !p.unusable))
+const updates = computed(() => updatable.value.length)
 const fetched = computed(() => (data.value?.fetched_at ? relTime(data.value.fetched_at * 1000) : ''))
 
 async function load(refresh = false) {
   loading.value = true
   try {
     data.value = await api.get<StoreResponse>(`/plugins/store${refresh ? '?refresh=1' : ''}`)
+    failed.value = ''
   } catch (e) {
+    failed.value = (e as Error).message
     toastError(e)
   } finally {
     loading.value = false
   }
 }
+
+// Installing the last available update removes the Updates button, so the filter has to let go
+// with it or the tab is stuck showing nothing with no control to clear.
+watch(updates, (n) => {
+  if (!n) updatesOnly.value = false
+})
 
 async function install(p: StorePlugin) {
   installing.value = p.id
@@ -84,7 +97,14 @@ onMounted(() => load())
         </div>
       </div>
 
-      <div v-if="!data" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div v-if="!data && failed" class="card flex flex-col items-center px-6 py-12 text-center">
+        <span class="flex size-12 items-center justify-center rounded-2xl bg-sunken text-ink-3"><CloudOff class="size-6" /></span>
+        <h3 class="mt-3 text-[15px] font-semibold">The store couldn't be read</h3>
+        <p class="mt-1 max-w-md text-[13px] text-ink-3">{{ failed }}</p>
+        <button type="button" class="btn mt-4" :disabled="loading" @click="load(true)"><RefreshCw :class="['size-4', loading && 'animate-spin']" />Try again</button>
+      </div>
+
+      <div v-else-if="!data" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <div v-for="n in 3" :key="n" class="card h-44 animate-pulse" />
       </div>
 

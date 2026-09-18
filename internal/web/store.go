@@ -80,6 +80,10 @@ func (s *Server) storeLogo(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// An SVG fetched from a store is a document on this origin, so it gets the same sandbox an
+	// installed plugin's assets get: inside an <img> it is inert either way, but opened in a tab
+	// it would otherwise run with the operator's session.
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set(cacheControl, "no-cache")
 	http.ServeContent(w, r, "logo", time.Time{}, bytes.NewReader(b))
