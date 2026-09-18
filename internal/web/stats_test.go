@@ -266,3 +266,33 @@ func waitForSamples(t *testing.T, rc *radioCtx, n int) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// A caller may ask for a finer chart than the daemon recorded. The answer is to
+// give them the finest that is real, not to invent detail or refuse the request.
+func TestBucketParamClampsToWhatWasRecorded(t *testing.T) {
+	const day = 24 * time.Hour
+	cases := []struct {
+		name   string
+		query  string
+		window time.Duration
+		floor  time.Duration
+		want   time.Duration
+	}{
+		{"rf may go down to its sample interval", "bucket=1m", day, rfSampleInterval, time.Minute},
+		{"rf finer than sampling is raised to it", "bucket=5s", day, rfSampleInterval, time.Minute},
+		{"airtime is held at its storage bucket", "bucket=1m", day, mesh.StatBucket, mesh.StatBucket},
+		{"airtime may still be coarsened", "bucket=1h", day, mesh.StatBucket, time.Hour},
+		{"no bucket asked for keeps the old default", "", day, rfSampleInterval, 10 * time.Minute},
+		{"rubbish falls back to the default", "bucket=banana", day, rfSampleInterval, 10 * time.Minute},
+		{"zero falls back to the default", "bucket=0s", day, rfSampleInterval, 10 * time.Minute},
+		{"nothing coarser than the window itself", "bucket=48h", day, rfSampleInterval, day},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/api/v1/stats/rf?"+c.query, nil)
+			if got := bucketParam(r, c.window, c.floor); got != c.want {
+				t.Errorf("bucketParam(%q) = %v, want %v", c.query, got, c.want)
+			}
+		})
+	}
+}

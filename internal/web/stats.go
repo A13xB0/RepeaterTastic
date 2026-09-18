@@ -69,9 +69,44 @@ func bucketFor(window time.Duration) time.Duration {
 	}
 }
 
+// rfSampleInterval is how often the RF sampler records a point, and so the
+// finest resolution /stats/rf can honestly answer with.
+const rfSampleInterval = time.Minute
+
+// bucketParam is the resolution the caller asked for with ?bucket=, clamped to
+// what was actually recorded. RF is sampled once a minute; airtime is only kept
+// as ten-minute buckets beyond the rolling hour. Asking for finer than the
+// store holds would invent detail, so the request is raised to the floor rather
+// than refused — and the answer always reports the bucket it really used.
+func bucketParam(r *http.Request, window, floor time.Duration) time.Duration {
+	raw := strings.TrimSpace(r.URL.Query().Get("bucket"))
+	if raw == "" {
+		return maxDuration(bucketFor(window), floor)
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return maxDuration(bucketFor(window), floor)
+	}
+	return maxDuration(minDuration(d, window), floor)
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (s *Server) statsRF(w http.ResponseWriter, r *http.Request) {
 	window := windowParam(r)
-	bucket := bucketFor(window)
+	bucket := bucketParam(r, window, rfSampleInterval)
 	cut := time.Now().Add(-window).UnixMilli()
 	var src []rfPoint
 	for _, rc := range s.radiosFor(r) {
@@ -292,11 +327,15 @@ func (s *Server) statsAirtime(w http.ResponseWriter, r *http.Request) {
 		RelayMs    float64            `json:"relay_ms"`
 		ByIdentity map[string]float64 `json:"by_identity"`
 	}
+	window := windowParam(r)
+	// Ten minutes is the floor: that is how airtime is stored beyond the
+	// rolling hour. A coarser bucket than that just groups the stored ones.
+	size := bucketParam(r, window, mesh.StatBucket)
 	byTime := map[int64]*bucket{}
 	now := time.Now()
 	for _, rc := range s.radiosFor(r) {
-		for _, b := range rc.host.Air.Buckets(now, windowParam(r)) {
-			t := b.Start.UnixMilli()
+		for _, b := range rc.host.Air.Buckets(now, window) {
+			t := b.Start.Truncate(size).UnixMilli()
 			o := byTime[t]
 			if o == nil {
 				o = &bucket{Time: t, ByIdentity: map[string]float64{}}
@@ -313,7 +352,7 @@ func (s *Server) statsAirtime(w http.ResponseWriter, r *http.Request) {
 		buckets = append(buckets, b)
 	}
 	sort.Slice(buckets, func(i, j int) bool { return buckets[i].Time < buckets[j].Time })
-	writeJSON(w, http.StatusOK, map[string]any{"bucket_s": 600, "buckets": buckets})
+	writeJSON(w, http.StatusOK, map[string]any{"bucket_s": int(size.Seconds()), "buckets": buckets})
 }
 
 func (s *Server) statsPorts(w http.ResponseWriter, r *http.Request) {

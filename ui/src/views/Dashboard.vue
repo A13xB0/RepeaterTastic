@@ -37,11 +37,62 @@ const paused = ref(false)
 const frozen = ref<Packet[]>([])
 const flashSeq = ref(0)
 
+/** How much history the charts cover, and how finely. Kept per browser, like the nodes view. */
+type Span = '1h' | '24h' | '7d'
+const SPANS: { value: Span; label: string }[] = [
+  { value: '1h', label: '1 hour' },
+  { value: '24h', label: '24 hours' },
+  { value: '7d', label: '7 days' },
+]
+/** The daemon clamps anything finer than it recorded: RF is sampled once a minute,
+ *  airtime is stored in ten-minute buckets beyond the rolling hour. */
+const RESOLUTIONS: { value: string; label: string }[] = [
+  { value: '1m', label: '1 min' },
+  { value: '5m', label: '5 min' },
+  { value: '10m', label: '10 min' },
+  { value: '1h', label: '1 hour' },
+]
+function stored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const v = localStorage.getItem(key)
+    return allowed.includes(v as T) ? (v as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+const span = ref<Span>(stored('rt-dash-span', ['1h', '24h', '7d'] as const, '24h'))
+const resolution = ref<string>(stored('rt-dash-resolution', ['1m', '5m', '10m', '1h'] as const, '1m'))
+function remember(key: string, v: string) {
+  try {
+    localStorage.setItem(key, v)
+  } catch {
+    /* ignore */
+  }
+}
+watch(span, (v) => {
+  remember('rt-dash-span', v)
+  load()
+})
+watch(resolution, (v) => {
+  remember('rt-dash-resolution', v)
+  load()
+})
+
+/** What the daemon actually used, which may be coarser than asked for. */
+const airBucketLabel = computed(() => bucketLabel(airtime.value?.bucket_s))
+const noiseBucketLabel = computed(() => bucketLabel(rf.value?.bucket_s))
+function bucketLabel(seconds?: number): string {
+  if (!seconds) return ''
+  if (seconds >= 3600) return `${seconds / 3600} hour${seconds === 3600 ? '' : 's'}`
+  return `${Math.round(seconds / 60)} min`
+}
+
 async function load() {
+  const q = `window=${span.value}&bucket=${resolution.value}`
   const [a, r, p] = await Promise.allSettled([
-    api.get<AirtimeStats>(withRadio('/stats/airtime?window=24h', radioFilter.value)),
-    api.get<RfStats>(withRadio('/stats/rf?window=24h', radioFilter.value)),
-    api.get<PortStat[]>(withRadio('/stats/ports?window=24h', radioFilter.value)),
+    api.get<AirtimeStats>(withRadio(`/stats/airtime?${q}`, radioFilter.value)),
+    api.get<RfStats>(withRadio(`/stats/rf?${q}`, radioFilter.value)),
+    api.get<PortStat[]>(withRadio(`/stats/ports?window=${span.value}`, radioFilter.value)),
   ])
   if (a.status === 'fulfilled') airtime.value = a.value
   if (r.status === 'fulfilled') rf.value = r.value
@@ -181,8 +232,20 @@ const lastPacket = computed(() => scopedPackets.value[0])
       <section class="card xl:col-span-2">
         <div class="card-head">
           <div>
-            <h3 class="card-title">Airtime · last 24 hours</h3>
-            <p class="card-sub">Share of each ten minutes spent transmitting vs. hearing traffic, against the region duty cycle</p>
+            <h3 class="card-title">Airtime · last {{ SPANS.find((s) => s.value === span)?.label }}</h3>
+            <p class="card-sub">
+              Share of each {{ airBucketLabel || 'bucket' }} spent transmitting vs. hearing traffic, against the region duty cycle
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="sr-only" for="dash-span">Time span</label>
+            <select id="dash-span" v-model="span" class="input h-7 py-0 text-xs">
+              <option v-for="s in SPANS" :key="s.value" :value="s.value">{{ s.label }}</option>
+            </select>
+            <label class="sr-only" for="dash-res">Resolution</label>
+            <select id="dash-res" v-model="resolution" class="input h-7 py-0 text-xs">
+              <option v-for="r in RESOLUTIONS" :key="r.value" :value="r.value">{{ r.label }}</option>
+            </select>
           </div>
           <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
             <span class="inline-flex items-center gap-1.5"><span class="h-0.5 w-3 rounded bg-s3" />Our TX</span>
@@ -207,7 +270,7 @@ const lastPacket = computed(() => scopedPackets.value[0])
         <section v-if="scopeRadioId" class="card">
           <div class="card-head">
             <h3 class="card-title">Noise floor</h3>
-            <span class="text-2xs text-ink-3">last 24 hours + live</span>
+            <span class="text-2xs text-ink-3">{{ noiseBucketLabel ? `${noiseBucketLabel} buckets` : '' }} + live</span>
           </div>
           <div class="px-4 pb-4 sm:px-5">
             <div class="flex items-end gap-4">
