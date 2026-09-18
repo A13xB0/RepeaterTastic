@@ -75,14 +75,14 @@ func (s *Server) storeLogo(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	b, err := m.Store().Logo(r.Context(), r.PathValue("id"))
+	b, contentType, err := m.Store().Logo(r.Context(), r.PathValue("id"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set(cacheControl, "no-cache")
-	http.ServeContent(w, r, "logo.png", time.Time{}, bytes.NewReader(b))
+	http.ServeContent(w, r, "logo", time.Time{}, bytes.NewReader(b))
 }
 
 // installFromStore is POST /plugins/store/{id}/install: download the plugin the store lists under this id,

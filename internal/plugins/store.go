@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -112,9 +112,16 @@ func (s *Store) URL() string { return s.url }
 
 func (s *Store) indexPath() string { return filepath.Join(s.dir, "index.json") }
 func (s *Store) etagPath() string  { return filepath.Join(s.dir, "index.meta") }
-func (s *Store) logoPath(id string) string {
-	return filepath.Join(s.dir, "logos", filepath.Base(id)+".png")
+
+// logoPath is where a plugin's logo is cached. The extension comes from the index, because a logo
+// may be a PNG or an SVG and the browser has to be told which.
+func (s *Store) logoPath(id, ext string) string {
+	return filepath.Join(s.dir, "logos", filepath.Base(id)+ext)
 }
+
+// logoTypes are the image types a store may list, and what the browser is told each one is.
+// Anything else is ignored rather than served, because the daemon passes these straight on.
+var logoTypes = map[string]string{".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp"}
 
 // Index returns the store's plugins, fetching if what we have is stale. force asks the server even
 // when the cached copy is fresh, for the GUI's Refresh button. When the fetch fails but a cached
@@ -267,49 +274,53 @@ func (s *Store) saveCacheLocked(body []byte) {
 	_ = os.WriteFile(s.etagPath(), meta, 0o644)
 }
 
-// Logo returns a plugin's logo, from the disk cache when it is there. Logos are small and change
-// about never, so one fetch per plugin per install of the daemon is plenty.
-func (s *Store) Logo(ctx context.Context, id string) ([]byte, error) {
+// Logo returns a plugin's logo and the content type to serve it as, from the disk cache when it is
+// there. Logos are small and change about never, so one fetch per plugin per install of the daemon
+// is plenty.
+func (s *Store) Logo(ctx context.Context, id string) (body []byte, contentType string, err error) {
 	if !validID(id) {
-		return nil, ErrNotFound
+		return nil, "", ErrNotFound
 	}
-	if b, err := os.ReadFile(s.logoPath(id)); err == nil && len(b) > 0 {
-		return b, nil
+	for ext, ctype := range logoTypes {
+		if b, err := os.ReadFile(s.logoPath(id, ext)); err == nil && len(b) > 0 {
+			return b, ctype, nil
+		}
 	}
 	p, err := s.Plugin(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if p.Logo == "" {
-		return nil, ErrNotFound
+	ext := strings.ToLower(path.Ext(p.Logo))
+	if _, ok := logoTypes[ext]; p.Logo == "" || !ok {
+		return nil, "", ErrNotFound
 	}
 	u, err := s.resolve(p.Logo)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetching the logo: %s", resp.Status)
+		return nil, "", fmt.Errorf("fetching the logo: %s", resp.Status)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, logoMaxBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if int64(len(b)) > logoMaxBytes {
-		return nil, errors.New("the logo is larger than 1 MB")
+		return nil, "", errors.New("the logo is larger than 1 MB")
 	}
-	if err := os.MkdirAll(filepath.Dir(s.logoPath(id)), 0o755); err == nil {
-		_ = os.WriteFile(s.logoPath(id), b, 0o644)
+	if err := os.MkdirAll(filepath.Dir(s.logoPath(id, ext)), 0o755); err == nil {
+		_ = os.WriteFile(s.logoPath(id, ext), b, 0o644)
 	}
-	return b, nil
+	return b, logoTypes[ext], nil
 }
 
 // resolve turns a path in the index ("logos/x.png") into an absolute URL next to index.json.

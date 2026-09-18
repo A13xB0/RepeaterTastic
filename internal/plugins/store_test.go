@@ -192,19 +192,46 @@ func TestStoreLogoIsFetchedOnceThenCached(t *testing.T) {
 	s := newTestStore(t, f)
 
 	for i := range 3 {
-		b, err := s.Logo(context.Background(), "meshflow")
+		b, contentType, err := s.Logo(context.Background(), "meshflow")
 		if err != nil {
 			t.Fatalf("Logo %d: %v", i, err)
 		}
 		if len(b) == 0 {
 			t.Fatal("empty logo")
 		}
+		if contentType != "image/png" {
+			t.Errorf("a .png logo should be served as image/png, got %q", contentType)
+		}
 	}
 	if got := f.logoHit.Load(); got != 1 {
 		t.Errorf("fetched the logo %d times, wanted 1", got)
 	}
-	if _, err := s.Logo(context.Background(), "../../etc/passwd"); err == nil {
+	if _, _, err := s.Logo(context.Background(), "../../etc/passwd"); err == nil {
 		t.Error("a path as an id should be refused")
+	}
+}
+
+func TestStoreServesAnSVGLogoAsSVG(t *testing.T) {
+	f := newFakeStore(t)
+	p := f.samplePlugin()
+	p.Logo = "logos/meshflow.svg"
+	f.setIndex(t, p)
+	s := newTestStore(t, f)
+
+	_, contentType, err := s.Logo(context.Background(), "meshflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "image/svg+xml" {
+		t.Errorf("an .svg logo should be served as image/svg+xml, got %q", contentType)
+	}
+
+	// Anything that isn't an image type the browser is told about is refused rather than passed on.
+	p.Logo = "logos/meshflow.exe"
+	f.setIndex(t, p)
+	cold := NewStore(f.url(), filepath.Join(t.TempDir(), "store2"), "0.3.3")
+	if _, _, err := cold.Logo(context.Background(), "meshflow"); err == nil {
+		t.Error("a logo that isn't an image type was served")
 	}
 }
 

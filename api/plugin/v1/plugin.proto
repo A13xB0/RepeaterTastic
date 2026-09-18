@@ -149,8 +149,8 @@ message GetStatusRequest {
 }
 message GetStatusResponse { repeated RadioStatus radios = 1; }
 
-// StatusEvent arrives on the session stream for plugins holding status.read, once every
-// status_interval_s (see Welcome), so a publisher does not have to poll.
+// StatusEvent arrives on the session stream for plugins holding status.read, every 30 seconds,
+// so a publisher does not have to poll.
 message StatusEvent { repeated RadioStatus radios = 1; }
 
 message Identity {

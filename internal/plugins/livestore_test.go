@@ -31,7 +31,7 @@ func TestLiveScotMeshStore(t *testing.T) {
 				t.Errorf("%s has min_host %s but an ancient node was told it could install it", p.ID, p.Latest.MinHost)
 			}
 		}
-		if b, err := s.Logo(context.Background(), p.ID); err != nil || len(b) < 100 {
+		if b, _, err := s.Logo(context.Background(), p.ID); err != nil || len(b) < 100 {
 			t.Errorf("%s logo: %d bytes, %v", p.ID, len(b), err)
 		}
 	}
